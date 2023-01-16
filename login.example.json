@@ -21,57 +21,61 @@
     // In this example we use 2 worlds, Scania and Bera, with 3 and 4 channels respectevly
     "worlds": [
         // Scania's configuration
-        [
-            // Channel 1
-            {
-                // The address where the channel listens for the login server
-                "host": "channel/sock",
-                // The IP that will be sent to connecting clients
-                "ip": "192.168.0.1",
-                // The port that will be sent to connecting clients
-                "port": 7575
-            },
-            // Channel 2
-            {
-                "host": "127.1.1.1",
-                "ip": "192.168.0.1",
-                "port": 7576
-            },
-            // Channel 3
-            // Note that the ip and port can be whatever the user wishes
-            {
-                "host": "127.1.1.1",
-                "ip": "192.168.1.17",
-                "port": 1234
-            }
-        ],
+        {
+            "channels": [
+                // Channel 1
+                {
+                    // The address where the channel listens for the login server
+                    "host": "channel/sock",
+                    // The IP that will be sent to connecting clients
+                    "ip": "192.168.0.1",
+                    // The port that will be sent to connecting clients
+                    "port": 7575
+                },
+                // Channel 2
+                {
+                    "host": "127.1.1.1",
+                    "ip": "192.168.0.1",
+                    "port": 7576
+                },
+                // Channel 3
+                // Note that the ip and port can be whatever the user wishes
+                {
+                    "host": "127.1.1.1",
+                    "ip": "192.168.1.17",
+                    "port": 1234
+                }
+            ]
+        },
         // Bera's configuration
-        [
-            // Channel 1
-            // Note that the ip and port can be whatever the user wishes
-            {
-                "host": "channel/sock",
-                "ip": "192.168.8.100",
-                "port": 4321
-            },
-            // Channel 2
-            {
-                "host": "channel/sock",
-                "ip": "192.168.0.2",
-                "port": 7575
-            },
-            // Channel 3
-            {
-                "host": "channel/sock",
-                "ip": "192.168.0.2",
-                "port": 7576
-            },
-            // Channel 4
-            {
-                "host": "channel/sock",
-                "ip": "192.168.0.2",
-                "port": 7577
-            }
-        ]
+        {
+            "channels": [
+                // Channel 1
+                // Note that the ip and port can be whatever the user wishes
+                {
+                    "host": "channel/sock",
+                    "ip": "192.168.8.100",
+                    "port": 4321
+                },
+                // Channel 2
+                {
+                    "host": "channel/sock",
+                    "ip": "192.168.0.2",
+                    "port": 7575
+                },
+                // Channel 3
+                {
+                    "host": "channel/sock",
+                    "ip": "192.168.0.2",
+                    "port": 7576
+                },
+                // Channel 4
+                {
+                    "host": "channel/sock",
+                    "ip": "192.168.0.2",
+                    "port": 7577
+                }
+            ]
+        }
     ]
 }
