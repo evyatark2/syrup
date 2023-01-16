@@ -1,0 +1,77 @@
+{
+    // Database configuration
+    "database": {
+        // The host can be either be an ip address-port pair:
+        "host": "127.0.0.1",
+        "port": 3306,
+        // ... or a unix domain socket address:
+        // "host": "/run/mysqld/mysqld.sock"
+        // When a unix socket host is used, port is optional and will be ignored if provided.
+
+        "user": "user",
+        // A password is optional and can be omitted of no password is required.
+        "password": "1234",
+        // The database name to use.
+        "db": "syrup"
+    },
+    // Worlds configuration
+    // Worlds can only be enabled in consectuive order, for example you can't enable only Scania and Broa.
+    // Scania, Bera, and Broa must all be enabled together.
+    // Each array index corresponds to a world starting with Scania
+    // In this example we use 2 worlds, Scania and Bera, with 3 and 4 channels respectevly
+    "worlds": [
+        // Scania's configuration
+        [
+            // Channel 1
+            {
+                // The address where the channel listens for the login server
+                "host": "channel/sock",
+                // The IP that will be sent to connecting clients
+                "ip": "192.168.0.1",
+                // The port that will be sent to connecting clients
+                "port": 7575
+            },
+            // Channel 2
+            {
+                "host": "127.1.1.1",
+                "ip": "192.168.0.1",
+                "port": 7576
+            },
+            // Channel 3
+            // Note that the ip and port can be whatever the user wishes
+            {
+                "host": "127.1.1.1",
+                "ip": "192.168.1.17",
+                "port": 1234
+            }
+        ],
+        // Bera's configuration
+        [
+            // Channel 1
+            // Note that the ip and port can be whatever the user wishes
+            {
+                "host": "channel/sock",
+                "ip": "192.168.8.100",
+                "port": 4321
+            },
+            // Channel 2
+            {
+                "host": "channel/sock",
+                "ip": "192.168.0.2",
+                "port": 7575
+            },
+            // Channel 3
+            {
+                "host": "channel/sock",
+                "ip": "192.168.0.2",
+                "port": 7576
+            },
+            // Channel 4
+            {
+                "host": "channel/sock",
+                "ip": "192.168.0.2",
+                "port": 7577
+            }
+        ]
+    ]
+}

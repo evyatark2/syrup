@@ -1,0 +1,9 @@
+/wz
+/.deps
+/channel
+/login
+/obj
+/.cache
+/.gdbinit
+/compile_commands.json
+/vgcore.*

@@ -1,0 +1,11 @@
+{
+    // Database configuration - See login.example.json for an explanation
+    "database": {
+        "host": "/var/lib/mysql/mysql.sock",
+        "user": "evyatar",
+        "db": "syrup"
+    },
+    // Where to listen for the login server.
+    // This should also be provided in the corresponding "host" field in the channel section of the login configuration
+    "listen": "channel/sock"
+}
