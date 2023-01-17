@@ -870,6 +870,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             switch (drop->type) {
             case DROP_TYPE_MESO: {
                 client_gain_meso(client, drop->meso, true, false);
+                map_remove_drop(room_get_context(session_get_room(session)), client->character.id, oid);
             }
             break;
 
@@ -891,6 +892,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
                         size_t len = stat_change_packet(true, 0, NULL, packet);
                         session_write(session, len, packet);
                     }
+                    map_remove_drop(room_get_context(session_get_room(session)), client->character.id, oid);
                 } else {
                     {
                         uint8_t packet[INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH];
@@ -905,7 +907,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
                     }
                 }
             }
-                break;
+            break;
 
             case DROP_TYPE_EQUIP: {
                 bool success;
@@ -925,6 +927,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
                         size_t len = stat_change_packet(true, 0, NULL, packet);
                         session_write(session, len, packet);
                     }
+                    map_remove_drop(room_get_context(session_get_room(session)), client->character.id, oid);
                 } else {
                     {
                         uint8_t packet[INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH];
