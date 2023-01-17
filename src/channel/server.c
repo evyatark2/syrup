@@ -1042,6 +1042,12 @@ static void on_timer_expired(int fd, short what, void *ctx)
             manager->onRoomDestroy(ev.handle->room);
             free(room->timers);
             hash_set_u32_remove(manager->rooms, room->id);
+
+            mtx_lock(manager->worker.roomMapLock);
+            hash_set_u32_remove(manager->worker.roomMap, room->id);
+            mtx_unlock(manager->worker.roomMapLock);
+
+            free(room);
         }
         free(ev.handle);
         next = event_heap_top(&manager->heap);
