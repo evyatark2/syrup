@@ -946,19 +946,22 @@ static void do_send_kick_command(void *data, void *ctx)
 {
     struct SessionRoom *pair = data;
     struct ChannelServer *server = ctx;
-    struct WorkerCommand command = {
-        .type = WORKER_COMMAND_KICK,
-        .addr = pair->addr,
-    };
-
+    size_t thread = -1;
     mtx_lock(server->worker.roomMapLock);
-    size_t thread = ((struct RoomThread *)hash_set_u32_get(server->worker.roomMap, pair->room))->thread;
+    if (hash_set_u32_get(server->worker.roomMap, pair->room) != NULL)
+        thread = ((struct RoomThread *)hash_set_u32_get(server->worker.roomMap, pair->room))->thread;
     mtx_unlock(server->worker.roomMapLock);
 
-    // TODO: Maybe a lock is uneeded
-    mtx_lock(&server->worker.transportMuteces[thread]);
-    write(server->worker.transportSinks[thread], &command, sizeof(struct WorkerCommand));
-    mtx_unlock(&server->worker.transportMuteces[thread]);
+    if (thread != -1) {
+        struct WorkerCommand command = {
+            .type = WORKER_COMMAND_KICK,
+            .addr = pair->addr,
+        };
+
+        mtx_lock(&server->worker.transportMuteces[thread]);
+        write(server->worker.transportSinks[thread], &command, sizeof(struct WorkerCommand));
+        mtx_unlock(&server->worker.transportMuteces[thread]);
+    }
 }
 
 static void on_login_server_read(struct bufferevent *bev, void *ctx)
