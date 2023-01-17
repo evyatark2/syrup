@@ -1514,6 +1514,7 @@ static struct Session *create_session(struct ChannelServer *server, int fd, stru
     memcpy(&new.addr, addr, socklen);
     hash_set_addr_insert(server->sessions, &new);
 
+    session->token = 0;
     session->userEvent = NULL;
     session->writeEnable = false;
 
@@ -1606,6 +1607,23 @@ static void destroy_pending_session(struct Session *session, bool async)
     close(fd);
     encryption_context_destroy(session->sendContext);
     decryption_context_destroy(session->recieveContext);
+
+    if (session->token != 0) {
+        uint8_t data[5];
+        data[0] = 1;
+        memcpy(data + 1, &session->token, 4);
+        mtx_lock(server->worker.mtx);
+        if (!*server->worker.connected || bufferevent_write(*server->worker.login, data, 5) == -1) {
+            struct LoggedOutNode *new = malloc(sizeof(struct LoggedOutNode));
+            if (new != NULL) {
+                new->next = *server->worker.head;
+                new->token = session->token;
+                *server->worker.head = new;
+            }
+        }
+        mtx_unlock(server->worker.mtx);
+    }
+
     if (!async)
         hash_set_addr_remove(server->sessions, (void *)&session->addr);
 
@@ -1972,7 +1990,6 @@ static void do_transfer(struct Session *session)
     } else {
         thread = ((struct RoomThread *)hash_set_u32_get(manager->worker.roomMap, session->targetRoom))->thread;
     }
-
     mtx_unlock(manager->worker.roomMapLock);
 
     int sink = manager->worker.transportSinks[thread];
