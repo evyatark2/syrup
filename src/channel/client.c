@@ -611,14 +611,20 @@ bool client_gain_inventory_item(struct Client *client, const struct InventoryIte
         while (mod_count > 255) {
             uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
             size_t len = modify_items_packet(255, mods, packet);
-            session_write(client->session, len, packet);
+            if (session_write(client->session, len, packet) == -1) {
+                free(mods);
+                return false;
+            }
             mod_count -= 255;
         }
 
         {
             uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
             size_t len = modify_items_packet(mod_count, mods, packet);
-            session_write(client->session, len, packet);
+            if (session_write(client->session, len, packet) == -1) {
+                free(mods);
+                return false;
+            }
         }
 
         free(mods);
@@ -650,7 +656,8 @@ bool client_gain_equipment(struct Client *client, const struct Equipment *item, 
                 {
                     uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
                     size_t len = modify_items_packet(1, &mod, packet);
-                    session_write(client->session, len, packet);
+                    if (session_write(client->session, len, packet) == -1)
+                        return false;
                 }
 
                 *success = true;
