@@ -1024,6 +1024,28 @@ void item_gain_in_chat_packet(uint32_t id, int32_t amount, uint8_t *packet)
     writer_i32(&writer, amount);
 }
 
+void item_unavailable_notification_packet(uint8_t *packet)
+{
+    struct Writer writer;
+    writer_init(&writer, ITEM_UNAVAILABLE_NOTIFICATION_PACKET_LENGTH, packet);
+
+    writer_u16(&writer, 0x0027);
+    writer_u16(&writer, 0);
+    writer_u32(&writer, 0xFE);
+    writer_u64(&writer, 0);
+}
+
+void inventory_full_notification_packet(uint8_t *packet)
+{
+    struct Writer writer;
+    writer_init(&writer, INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH, packet);
+
+    writer_u16(&writer, 0x0027);
+    writer_u16(&writer, 0);
+    writer_u32(&writer, 0xFF);
+    writer_u64(&writer, 0);
+}
+
 void start_quest_packet(uint16_t qid, uint32_t npc, uint8_t *packet)
 {
     struct Writer writer;

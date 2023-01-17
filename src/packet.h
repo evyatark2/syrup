@@ -213,6 +213,12 @@ void item_gain_packet(uint32_t id, int32_t amount, uint8_t *packet);
 #define ITEM_GAIN_IN_CHAT_PACKET_LENGTH 12
 void item_gain_in_chat_packet(uint32_t id, int32_t amount, uint8_t *packet);
 
+#define ITEM_UNAVAILABLE_NOTIFICATION_PACKET_LENGTH 16
+void item_unavailable_notification_packet(uint8_t *packet);
+
+#define INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH 16
+void inventory_full_notification_packet(uint8_t *packet);
+
 #define START_QUEST_PACKET_LENGTH 13
 void start_quest_packet(uint16_t qid, uint32_t npc, uint8_t *packet);
 
