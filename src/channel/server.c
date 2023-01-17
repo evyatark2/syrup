@@ -217,7 +217,7 @@ static struct Session *create_session(struct ChannelServer *server, int fd, stru
 static int finalize_session_connect(struct Session *session);
 static void destroy_pending_session(struct Session *session, bool async);
 static void destroy_session(struct Session *session, bool async);
-static void kick_pending_session(struct Session *session, bool async);
+static bool kick_pending_session(struct Session *session, bool async);
 static bool kick_session(struct Session *session, bool async);
 static void destroy_room(struct RoomManager *manager, struct Room *room, bool async);
 
@@ -857,13 +857,9 @@ struct Command {
     enum CommandType type;
 };
 
-static void do_pending_kick(void *data, void *ctx)
+static bool do_pending_kick(void *data, void *ctx)
 {
-    struct AddrSession *session = data;
-    if (session->session->userEvent != NULL)
-        kick_pending_session(session->session, true);
-    else
-        session->session->state = SESSION_STATE_KICKING;
+    return kick_pending_session(((struct AddrSession *)data)->session, true);
 }
 
 static void on_command(int fd, short what, void *ctx)
@@ -888,7 +884,7 @@ static void on_command(int fd, short what, void *ctx)
         event_free(server->commandEvent);
         evconnlistener_free(server->worker.listener);
         server->worker.listener = NULL;
-        hash_set_addr_foreach(server->sessions, do_pending_kick, NULL);
+        hash_set_addr_foreach_with_remove(server->sessions, do_pending_kick, NULL);
     } else if (status == -1) {
     } else {
     }
@@ -906,9 +902,8 @@ static void on_session_connect(struct evconnlistener *listener, evutil_socket_t 
 
     int status = server->onClientConnect(session, server->userData, server->worker.userData, addr);
     if (status == 0) {
-        if (session->userEvent == NULL && finalize_session_connect(session) == -1) {
+        if (session->userEvent == NULL && finalize_session_connect(session) == -1)
             kick_pending_session(session, false);
-        }
     } else {
         bufferevent_free(session->event);
         close(fd);
@@ -1030,7 +1025,7 @@ static void on_timer_expired(int fd, short what, void *ctx)
     struct RoomManager *manager = ctx;
     uint64_t count;
     if (read(fd, &count, 8) == -1)
-        return; // EAGAIN can happen if the timer has expired and at the same time we removed the top event in the heap
+        return; // EAGAIN can happen if the timer has expired and at the same time we removed the top event in the heap in some previous callback
     struct TimerEvent *next;
     struct timespec current_time;
     do {
@@ -1116,9 +1111,12 @@ static void on_session_join(int fd, short what, void *ctx_)
         int fd = event_get_fd(manager->worker.transportEvent);
         event_free(manager->worker.transportEvent);
         close(fd);
+        // Start by killing timers that are marked 'keepAlive'
         hash_set_u32_foreach(manager->rooms, do_kill_timers, manager);
 
         event_del(manager->timer);
+
+        // timers that aren't keepAlive will be killed here
         hash_set_u32_foreach_with_remove(manager->rooms, do_kill_room, manager);
     } else if (status != -1) {
         switch (command.type) {
@@ -1322,27 +1320,25 @@ static void on_worker_user_fd_ready(int fd, short what, void *ctx)
 
         if (res.status < 0) {
             kick_session(session, false);
-        } else {
-            if (session->state == SESSION_STATE_KICKING) {
-                kick_session(session, false);
-            } else if (session->state == SESSION_STATE_DISCONNECTING) {
-                destroy_session(session, false);
-            } else if (res.room != -1) {
-                session->targetRoom = res.room;
-                if (evbuffer_get_length(bufferevent_get_output(session->event)) != 0) {
-                    bufferevent_setcb(session->event, NULL, on_session_write, on_session_event, session);
-                } else {
-                    void *temp = bufferevent_get_underlying(session->event);
-                    bufferevent_free(session->event);
-                    session->event = temp;
-                    if (evbuffer_get_length(bufferevent_get_output(session->event)) != 0)
-                        bufferevent_setcb(session->event, NULL, on_session_write, on_session_event, session);
-                    else
-                        do_transfer(session);
-                }
+        } else if (session->state == SESSION_STATE_KICKING) {
+            kick_session(session, false);
+        } else if (session->state == SESSION_STATE_DISCONNECTING) {
+            destroy_session(session, false);
+        } else if (res.room != -1) {
+            session->targetRoom = res.room;
+            if (evbuffer_get_length(bufferevent_get_output(session->event)) != 0) {
+                bufferevent_setcb(session->event, NULL, on_session_write, on_session_event, session);
             } else {
-                bufferevent_enable(session->event, EV_READ);
+                void *temp = bufferevent_get_underlying(session->event);
+                bufferevent_free(session->event);
+                session->event = temp;
+                if (evbuffer_get_length(bufferevent_get_output(session->event)) != 0)
+                    bufferevent_setcb(session->event, NULL, on_session_write, on_session_event, session);
+                else
+                    do_transfer(session);
             }
+        } else {
+            bufferevent_enable(session->event, EV_READ);
         }
     }
 }
@@ -1650,29 +1646,24 @@ static void destroy_session(struct Session *session, bool async)
     free(session);
 }
 
-static void kick_pending_session(struct Session *session, bool async)
+static bool kick_common(struct Worker *worker, struct Session *session, void (*destroy)(struct Session *session, bool async), bool async);
+
+static bool kick_pending_session(struct Session *session, bool async)
 {
-    struct Worker *worker = session->supervisor;
-    if (session->userEvent == NULL) {
-        worker->onClientDisconnect(session);
-        if (session->userEvent == NULL) {
-            destroy_pending_session(session, async);
-        } else {
-            bufferevent_disable(session->event, EV_READ);
-            session->state = SESSION_STATE_DISCONNECTING;
-        }
-    } else {
-        session->state = SESSION_STATE_KICKING;
-    }
+    return kick_common(&((struct ChannelServer *)session->supervisor)->worker, session, destroy_pending_session, async);
 }
 
 static bool kick_session(struct Session *session, bool async)
 {
-    struct Worker *worker = session->supervisor;
+    return kick_common(&((struct RoomManager *)session->supervisor)->worker, session, destroy_session, async);
+}
+
+static bool kick_common(struct Worker *worker, struct Session *session, void (*destroy)(struct Session *session, bool async), bool async)
+{
     if (session->userEvent == NULL) {
         worker->onClientDisconnect(session);
         if (session->userEvent == NULL) {
-            destroy_session(session, async);
+            destroy(session, async);
             return true;
         } else {
             bufferevent_disable(session->event, EV_READ);
