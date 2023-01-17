@@ -75,7 +75,6 @@ void client_set_mp(struct Client *client, int16_t mp);
 void client_adjust_mp(struct Client *client, int16_t mp);
 void client_adjust_sp(struct Client *client, int16_t sp);
 void client_gain_exp(struct Client *client, int32_t exp, bool reward);
-void client_level_up(struct Client *client);
 void client_gain_meso(struct Client *client, int32_t mesos, bool pickup, bool reward);
 void client_adjust_fame(struct Client *client, int16_t fame);
 bool client_has_item(struct Client *client, uint32_t id);

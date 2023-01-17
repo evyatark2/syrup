@@ -223,8 +223,6 @@ void client_gain_exp(struct Client *client, int32_t exp, bool reward)
     }
 }
 
-void client_level_up(struct Client *client);
-
 void client_gain_meso(struct Client *client, int32_t mesos, bool pickup, bool reward)
 {
     if (mesos > 0) {
