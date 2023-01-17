@@ -19,9 +19,6 @@ struct MapHandle {
     struct Session *session;
 };
 
-static void monster_controller_for_each(struct MapHandle *controller, void (*f)(uint32_t oid, struct Monster *monster, struct Session *session));
-static struct Session *monster_controller_get_session(struct MapHandle *controller);
-
 struct Spawner {
     uint32_t id;
     int16_t x;
@@ -135,19 +132,12 @@ struct Map {
     struct DropBatch *dropBatches;
 };
 
-static struct MapHandle *map_switch_control(struct Map *map, struct MapHandle *new, uint32_t oid);
-static bool map_is_monster_alive(struct Map *map, uint32_t oid);
-static bool map_is_monster_controlled_by(struct Map *map, struct MapHandle *controller, uint32_t oid);
-static void map_make_monster_ethereal(struct Map *map, uint32_t oid);
 static void map_kill_monster(struct Map *map, uint32_t oid);
-static void map_respawn(struct Map *map);
 static bool map_calculate_drop_position(struct Map *map, struct Point *p);
 
 static void on_next_drop(struct Room *room, struct TimerHandle *handle);
 static void on_drop_time_expired(struct Room *room, struct TimerHandle *handle);
 static void on_respawn(struct Room *room, struct TimerHandle *handle);
-
-static void notify_monster_control_on_map(uint32_t oid, struct Monster *monster, struct Session *session);
 
 struct Map *map_create(struct Room *room)
 {
@@ -387,7 +377,12 @@ void map_leave(struct Map *map, struct MapHandle *handle)
                 next->controller->count++;
             }
             free(handle->monsters);
-            monster_controller_for_each(next->controller, notify_monster_control_on_map);
+            for (size_t i = 0; i < next->controller->count; i++) {
+                struct Monster *monster = next->controller->monsters[i];
+                uint8_t packet[SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH];
+                spawn_monster_controller_packet(monster->oid, false, monster->id, monster->x, monster->y, monster->fh, false, packet);
+                session_write(next->controller->session, SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH, packet);
+            }
             if (handle - map->handles != map->handleCount - 1) {
                 map->handles[handle - map->handles] = map->handles[map->handleCount - 1];
                 map->handles[handle - map->handles].container->handle = &map->handles[handle - map->handles];
@@ -436,15 +431,29 @@ void map_for_each_drop(struct Map *map, void (*f)(struct Drop *, void *), void *
 uint32_t map_damage_monster_by(struct Map *map, struct MapHandle *handle, uint32_t char_id, uint32_t oid, size_t hit_count, int32_t *damage)
 {
     struct MapObject *object = object_list_get(&map->objectList, oid);
+    if (object == NULL || object->type != MAP_OBJECT_MONSTER)
+        return -1;
+
     struct Monster *monster = &map->monsters[object->index];
 
-    if (map_is_monster_alive(map, oid)) {
-        if (!map_is_monster_controlled_by(map, handle, oid)) {
-            struct MapHandle *old = map_switch_control(map, handle, oid);
+    if (monster->hp > 0) {
+        if (monster->controller != handle) {
+            // Switch the control of the monster
+            struct MapObject *object = object_list_get(&map->objectList, oid);
+            struct Monster *monster = &map->monsters[object->index];
+            struct MapHandle *old = monster->controller;
+            old->count--;
+            old->monsters[monster->indexInController] = old->monsters[old->count];
+            old->monsters[monster->indexInController]->indexInController = monster->indexInController;
+            monster->controller = handle;
+            monster->indexInController = handle->count;
+            handle->monsters[handle->count] = monster;
+            handle->count++;
+
             {
                 uint8_t packet[REMOVE_MONSTER_CONTROLLER_PACKET_LENGTH];
                 remove_monster_controller_packet(oid, packet);
-                session_write(monster_controller_get_session(old), REMOVE_MONSTER_CONTROLLER_PACKET_LENGTH, packet);
+                session_write(old->session, REMOVE_MONSTER_CONTROLLER_PACKET_LENGTH, packet);
             }
 
             {
@@ -468,7 +477,15 @@ uint32_t map_damage_monster_by(struct Map *map, struct MapHandle *handle, uint32
 
         if (monster->hp == 0) {
             const struct MonsterDropInfo *info = drop_info_find(monster->id);
-            map_make_monster_ethereal(map, monster->oid);
+
+            // Remove the controller from the monster
+            if (monster->controller != NULL) {
+                monster->controller->monsters[monster->indexInController] = monster->controller->monsters[monster->controller->count - 1];
+                monster->controller->monsters[monster->indexInController]->indexInController = monster->indexInController;
+                monster->controller->count--;
+                monster->controller = NULL;
+            }
+
             if (info != NULL) {
                 struct Drop drops[info->count];
                 size_t drop_count = 0;
@@ -747,63 +764,6 @@ void map_remove_drop(struct Map *map, uint32_t char_id, uint32_t oid)
     }
 }
 
-static void monster_controller_for_each(struct MapHandle *controller, void (*f)(uint32_t, struct Monster *, struct Session *))
-{
-    for (size_t i = 0; i < controller->count; i++)
-        f(controller->monsters[i]->oid, controller->monsters[i], controller->session);
-}
-
-static struct Session *monster_controller_get_session(struct MapHandle *controller)
-{
-    return controller->session;
-}
-
-static struct MapHandle *map_switch_control(struct Map *map, struct MapHandle *new, uint32_t oid)
-{
-    struct MapObject *object = object_list_get(&map->objectList, oid);
-    struct Monster *monster = &map->monsters[object->index];
-    struct MapHandle *old = monster->controller;
-    old->count--;
-    old->monsters[monster->indexInController] = old->monsters[old->count];
-    old->monsters[monster->indexInController]->indexInController = monster->indexInController;
-    monster->controller = new;
-    monster->indexInController = new->count;
-    new->monsters[new->count] = monster;
-    new->count++;
-    return old;
-}
-
-static bool map_is_monster_alive(struct Map *map, uint32_t oid)
-{
-    struct MapObject *object = object_list_get(&map->objectList, oid);
-    if (object == NULL || object->type != MAP_OBJECT_MONSTER)
-        return false;
-
-    struct Monster *monster = &map->monsters[object->index];
-    return monster->hp > 0;
-}
-
-static bool map_is_monster_controlled_by(struct Map *map, struct MapHandle *controller, uint32_t oid)
-{
-    struct MapObject *object = object_list_get(&map->objectList, oid);
-    if (object == NULL || object->type != MAP_OBJECT_MONSTER || map->monsters[object->index].controller != controller)
-        return false;
-
-    return true;
-}
-
-static void map_make_monster_ethereal(struct Map *map, uint32_t oid)
-{
-    struct MapObject *object = object_list_get(&map->objectList, oid);
-    struct Monster *monster = &map->monsters[object->index];
-    if (monster->controller != NULL) {
-        monster->controller->monsters[monster->indexInController] = monster->controller->monsters[monster->controller->count - 1];
-        monster->controller->monsters[monster->indexInController]->indexInController = monster->indexInController;
-        monster->controller->count--;
-        monster->controller = NULL;
-    }
-}
-
 static void map_kill_monster(struct Map *map, uint32_t oid)
 {
     struct MapObject *object = object_list_get(&map->objectList, oid);
@@ -823,58 +783,6 @@ static void map_kill_monster(struct Map *map, uint32_t oid)
     room_broadcast(map->room, KILL_MONSTER_PACKET_LENGTH, packet);
 }
 
-static void map_respawn(struct Map *map)
-{
-    struct ControllerHeapNode *next = heap_top(&map->heap);
-    for (size_t i = 0; i < map->deadCount; i++) {
-        if (map->monsterCount == map->monsterCapacity) {
-            struct Monster *temp = realloc(map->monsters, (map->monsterCapacity * 2) * sizeof(struct Monster));
-            if (temp == NULL)
-                return;
-
-            map->monsters = temp;
-
-            for (size_t i = 0; i < map->monsterCount; i++)
-                map->monsters[i].controller->monsters[map->monsters[i].indexInController] = &map->monsters[map->monsterCount];
-
-            map->monsterCapacity *= 2;
-        }
-
-        uint32_t oid = object_list_allocate(&map->objectList);
-        struct MapObject *obj = object_list_get(&map->objectList, oid);
-        obj->type = MAP_OBJECT_MONSTER;
-        obj->index = map->monsterCount;
-        map->monsters[map->monsterCount].oid = oid;
-        map->monsters[map->monsterCount].id = map->spawners[map->dead[i]].id;
-        map->monsters[map->monsterCount].spawnerIndex = map->dead[i];
-        map->monsters[map->monsterCount].controller = next->controller;
-        map->monsters[map->monsterCount].indexInController = next->controller->count;
-        map->monsters[map->monsterCount].x = map->spawners[map->dead[i]].x;
-        map->monsters[map->monsterCount].y = map->spawners[map->dead[i]].y;
-        map->monsters[map->monsterCount].fh = map->spawners[map->dead[i]].fh;
-        map->monsters[map->monsterCount].hp = wz_get_monster_stats(map->spawners[map->dead[i]].id)->hp;
-        next->controller->monsters[next->controller->count] = &map->monsters[map->monsterCount];
-        next->controller->count++;
-        map->monsterCount++;
-    }
-
-    heap_inc(&map->heap, map->deadCount);
-
-    for (size_t i = map->monsterCount - map->deadCount; i < map->monsterCount; i++) {
-        uint8_t packet[SPAWN_MONSTER_PACKET_LENGTH];
-        spawn_monster_packet(map->monsters[i].oid, map->monsters[i].id, map->monsters[i].x, map->monsters[i].y, map->monsters[i].fh, true, packet);
-        room_broadcast(map->room, SPAWN_MONSTER_PACKET_LENGTH, packet);
-    }
-
-    for (size_t i = map->monsterCount - map->deadCount; i < map->monsterCount; i++) {
-        uint8_t packet[SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH];
-        spawn_monster_controller_packet(map->monsters[i].oid, false, map->monsters[i].id, map->monsters[i].x, map->monsters[i].y, map->monsters[i].fh, true, packet);
-        session_write(next->controller->session, SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH, packet);
-    }
-
-    map->deadCount = 0;
-}
-
 static bool map_calculate_drop_position(struct Map *map, struct Point *p)
 {
     const struct Foothold *fh = foothold_tree_find_below(map->footholdTree, p);
@@ -885,6 +793,7 @@ static bool map_calculate_drop_position(struct Map *map, struct Point *p)
         p->y = fh->p1.y;
     else
         p->y = (fh->p2.y - fh->p1.y) * (p->x - fh->p2.x) / (fh->p2.x - fh->p1.x) + fh->p2.y;
+
     return true;
 }
 
@@ -1016,16 +925,57 @@ static void on_drop_time_expired(struct Room *room, struct TimerHandle *handle)
 static void on_respawn(struct Room *room, struct TimerHandle *handle)
 {
     struct Map *map = room_get_context(room);
-    map_respawn(map);
+
+    struct ControllerHeapNode *next = heap_top(&map->heap);
+    for (size_t i = 0; i < map->deadCount; i++) {
+        if (map->monsterCount == map->monsterCapacity) {
+            struct Monster *temp = realloc(map->monsters, (map->monsterCapacity * 2) * sizeof(struct Monster));
+            if (temp == NULL)
+                return;
+
+            map->monsters = temp;
+
+            for (size_t i = 0; i < map->monsterCount; i++)
+                map->monsters[i].controller->monsters[map->monsters[i].indexInController] = &map->monsters[map->monsterCount];
+
+            map->monsterCapacity *= 2;
+        }
+
+        uint32_t oid = object_list_allocate(&map->objectList);
+        struct MapObject *obj = object_list_get(&map->objectList, oid);
+        obj->type = MAP_OBJECT_MONSTER;
+        obj->index = map->monsterCount;
+        map->monsters[map->monsterCount].oid = oid;
+        map->monsters[map->monsterCount].id = map->spawners[map->dead[i]].id;
+        map->monsters[map->monsterCount].spawnerIndex = map->dead[i];
+        map->monsters[map->monsterCount].controller = next->controller;
+        map->monsters[map->monsterCount].indexInController = next->controller->count;
+        map->monsters[map->monsterCount].x = map->spawners[map->dead[i]].x;
+        map->monsters[map->monsterCount].y = map->spawners[map->dead[i]].y;
+        map->monsters[map->monsterCount].fh = map->spawners[map->dead[i]].fh;
+        map->monsters[map->monsterCount].hp = wz_get_monster_stats(map->spawners[map->dead[i]].id)->hp;
+        next->controller->monsters[next->controller->count] = &map->monsters[map->monsterCount];
+        next->controller->count++;
+        map->monsterCount++;
+    }
+
+    heap_inc(&map->heap, map->deadCount);
+
+    for (size_t i = map->monsterCount - map->deadCount; i < map->monsterCount; i++) {
+        uint8_t packet[SPAWN_MONSTER_PACKET_LENGTH];
+        spawn_monster_packet(map->monsters[i].oid, map->monsters[i].id, map->monsters[i].x, map->monsters[i].y, map->monsters[i].fh, true, packet);
+        room_broadcast(map->room, SPAWN_MONSTER_PACKET_LENGTH, packet);
+    }
+
+    for (size_t i = map->monsterCount - map->deadCount; i < map->monsterCount; i++) {
+        uint8_t packet[SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH];
+        spawn_monster_controller_packet(map->monsters[i].oid, false, map->monsters[i].id, map->monsters[i].x, map->monsters[i].y, map->monsters[i].fh, true, packet);
+        session_write(next->controller->session, SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH, packet);
+    }
+
+    map->deadCount = 0;
 
     map->respawnHandle = room_add_timer(map->room, 10 * 1000, on_respawn, NULL, false);
-}
-
-static void notify_monster_control_on_map(uint32_t oid, struct Monster *monster, struct Session *session)
-{
-    uint8_t packet[SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH];
-    spawn_monster_controller_packet(monster->oid, false, monster->id, monster->x, monster->y, monster->fh, false, packet);
-    session_write(session, SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH, packet);
 }
 
 static int object_list_init(struct ObjectList *list)
