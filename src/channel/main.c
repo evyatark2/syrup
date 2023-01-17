@@ -509,7 +509,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             if (inventory != 1) {
                 drop.type = DROP_TYPE_ITEM;
                 bool success;
-                if (!client_remove_item(client, inventory, src, quantity, &success, &drop.item.item))
+                if (!client_remove_item(client, inventory, src, quantity, &success, &drop.item))
                     return (struct OnPacketResult) { .status = -1 };
 
                 if (!success)
@@ -521,14 +521,14 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
                 drop.type = DROP_TYPE_EQUIP;
                 if (src < 0) {
                     bool success;
-                    if (!client_remove_equip(client, true, -src, &success, &drop.equip.equip))
+                    if (!client_remove_equip(client, true, -src, &success, &drop.equip))
                         return (struct OnPacketResult) { .status = -1 };
 
                     if (!success)
                         return (struct OnPacketResult) { .status = 0, .room = -1 };
                 } else {
                     bool success;
-                    if (!client_remove_equip(client, false, src, &success, &drop.equip.equip))
+                    if (!client_remove_equip(client, false, src, &success, &drop.equip))
                         return (struct OnPacketResult) { .status = -1 };
 
                     if (!success)
@@ -862,14 +862,14 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
 
             case DROP_TYPE_ITEM: {
                 bool success;
-                if (!client_gain_inventory_item(client, &drop.item.item, &success)) {
+                if (!client_gain_inventory_item(client, &drop->item, &success)) {
                     return (struct OnPacketResult) { .status = -1 };
                 }
 
                 if (success) {
                     {
                         uint8_t packet[ITEM_GAIN_PACKET_LENGTH];
-                        item_gain_packet(drop.item.item.item.itemId, drop.item.item.quantity, packet);
+                        item_gain_packet(drop->item.item.itemId, drop->item.quantity, packet);
                         session_write(session, ITEM_GAIN_PACKET_LENGTH, packet);
                     }
 
@@ -879,22 +879,31 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
                         session_write(session, len, packet);
                     }
                 } else {
-                    // TODO: Notify no inventory space
-                }
+                    {
+                        uint8_t packet[INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH];
+                        inventory_full_notification_packet(packet);
+                        session_write(session, INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH, packet);
+                    }
 
+                    {
+                        uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
+                        size_t len = modify_items_packet(0, NULL, packet);
+                        session_write(session, len, packet);
+                    }
+                }
             }
-            break;
+                break;
 
             case DROP_TYPE_EQUIP: {
                 bool success;
-                if (!client_gain_equipment(client, &drop.equip.equip, false, &success)) {
+                if (!client_gain_equipment(client, &drop->equip, false, &success)) {
                     return (struct OnPacketResult) { .status = -1 };
                 }
 
                 if (success) {
                     {
                         uint8_t packet[ITEM_GAIN_PACKET_LENGTH];
-                        item_gain_packet(drop.equip.equip.item.itemId, 1, packet);
+                        item_gain_packet(drop->equip.item.itemId, 1, packet);
                         session_write(session, ITEM_GAIN_PACKET_LENGTH, packet);
                     }
 
@@ -1227,13 +1236,13 @@ static void notify_drop_on_map(struct Drop *drop, void *ctx)
     break;
     case DROP_TYPE_ITEM: {
         uint8_t packet[SPAWN_ITEM_DROP_PACKET_LENGTH];
-        spawn_item_drop_packet(drop->oid, drop->item.item.item.itemId, 0, drop->pos.x, drop->pos.y, 0, packet);
+        spawn_item_drop_packet(drop->oid, drop->item.item.itemId, 0, drop->pos.x, drop->pos.y, 0, packet);
         session_write(ctx, SPAWN_ITEM_DROP_PACKET_LENGTH, packet);
     }
     break;
     case DROP_TYPE_EQUIP: {
         uint8_t packet[SPAWN_ITEM_DROP_PACKET_LENGTH];
-        spawn_item_drop_packet(drop->oid, drop->equip.equip.item.itemId, 0, drop->pos.x, drop->pos.y, 0, packet);
+        spawn_item_drop_packet(drop->oid, drop->equip.item.itemId, 0, drop->pos.x, drop->pos.y, 0, packet);
         session_write(ctx, SPAWN_ITEM_DROP_PACKET_LENGTH, packet);
     }
     break;

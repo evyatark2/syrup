@@ -35,15 +35,9 @@ struct Drop {
     enum DropType type;
     struct Point pos;
     union {
-        struct {
-            int32_t amount;
-        } meso;
-        struct {
-            struct InventoryItem item;
-        } item;
-        struct {
-            struct Equipment equip;
-        } equip;
+        int32_t meso;
+        struct InventoryItem item;
+        struct Equipment equip;
     };
 };
 

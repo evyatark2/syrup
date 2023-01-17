@@ -264,7 +264,7 @@ struct Map *map_create(struct Room *room)
     map->dropBatchEnd = 0;
 
     map->room = room;
-    
+
     return map;
 }
 
@@ -466,21 +466,21 @@ uint32_t map_damage_monster_by(struct Map *map, struct MapHandle *handle, uint32
                         drops[drop_count].type = info->drops[i].itemId == 0 ? DROP_TYPE_MESO : (info->drops[i].itemId / 1000000 == 1 ? DROP_TYPE_EQUIP : DROP_TYPE_ITEM);
                         switch (drops[drop_count].type) {
                         case DROP_TYPE_MESO:
-                            drops[drop_count].meso.amount = rand() % (info->drops[i].max - info->drops[i].min + 1) + info->drops[i].min;
+                            drops[drop_count].meso = rand() % (info->drops[i].max - info->drops[i].min + 1) + info->drops[i].min;
                         break;
 
                         case DROP_TYPE_ITEM:
-                            drops[drop_count].item.item.item.id = 0;
-                            drops[drop_count].item.item.item.itemId = info->drops[i].itemId;
-                            drops[drop_count].item.item.item.ownerLength = 0;
-                            drops[drop_count].item.item.item.flags = 0;
-                            drops[drop_count].item.item.item.expiration = -1;
-                            drops[drop_count].item.item.item.giftFromLength = 0;
-                            drops[drop_count].item.item.quantity = rand() % (info->drops[i].max - info->drops[i].min + 1) + info->drops[i].min;
+                            drops[drop_count].item.item.id = 0;
+                            drops[drop_count].item.item.itemId = info->drops[i].itemId;
+                            drops[drop_count].item.item.ownerLength = 0;
+                            drops[drop_count].item.item.flags = 0;
+                            drops[drop_count].item.item.expiration = -1;
+                            drops[drop_count].item.item.giftFromLength = 0;
+                            drops[drop_count].item.quantity = rand() % (info->drops[i].max - info->drops[i].min + 1) + info->drops[i].min;
                         break;
 
                         case DROP_TYPE_EQUIP:
-                            drops[drop_count].equip.equip = equipment_from_info(wz_get_equip_info(info->drops[i].itemId));
+                            drops[drop_count].equip = equipment_from_info(wz_get_equip_info(info->drops[i].itemId));
                         break;
                         }
                         drop_count++;
@@ -700,14 +700,14 @@ void map_add_drop_batch(struct Map *map, uint32_t char_id, uint32_t monster_oid,
             break;
         case DROP_TYPE_ITEM: {
             uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
-            drop_item_from_object_packet(drop->oid, drop->item.item.item.itemId, char_id, drop->pos.x, drop->pos.y, drop->pos.x, drop->pos.y, monster_oid, packet);
+            drop_item_from_object_packet(drop->oid, drop->item.item.itemId, char_id, drop->pos.x, drop->pos.y, drop->pos.x, drop->pos.y, monster_oid, packet);
             room_broadcast(map->room, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet);
         }
         break;
 
         case DROP_TYPE_EQUIP: {
             uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
-            drop_item_from_object_packet(drop->oid, drop->equip.equip.item.itemId, char_id, drop->pos.x, drop->pos.y, drop->pos.x, drop->pos.y, monster_oid, packet);
+            drop_item_from_object_packet(drop->oid, drop->equip.item.itemId, char_id, drop->pos.x, drop->pos.y, drop->pos.x, drop->pos.y, monster_oid, packet);
             room_broadcast(map->room, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet);
         }
         break;
@@ -757,14 +757,14 @@ void map_add_drop_batch(struct Map *map, uint32_t char_id, uint32_t monster_oid,
 
         case DROP_TYPE_ITEM: {
             uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
-            drop_item_from_object_packet(drop->oid, drop->item.item.item.itemId, char_id, drop->pos.x, drop->pos.y, drop->pos.x, drop->pos.y, monster_oid, packet);
+            drop_item_from_object_packet(drop->oid, drop->item.item.itemId, char_id, drop->pos.x, drop->pos.y, drop->pos.x, drop->pos.y, monster_oid, packet);
             room_broadcast(map->room, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet);
         }
         break;
 
         case DROP_TYPE_EQUIP: {
             uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
-            drop_item_from_object_packet(drop->oid, drop->equip.equip.item.itemId, char_id, drop->pos.x, drop->pos.y, drop->pos.x, drop->pos.y, monster_oid, packet);
+            drop_item_from_object_packet(drop->oid, drop->equip.item.itemId, char_id, drop->pos.x, drop->pos.y, drop->pos.x, drop->pos.y, monster_oid, packet);
             room_broadcast(map->room, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet);
         }
         break;
@@ -899,14 +899,14 @@ static void on_next_drop(struct Room *room, struct TimerHandle *handle)
     break;
     case DROP_TYPE_ITEM: {
         uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
-        drop_item_from_object_packet(drop->oid, drop->item.item.item.itemId, batch->char_id, drop->pos.x, drop->pos.y, drop->pos.x, drop->pos.y, batch->monster_oid, packet);
+        drop_item_from_object_packet(drop->oid, drop->item.item.itemId, batch->char_id, drop->pos.x, drop->pos.y, drop->pos.x, drop->pos.y, batch->monster_oid, packet);
         room_broadcast(map->room, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet);
     }
     break;
 
     case DROP_TYPE_EQUIP: {
         uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
-        drop_item_from_object_packet(drop->oid, drop->equip.equip.item.itemId, batch->char_id, drop->pos.x, drop->pos.y, drop->pos.x, drop->pos.y, batch->monster_oid, packet);
+        drop_item_from_object_packet(drop->oid, drop->equip.item.itemId, batch->char_id, drop->pos.x, drop->pos.y, drop->pos.x, drop->pos.y, batch->monster_oid, packet);
         room_broadcast(map->room, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet);
     }
     break;
