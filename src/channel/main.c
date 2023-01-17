@@ -867,81 +867,42 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             }
         } else {
             // TODO: Check if this client is allowed to pick up the drop
+            bool success = false;
+            uint32_t id;
             switch (drop->type) {
-            case DROP_TYPE_MESO: {
+            case DROP_TYPE_MESO:
                 client_gain_meso(client, drop->meso, true, false);
-                map_remove_drop(room_get_context(session_get_room(session)), client->character.id, oid);
-            }
             break;
 
-            case DROP_TYPE_ITEM: {
-                bool success;
-                if (!client_gain_inventory_item(client, &drop->item, &success)) {
+            case DROP_TYPE_ITEM:
+                if (!client_gain_inventory_item(client, &drop->item, &success))
                     return (struct OnPacketResult) { .status = -1 };
-                }
 
-                if (success) {
-                    {
-                        uint8_t packet[ITEM_GAIN_PACKET_LENGTH];
-                        item_gain_packet(drop->item.item.itemId, drop->item.quantity, packet);
-                        session_write(session, ITEM_GAIN_PACKET_LENGTH, packet);
-                    }
-
-                    {
-                        uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
-                        size_t len = stat_change_packet(true, 0, NULL, packet);
-                        session_write(session, len, packet);
-                    }
-                    map_remove_drop(room_get_context(session_get_room(session)), client->character.id, oid);
-                } else {
-                    {
-                        uint8_t packet[INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH];
-                        inventory_full_notification_packet(packet);
-                        session_write(session, INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH, packet);
-                    }
-
-                    {
-                        uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
-                        size_t len = modify_items_packet(0, NULL, packet);
-                        session_write(session, len, packet);
-                    }
-                }
-            }
+                id = drop->item.item.itemId;
             break;
 
-            case DROP_TYPE_EQUIP: {
-                bool success;
-                if (!client_gain_equipment(client, &drop->equip, false, &success)) {
+            case DROP_TYPE_EQUIP:
+                if (!client_gain_equipment(client, &drop->equip, false, &success))
                     return (struct OnPacketResult) { .status = -1 };
-                }
 
-                if (success) {
-                    {
-                        uint8_t packet[ITEM_GAIN_PACKET_LENGTH];
-                        item_gain_packet(drop->equip.item.itemId, 1, packet);
-                        session_write(session, ITEM_GAIN_PACKET_LENGTH, packet);
-                    }
-
-                    {
-                        uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
-                        size_t len = stat_change_packet(true, 0, NULL, packet);
-                        session_write(session, len, packet);
-                    }
-                    map_remove_drop(room_get_context(session_get_room(session)), client->character.id, oid);
-                } else {
-                    {
-                        uint8_t packet[INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH];
-                        inventory_full_notification_packet(packet);
-                        session_write(session, INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH, packet);
-                    }
-
-                    {
-                        uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
-                        size_t len = modify_items_packet(0, NULL, packet);
-                        session_write(session, len, packet);
-                    }
-                }
+                id = drop->equip.item.itemId;
+            break;
             }
+
+            map_remove_drop(room_get_context(session_get_room(session)), client->character.id, oid);
+
+            if (success) {
+                {
+                    uint8_t packet[ITEM_GAIN_PACKET_LENGTH];
+                    item_gain_packet(id, 1, packet);
+                    session_write(session, ITEM_GAIN_PACKET_LENGTH, packet);
+                }
+
+                {
+                    uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
+                    size_t len = stat_change_packet(true, 0, NULL, packet);
+                    session_write(session, len, packet);
+                }
             }
         }
     }
