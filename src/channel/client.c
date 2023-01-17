@@ -830,7 +830,7 @@ bool client_move_item(struct Client *client, uint8_t inventory, uint8_t src, uin
                     mods[0].mode = INVENTORY_MODIFY_TYPE_MODIFY;
                     mods[0].inventory = inventory + 2;
                     mods[0].slot = src + 1;
-                    mods[1].quantity = chr->inventory[inventory].items[src].item.quantity;
+                    mods[0].quantity = chr->inventory[inventory].items[src].item.quantity;
                     mods[1].mode = INVENTORY_MODIFY_TYPE_MODIFY;
                     mods[1].inventory = inventory + 2;
                     mods[1].slot = dst + 1;
