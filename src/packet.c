@@ -1030,8 +1030,8 @@ void item_unavailable_notification_packet(uint8_t *packet)
     writer_init(&writer, ITEM_UNAVAILABLE_NOTIFICATION_PACKET_LENGTH, packet);
 
     writer_u16(&writer, 0x0027);
-    writer_u16(&writer, 0);
-    writer_u32(&writer, 0xFE);
+    writer_u8(&writer, 0);
+    writer_u8(&writer, 0xFE);
     writer_u64(&writer, 0);
 }
 
@@ -1041,8 +1041,8 @@ void inventory_full_notification_packet(uint8_t *packet)
     writer_init(&writer, INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH, packet);
 
     writer_u16(&writer, 0x0027);
-    writer_u16(&writer, 0);
-    writer_u32(&writer, 0xFF);
+    writer_u8(&writer, 0);
+    writer_u8(&writer, 0xFF);
     writer_u64(&writer, 0);
 }
 
