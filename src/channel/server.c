@@ -1943,17 +1943,17 @@ static void do_pending_assign(struct Session *session)
 
     mtx_unlock(server->worker.roomMapLock);
 
-    bool sent;
-    mtx_lock(&server->worker.transportMuteces[thread]);
-
     struct SessionRoom new = {
         .addr = addr,
         .room = room_id
     };
+
     mtx_lock(server->worker.sessionsLock);
     hash_set_addr_insert(server->worker.sessions, (void *)&new);
     mtx_unlock(server->worker.sessionsLock);
 
+    bool sent;
+    mtx_lock(&server->worker.transportMuteces[thread]);
     sent = write(server->worker.transportSinks[thread], &transfer, sizeof(struct WorkerCommand)) != -1;
     mtx_unlock(&server->worker.transportMuteces[thread]);
 
@@ -1976,9 +1976,9 @@ static void do_transfer(struct Session *session)
     };
 
     struct Room *room = session->room;
-    mtx_lock(manager->worker.roomMapLock);
 
     size_t thread;
+    mtx_lock(manager->worker.roomMapLock);
     if (hash_set_u32_get(manager->worker.roomMap, session->targetRoom) == NULL) {
         // TODO: Pick the least busy thread
         struct RoomThread new = {
@@ -2000,11 +2000,6 @@ static void do_transfer(struct Session *session)
 
     bool sent;
     mtx_lock(&manager->worker.transportMuteces[thread]);
-
-    mtx_lock(manager->worker.sessionsLock);
-    ((struct SessionRoom *)hash_set_addr_get(manager->worker.sessions, (void *)&addr))->room = room_id;
-    mtx_unlock(manager->worker.sessionsLock);
-
     sent = write(sink, &transfer, sizeof(struct WorkerCommand)) != -1;
     mtx_unlock(&manager->worker.transportMuteces[thread]);
 
@@ -2016,6 +2011,13 @@ static void do_transfer(struct Session *session)
 
         hash_set_addr_remove(manager->sessions, (void *)&addr);
 
+        mtx_lock(manager->worker.sessionsLock);
+        // By this time the client could be kicked by the other thread,
+        // so we check if it still exists before changing its room
+        if (hash_set_addr_get(manager->worker.sessions, (void *)&addr) != NULL)
+            ((struct SessionRoom *)hash_set_addr_get(manager->worker.sessions, (void *)&addr))->room = room_id;
+
+        mtx_unlock(manager->worker.sessionsLock);
     } else {
         kick_session(session, false);
     }
