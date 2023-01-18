@@ -93,6 +93,12 @@ struct CompletedQuest {
     time_t time;
 };
 
+struct Skill {
+    uint32_t id;
+    int8_t level;
+    int8_t masterLevel;
+};
+
 size_t quest_get_progress_string(struct Quest *quest, char *out);
 
 struct Character {
@@ -153,6 +159,8 @@ struct Character {
 
     struct HashSetU16 *quests;
     struct HashSetU16 *completedQuests;
+
+    struct HashSetU32 *skills;
 };
 
 struct CharacterStats character_to_character_stats(struct Character *chr);

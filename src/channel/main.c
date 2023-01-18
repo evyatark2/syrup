@@ -599,6 +599,18 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
     }
     break;
 
+    case 0x005A: {
+        uint32_t id;
+        READER_BEGIN(size, packet);
+        SKIP(4);
+        READ_OR_ERROR(reader_u32, &id);
+        READER_END();
+
+        if (!client_assign_sp(client, id))
+            return (struct OnPacketResult) { .status = -1 };
+    }
+    break;
+
     case 0x0064: {
         if (client->script != NULL)
             return (struct OnPacketResult) { .status = 0, .room = -1 };
@@ -1041,6 +1053,7 @@ static void on_client_disconnect(struct Session *session)
         client->handlerType = PACKET_TYPE_LOGOUT;
         client->handler = logout_handler_create(client);
         if (client->handler == NULL) {
+            hash_set_u32_destroy(client->character.skills);
             hash_set_u16_destroy(client->character.quests);
             hash_set_u16_destroy(client->character.completedQuests);
             free(client);
@@ -1055,12 +1068,14 @@ static void on_client_disconnect(struct Session *session)
             } else {
                 database_connection_unlock(client->conn);
                 logout_handler_destroy(client->handler);
+                hash_set_u32_destroy(client->character.skills);
                 hash_set_u16_destroy(client->character.quests);
                 hash_set_u16_destroy(client->character.completedQuests);
                 free(client);
             }
         } else if (fd == -1) {
             logout_handler_destroy(client->handler);
+            hash_set_u32_destroy(client->character.skills);
             hash_set_u16_destroy(client->character.quests);
             hash_set_u16_destroy(client->character.completedQuests);
             free(client);
@@ -1079,6 +1094,7 @@ static struct OnResumeResult on_resume_client_disconnect(struct Session *session
 
     database_connection_unlock(client->conn);
     logout_handler_destroy(client->handler);
+    hash_set_u32_destroy(client->character.skills);
     hash_set_u16_destroy(client->character.quests);
     hash_set_u16_destroy(client->character.completedQuests);
     free(client);

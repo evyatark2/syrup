@@ -72,6 +72,12 @@ struct DatabaseCompletedQuest {
     MYSQL_TIME time;
 };
 
+struct DatabaseSkill {
+    uint32_t id;
+    int8_t level;
+    int8_t masterLevel;
+};
+
 struct RequestParams {
     enum DatabaseRequestType type;
     union {
@@ -173,6 +179,8 @@ struct RequestParams {
             struct DatabaseProgress *progresses;
             size_t completedQuestCount;
             struct DatabaseCompletedQuest *completedQuests;
+            size_t skillCount;
+            struct DatabaseSkill *skills;
         } updateCharacter;
     };
 };
@@ -335,6 +343,8 @@ union DatabaseResult {
         struct DatabaseProgress *progresses;
         size_t completedQuestCount;
         struct DatabaseCompletedQuest *completedQuests;
+        size_t skillCount;
+        struct DatabaseSkill *skills;
     } getCharacter;
     struct {
         size_t count;

@@ -107,6 +107,9 @@ void client_gain_exp(struct Client *client, int32_t exp, bool reward)
                     chr->dex += 1;
                 }
             } else {
+                if (chr->job != JOB_BEGINNER && chr->job != JOB_NOBLESSE && chr->job != JOB_LEGEND)
+                    chr->sp += 3;
+
                 int8_t ap = 5;
                 if (job_type(chr->job) == JOB_TYPE_CYGNUS) {
                     if (chr->level > 10) {
@@ -199,10 +202,13 @@ void client_gain_exp(struct Client *client, int32_t exp, bool reward)
                             .i16 = client->character.ap,
                         },
                         {
+                            .i16 = client->character.sp,
+                        },
+                        {
                             .i32 = client->character.exp
                         }
                     };
-                    size_t size = stat_change_packet(true, STAT_LEVEL | STAT_HP | STAT_MAX_HP | STAT_MP | STAT_MAX_MP | STAT_AP | STAT_EXP, values, packet);
+                    size_t size = stat_change_packet(true, STAT_LEVEL | STAT_HP | STAT_MAX_HP | STAT_MP | STAT_MAX_MP | STAT_AP | STAT_SP | STAT_EXP, values, packet);
                     session_write(client->session, size, packet);
                 }
             }
@@ -1564,6 +1570,50 @@ void client_raise_luk(struct Client *client)
     };
     size_t len = stat_change_packet(true, STAT_LUK | STAT_AP, value, packet);
     session_write(client->session, len, packet);
+}
+
+bool client_assign_sp(struct Client *client, uint32_t id)
+{
+    struct Character *chr = &client->character;
+
+    // TODO: Check if id is legal for this client to assign
+
+    if (id >= 1000 && id <= 1002) {
+        uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
+        size_t len = stat_change_packet(true, 0, NULL, packet);
+        session_write(client->session, len, packet);
+    } else if (chr->sp > 0) {
+        chr->sp--;
+        uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
+        union StatValue value = {
+            .i16 = chr->sp,
+        };
+        size_t len = stat_change_packet(true, STAT_SP, &value, packet);
+        session_write(client->session, len, packet);
+    } else {
+        return true;
+    }
+
+    struct Skill *skill = hash_set_u32_get(chr->skills, id);
+    if (skill == NULL) {
+        struct Skill new = {
+            .id = id,
+            .level = 1,
+            .masterLevel = 0
+        };
+        hash_set_u32_insert(chr->skills, &new);
+        skill = hash_set_u32_get(chr->skills, id);
+    } else {
+        skill->level++;
+    }
+
+    {
+        uint8_t packet[UPDATE_SKILL_PACKET_LENGTH];
+        update_skill_packet(id, skill->level, skill->masterLevel, packet);
+        session_write(client->session, UPDATE_SKILL_PACKET_LENGTH, packet);
+    }
+
+    return true;
 }
 
 void client_change_job(struct Client *client, enum Job job)

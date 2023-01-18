@@ -171,6 +171,15 @@ CREATE TABLE IF NOT EXISTS CompletedQuests (
     FOREIGN KEY (character_id) REFERENCES Characters (id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS Skills (
+    character_id INT UNSIGNED,
+    skill_id INT UNSIGNED,
+    level TINYINT NOT NULL,
+    master TINYINT NOT NULL,
+    PRIMARY KEY (character_id, skill_id),
+    FOREIGN KEY (character_id) REFERENCES Characters (id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS MonsterItemDrops (
     monster_id INT UNSIGNED,
     item_id INT UNSIGNED,

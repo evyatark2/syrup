@@ -51,10 +51,23 @@ struct DatabaseRequest {
         struct {
             size_t i;
             my_bool isNull;
-            uint16_t quest;
-            uint32_t progressId;
-            int16_t progress;
-            MYSQL_TIME time;
+            union {
+                struct {
+                    uint16_t quest;
+                    union {
+                        struct {
+                            uint32_t progressId;
+                            int16_t progress;
+                        };
+                        MYSQL_TIME time;
+                    };
+                };
+                struct {
+                    uint32_t skillId;
+                    int8_t skillLevel;
+                    int8_t skillMasterLevel;
+                };
+            };
         } getCharacter;
         struct {
             size_t i;
@@ -158,6 +171,7 @@ struct DatabaseRequest *database_request_create(struct DatabaseConnection *conn,
         req->res.getCharacter.quests = NULL;
         req->res.getCharacter.progresses = NULL;
         req->res.getCharacter.completedQuests = NULL;
+        req->res.getCharacter.skills = NULL;
     }
 
     return req;
@@ -175,6 +189,7 @@ void database_request_destroy(struct DatabaseRequest *req)
         }
         free(req->res.getMonsterDrops.monsters);
     } else if (req->params.type == DATABASE_REQUEST_TYPE_GET_CHARACTER) {
+        free(req->res.getCharacter.skills);
         free(req->res.getCharacter.completedQuests);
         free(req->res.getCharacter.progresses);
         free(req->res.getCharacter.quests);
@@ -1142,6 +1157,8 @@ static int do_get_character(struct DatabaseRequest *req, int status)
     DO_ASYNC(ret, ret != 0, mysql_stmt_store_result, req, status);
 
     req->res.getCharacter.quests = malloc(mysql_stmt_num_rows(req->stmt) * sizeof(uint16_t));
+    if (req->res.getCharacter.quests == NULL)
+        return -1;
 
     DO_ASYNC(ret, ret == 1, mysql_stmt_fetch, req, status);
     req->res.getCharacter.questCount = 0;
@@ -1210,6 +1227,40 @@ static int do_get_character(struct DatabaseRequest *req, int status)
         req->res.getCharacter.completedQuests[req->res.getCharacter.completedQuestCount].id = req->temp.getCharacter.quest;
         req->res.getCharacter.completedQuests[req->res.getCharacter.completedQuestCount].time = req->temp.getCharacter.time;
         req->res.getCharacter.completedQuestCount++;
+
+        DO_ASYNC(ret, ret == 1, mysql_stmt_fetch, req, status);
+    }
+
+    DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
+
+    query = "SELECT skill_id, level, master FROM Skills WHERE character_id = ?";
+    DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
+
+    INPUT_BINDER_INIT(1);
+    INPUT_BINDER_u32(&req->params.getCharacter.id);
+    INPUT_BINDER_FINALIZE(req->stmt);
+
+    OUTPUT_BINDER_INIT(3);
+    OUTPUT_BINDER_u32(&req->temp.getCharacter.skillId);
+    OUTPUT_BINDER_i8(&req->temp.getCharacter.skillLevel);
+    OUTPUT_BINDER_i8(&req->temp.getCharacter.skillMasterLevel);
+    OUTPUT_BINDER_FINALIZE(req->stmt);
+
+    DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
+
+    DO_ASYNC(ret, ret != 0, mysql_stmt_store_result, req, status);
+
+    req->res.getCharacter.skills = malloc(mysql_stmt_num_rows(req->stmt) * sizeof(struct DatabaseSkill));
+    if (req->res.getCharacter.skills == NULL)
+        return -1;
+
+    DO_ASYNC(ret, ret == 1, mysql_stmt_fetch, req, status);
+    req->res.getCharacter.skillCount = 0;
+    while (ret != MYSQL_NO_DATA) {
+        req->res.getCharacter.skills[req->res.getCharacter.skillCount].id = req->temp.getCharacter.skillId;
+        req->res.getCharacter.skills[req->res.getCharacter.skillCount].level = req->temp.getCharacter.skillLevel;
+        req->res.getCharacter.skills[req->res.getCharacter.skillCount].masterLevel = req->temp.getCharacter.skillMasterLevel;
+        req->res.getCharacter.skillCount++;
 
         DO_ASYNC(ret, ret == 1, mysql_stmt_fetch, req, status);
     }
@@ -1344,7 +1395,7 @@ static int do_update_character(struct DatabaseRequest *req, int status)
 
     DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
 
-    // Insert new items
+    // Insert new items - Probably can't batch the request as we need the ID of each inserted item
     query = "INSERT INTO Items (character_id, item_id, flags, owner, giver) VALUES (?, ?, ?, ?, ?)";
     DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
 
@@ -1541,7 +1592,7 @@ static int do_update_character(struct DatabaseRequest *req, int status)
         DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
     }
 
-    // Insert new equipment
+    // Insert new equipment - Probably can't batch the request as we need the ID of each inserted equipment
     query = "INSERT INTO Equipment (item, level, slots, str, dex, int_, luk, hp, mp, atk, matk, def, mdef, acc, avoid, speed, jump) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
     DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
 
@@ -1762,6 +1813,53 @@ static int do_update_character(struct DatabaseRequest *req, int status)
 
         DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
     }
+
+    query = "INSERT INTO Skills VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE level = ?, master = ?";
+    DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
+
+    {
+        struct {
+            uint32_t char_id;
+            uint32_t skill_id;
+            int8_t level;
+            int8_t master_level;
+        } *data = malloc((req->params.updateCharacter.skillCount) * sizeof(*data));
+        req->temp.updateCharacter.data = data;
+        if (data == NULL)
+            return -1;
+
+        for (size_t i = 0; i < req->params.updateCharacter.skillCount; i++) {
+            data[i].char_id = req->params.updateCharacter.id;
+            data[i].skill_id = req->params.updateCharacter.skills[i].id;
+            data[i].level = req->params.updateCharacter.skills[i].level;
+            data[i].master_level = req->params.updateCharacter.skills[i].masterLevel;
+        }
+
+        INPUT_BINDER_INIT(6);
+        INPUT_BINDER_u32(&data->char_id);
+        INPUT_BINDER_u32(&data->skill_id);
+        INPUT_BINDER_i8(&data->level);
+        INPUT_BINDER_i8(&data->master_level);
+
+        // UPDATE
+        INPUT_BINDER_i8(&data->level);
+        INPUT_BINDER_i8(&data->master_level);
+        INPUT_BINDER_FINALIZE(req->stmt);
+
+        mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { sizeof(*data) });
+
+        mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { req->params.updateCharacter.skillCount });
+
+    }
+
+    DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
+    free(req->temp.updateCharacter.data);
+
+    //mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { 0 });
+
+    //mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { 0 });
+
+    //DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
 
     END_ASYNC();
 

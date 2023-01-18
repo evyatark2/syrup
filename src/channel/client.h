@@ -107,6 +107,7 @@ void client_raise_str(struct Client *client);
 void client_raise_dex(struct Client *client);
 void client_raise_int(struct Client *client);
 void client_raise_luk(struct Client *client);
+bool client_assign_sp(struct Client *client, uint32_t id);
 void client_change_job(struct Client *client, enum Job job);
 struct ClientResult client_portal_script(struct Client *client, const char *portal);
 void client_enable_actions(struct Client *client);

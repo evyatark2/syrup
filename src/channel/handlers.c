@@ -268,6 +268,23 @@ struct LoginHandlerResult login_handler_handle(struct LoginHandler *handler, int
             hash_set_u16_insert(chr->completedQuests, &quest); // TODO: Check
         }
 
+        chr->skills = hash_set_u32_create(sizeof(struct Skill), offsetof(struct Skill, id));
+        if (chr->skills == NULL) {
+            hash_set_u16_destroy(chr->completedQuests);
+            hash_set_u16_destroy(chr->quests);
+            database_request_destroy(handler->request);
+            return (struct LoginHandlerResult) { -1 };
+        }
+
+        for (size_t i = 0; i < res->getCharacter.skillCount; i++) {
+            struct Skill skill = {
+                .id = res->getCharacter.skills[i].id,
+                .level = res->getCharacter.skills[i].level,
+                .masterLevel = res->getCharacter.skills[i].masterLevel,
+            };
+            hash_set_u32_insert(chr->skills, &skill); // TODO: Check
+        }
+
         database_request_destroy(handler->request);
 
         struct LoginHandlerResult ret = { 0 };
@@ -299,6 +316,7 @@ struct LogoutHandler {
     void *quests;
     void *progresses;
     void *completedQuests;
+    void *skills;
 };
 
 struct LogoutHandler *logout_handler_create(struct Client *client)
@@ -334,6 +352,13 @@ struct AddCompletedQuestContext {
 };
 
 static void add_completed_quest(void *data, void *ctx);
+
+struct AddSkillContext {
+    struct DatabaseSkill *skills;
+    size_t currentSkill;
+};
+
+static void add_skill(void *data, void *ctx);
 
 int logout_handler_handle(struct LogoutHandler *handler, int status)
 {
@@ -485,7 +510,6 @@ int logout_handler_handle(struct LogoutHandler *handler, int status)
             .progresses = params.updateCharacter.progresses,
             .currentProgress = 0
         };
-
         hash_set_u16_foreach(chr->quests, add_progress, &ctx2);
 
         params.updateCharacter.progressCount = ctx2.currentProgress;
@@ -507,8 +531,27 @@ int logout_handler_handle(struct LogoutHandler *handler, int status)
 
         params.updateCharacter.completedQuestCount = ctx3.currentQuest;
 
+        params.updateCharacter.skills = malloc(hash_set_u32_size(chr->skills) * sizeof(struct DatabaseSkill));
+        if (params.updateCharacter.completedQuests == NULL) {
+            free(handler->completedQuests);
+            free(handler->progresses);
+            free(handler->quests);
+            return -1;
+        }
+
+        handler->skills = params.updateCharacter.skills;
+
+        struct AddSkillContext ctx4 = {
+            .skills = params.updateCharacter.skills,
+            .currentSkill = 0,
+        };
+        hash_set_u32_foreach(chr->skills, add_skill, &ctx4);
+
+        params.updateCharacter.skillCount = ctx4.currentSkill;
+
         handler->request = database_request_create(handler->client->conn, &params);
         if (handler->request == NULL) {
+            free(handler->skills);
             free(handler->completedQuests);
             free(handler->progresses);
             free(handler->quests);
@@ -519,6 +562,7 @@ int logout_handler_handle(struct LogoutHandler *handler, int status)
         status = database_request_execute(handler->request, 0);
         if (status != 0) {
             if (status < 0) {
+                free(handler->skills);
                 free(handler->completedQuests);
                 free(handler->progresses);
                 free(handler->quests);
@@ -533,6 +577,7 @@ int logout_handler_handle(struct LogoutHandler *handler, int status)
     if (handler->state == 1) {
         status = database_request_execute(handler->request, status);
         if (status <= 0) {
+            free(handler->skills);
             free(handler->completedQuests);
             free(handler->progresses);
             free(handler->quests);
@@ -601,5 +646,16 @@ static void add_completed_quest(void *data, void *ctx_)
     ctx->quests[ctx->currentQuest].time.second_part = 0;
     ctx->quests[ctx->currentQuest].time.neg = 0;
     ctx->currentQuest++;
+}
+
+static void add_skill(void *data, void *ctx_)
+{
+    struct Skill *skill = data;
+    struct AddSkillContext *ctx = ctx_;
+
+    ctx->skills[ctx->currentSkill].id = skill->id;
+    ctx->skills[ctx->currentSkill].level = skill->level;
+    ctx->skills[ctx->currentSkill].masterLevel = skill->masterLevel;
+    ctx->currentSkill++;
 }
 

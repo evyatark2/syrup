@@ -274,5 +274,8 @@ enum NpcDialogueType {
 #define NPC_DIALOGUE_PACKET_MAX_LENGTH 65535
 size_t npc_dialogue_packet(uint32_t npc, enum NpcDialogueType type, uint16_t message_len, const char *message, uint8_t *packet);
 
+#define UPDATE_SKILL_PACKET_LENGTH 26
+void update_skill_packet(uint32_t id, int8_t level, int8_t master_level, uint8_t *packet);
+
 #endif
 

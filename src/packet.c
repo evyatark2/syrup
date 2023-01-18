@@ -6,10 +6,7 @@
 #include "writer.h"
 #include "hash-map.h"
 
-enum SendOpcode {
-    SEND_OPCODE_LOGIN_SUCCESS,
-    SEND_OPCODE_LOGIN_FAILURE,
-};
+static void add_skill_info(void *data, void *ctx);
 
 size_t login_success_packet(uint32_t id, uint8_t gender, uint8_t name_len, char *name, enum PicStatus pic, uint8_t *packet) {
     struct Writer writer;
@@ -308,7 +305,7 @@ size_t enter_map_packet(struct Character *chr, uint8_t *packet) {
     }
 
     writer_u8(&writer, 0);  // End of use inventory
-                            //
+
     for (uint8_t i = 0; i < chr->inventory[1].slotCount; i++) {
         if (chr->inventory[1].items[i].isEmpty)
             continue;
@@ -341,7 +338,11 @@ size_t enter_map_packet(struct Character *chr, uint8_t *packet) {
 
     writer_u8(&writer, 0);  // End of etc inventory
     writer_u8(&writer, 0);  // End of cash inventory
-    writer_u16(&writer, 0); // Number for skills
+
+    // Skills
+    writer_u16(&writer, hash_set_u32_size(chr->skills)); // Number for skills
+    hash_set_u32_foreach(chr->skills, add_skill_info, &writer);
+
     writer_u16(&writer, 0); // Number for cooldowns
 
     writer_i16(&writer, hash_set_u16_size(chr->quests)); // Started quests count
@@ -1221,6 +1222,32 @@ size_t npc_dialogue_packet(uint32_t npc, enum NpcDialogueType type, uint16_t mes
     }
 
     return writer.pos;
+}
+
+void update_skill_packet(uint32_t id, int8_t level, int8_t master_level, uint8_t *packet)
+{
+    struct Writer writer;
+    writer_init(&writer, UPDATE_SKILL_PACKET_LENGTH, packet);
+
+    writer_u16(&writer, 0x0024);
+    writer_u8(&writer, 1);
+    writer_u16(&writer, 1);
+    writer_u32(&writer, id);
+    writer_i32(&writer, level);
+    writer_i32(&writer, master_level);
+    writer_u64(&writer, 150842304000000000L); // DEFAULT_TIME
+    writer_u8(&writer, 4);
+}
+
+static void add_skill_info(void *data, void *ctx)
+{
+    struct Skill *skill = data;
+    struct Writer *writer = ctx;
+
+    writer_u32(writer, skill->id);
+    writer_u32(writer, skill->level);
+    writer_u64(writer, 150842304000000000L); // DEFAULT_TIME
+    // writer_u32(writer, skill->masterLevel); // Only when the skill is a 4th job skill
 }
 
 static void exp_gain_packet_internal(struct Writer *writer, int32_t exp, int32_t equip_bonus, int32_t party_bonus, bool white, bool in_chat)
