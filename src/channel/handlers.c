@@ -219,6 +219,8 @@ struct LoginHandlerResult login_handler_handle(struct LoginHandler *handler, int
 
         chr->monsterQuests = hash_set_u32_create(sizeof(struct MonsterRefCount), offsetof(struct MonsterRefCount, id));
         if (chr->monsterQuests == NULL) {
+            hash_set_u16_destroy(chr->quests);
+            chr->quests = NULL;
             database_request_destroy(handler->request);
             return (struct LoginHandlerResult) { -1 };
         }
@@ -276,7 +278,10 @@ struct LoginHandlerResult login_handler_handle(struct LoginHandler *handler, int
 
         chr->completedQuests = hash_set_u16_create(sizeof(struct CompletedQuest), offsetof(struct CompletedQuest, id));
         if (chr->completedQuests == NULL) {
+            hash_set_u32_destroy(chr->monsterQuests);
+            chr->monsterQuests = NULL;
             hash_set_u16_destroy(chr->quests);
+            chr->quests = NULL;
             database_request_destroy(handler->request);
             return (struct LoginHandlerResult) { -1 };
         }
@@ -302,7 +307,11 @@ struct LoginHandlerResult login_handler_handle(struct LoginHandler *handler, int
         chr->skills = hash_set_u32_create(sizeof(struct Skill), offsetof(struct Skill, id));
         if (chr->skills == NULL) {
             hash_set_u16_destroy(chr->completedQuests);
+            chr->completedQuests = NULL;
+            hash_set_u32_destroy(chr->monsterQuests);
+            chr->monsterQuests = NULL;
             hash_set_u16_destroy(chr->quests);
+            chr->quests = NULL;
             database_request_destroy(handler->request);
             return (struct LoginHandlerResult) { -1 };
         }
