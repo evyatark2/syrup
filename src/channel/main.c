@@ -884,6 +884,8 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             switch (drop->type) {
             case DROP_TYPE_MESO:
                 client_gain_meso(client, drop->meso, true, false);
+                map_remove_drop(room_get_context(session_get_room(session)), client->character.id, oid);
+                return (struct OnPacketResult) { .status = 0, .room = -1 };
             break;
 
             case DROP_TYPE_ITEM:
@@ -901,9 +903,9 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             break;
             }
 
-            map_remove_drop(room_get_context(session_get_room(session)), client->character.id, oid);
-
             if (success) {
+                map_remove_drop(room_get_context(session_get_room(session)), client->character.id, oid);
+
                 {
                     uint8_t packet[ITEM_GAIN_PACKET_LENGTH];
                     item_gain_packet(id, 1, packet);
@@ -913,6 +915,18 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
                 {
                     uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
                     size_t len = stat_change_packet(true, 0, NULL, packet);
+                    session_write(session, len, packet);
+                }
+            } else {
+                {
+                    uint8_t packet[INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH];
+                    inventory_full_notification_packet(packet);
+                    session_write(session, INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH, packet);
+                }
+
+                {
+                    uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
+                    size_t len = modify_items_packet(0, NULL, packet);
                     session_write(session, len, packet);
                 }
             }
