@@ -1189,6 +1189,8 @@ static int do_get_character(struct DatabaseRequest *req, int status)
     DO_ASYNC(ret, ret != 0, mysql_stmt_store_result, req, status);
 
     req->res.getCharacter.progresses = malloc(mysql_stmt_num_rows(req->stmt) * sizeof(struct DatabaseProgress));
+    if (req->res.getCharacter.progresses == NULL)
+        return -1;
 
     DO_ASYNC(ret, ret == 1, mysql_stmt_fetch, req, status);
     req->res.getCharacter.progressCount = 0;
@@ -1220,6 +1222,8 @@ static int do_get_character(struct DatabaseRequest *req, int status)
     DO_ASYNC(ret, ret != 0, mysql_stmt_store_result, req, status);
 
     req->res.getCharacter.completedQuests = malloc(mysql_stmt_num_rows(req->stmt) * sizeof(struct DatabaseCompletedQuest));
+    if (req->res.getCharacter.completedQuests == NULL)
+        return -1;
 
     DO_ASYNC(ret, ret == 1, mysql_stmt_fetch, req, status);
     req->res.getCharacter.completedQuestCount = 0;
@@ -1338,6 +1342,8 @@ static int do_update_character(struct DatabaseRequest *req, int status)
         char giver_ind;
     } *data = malloc((req->params.updateCharacter.equippedCount + req->params.updateCharacter.equipCount + req->params.updateCharacter.itemCount) * sizeof(*data));
     req->temp.updateCharacter.data = data;
+    if (data == NULL)
+        return -1;
 
     size_t count = 0;
     for (size_t i = 0; i < 3; i++) {
