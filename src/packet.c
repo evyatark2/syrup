@@ -511,6 +511,29 @@ size_t move_player_packet(uint32_t id, size_t len, uint8_t *data, uint8_t *packe
     return 10 + len;
 }
 
+size_t damange_player_packet(uint8_t skill, uint32_t monster_id, uint32_t char_id, int32_t damage, int32_t fake, uint8_t direction, uint8_t *packet)
+{
+    struct Writer writer;
+    writer_init(&writer, DAMAGE_PLAYER_PACKET_MAX_LENGTH, packet);
+
+    writer_u16(&writer, 0x00C0);
+    writer_u32(&writer, char_id);
+    writer_u8(&writer, skill);
+    writer_i32(&writer, damage);
+    if (skill != (uint8_t)-4) {
+        writer_u32(&writer, monster_id);
+        writer_u8(&writer, direction);
+        writer_u32(&writer, 0);
+        writer_i32(&writer, damage);
+        if (fake > 0)
+            writer_i32(&writer, fake);
+    } else {
+        writer_i32(&writer, damage);
+    }
+
+    return writer.pos;
+}
+
 void remove_player_from_map_packet(uint32_t id, uint8_t *packet)
 {
     struct Writer writer;

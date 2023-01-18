@@ -99,6 +99,17 @@ void map_for_each_npc(struct Map *map, void (*f)(struct Npc *, void *), void *ct
 void map_for_each_drop(struct Map *map, void (*f)(struct Drop *, void *), void *ctx);
 
 /**
+ * Get if the monster is alive
+ *
+ * \param map The map to check in
+ * \param id The monster ID - used as an additional check if the oid still refers to the same object client-side
+ * \param oid The monster's object ID
+ * 
+ * \return true if the monster is still alive
+ */
+bool map_monster_is_alive(struct Map *map, uint32_t id, uint32_t oid);
+
+/**
  * Damage a monster.
  * If its health drops below 0 it will be killed and it will drop its loot.
  *

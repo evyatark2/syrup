@@ -437,6 +437,37 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
     }
     break;
 
+    case 0x0030: {
+        struct Map *map = room_get_context(session_get_room(session));
+        uint8_t skill;
+        int32_t damage;
+        uint32_t monster_id;
+        uint32_t oid;
+        uint8_t direction;
+        READER_BEGIN(size, packet);
+        SKIP(4);
+        READ_OR_ERROR(reader_u8, &skill);
+        SKIP(1); // Element
+        READ_OR_ERROR(reader_i32, &damage);
+        if (skill != (uint8_t)-3 && skill != (uint8_t)-4) {
+            READ_OR_ERROR(reader_u32, &monster_id);
+            READ_OR_ERROR(reader_u32, &oid);
+            READ_OR_ERROR(reader_u8, &direction);
+        }
+
+        READER_END();
+
+        if (skill != (uint8_t)-3 && skill != (uint8_t)-4) {
+            if (map_monster_is_alive(map, monster_id, oid)) {
+                client_adjust_hp(client, -damage);
+                uint8_t packet[DAMAGE_PLAYER_PACKET_MAX_LENGTH];
+                size_t len = damange_player_packet(skill, monster_id, client->character.id, damage, 0, direction, packet);
+                session_broadcast_to_room(session, len, packet);
+            }
+        }
+    }
+    break;
+
     case 0x003A: {
         struct Map *map = room_get_context(session_get_room(session));
         uint32_t oid;

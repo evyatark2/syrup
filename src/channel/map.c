@@ -428,6 +428,19 @@ void map_for_each_drop(struct Map *map, void (*f)(struct Drop *, void *), void *
     }
 }
 
+bool map_monster_is_alive(struct Map *map, uint32_t id, uint32_t oid)
+{
+    struct MapObject *object = object_list_get(&map->objectList, oid);
+    if (object == NULL || object->type != MAP_OBJECT_MONSTER)
+        return false;
+
+    struct Monster *monster = &map->monsters[object->index];
+    if (monster->id != id)
+        return false;
+
+    return monster->hp > 0;
+}
+
 uint32_t map_damage_monster_by(struct Map *map, struct MapHandle *handle, uint32_t char_id, uint32_t oid, size_t hit_count, int32_t *damage)
 {
     struct MapObject *object = object_list_get(&map->objectList, oid);

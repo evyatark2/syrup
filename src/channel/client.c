@@ -30,7 +30,7 @@ void client_set_hp(struct Client *client, int16_t hp)
     session_write(client->session, len, packet);
 }
 
-void client_adjust_hp(struct Client *client, int16_t hp)
+void client_adjust_hp(struct Client *client, int32_t hp)
 {
     if (hp > 0 && client->character.hp > INT16_MAX - hp)
         hp = INT16_MAX - client->character.hp;

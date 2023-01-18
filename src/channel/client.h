@@ -70,7 +70,7 @@ struct ClientResult {
 };
 
 void client_set_hp(struct Client *client, int16_t hp);
-void client_adjust_hp(struct Client *client, int16_t hp);
+void client_adjust_hp(struct Client *client, int32_t hp);
 void client_set_mp(struct Client *client, int16_t mp);
 void client_adjust_mp(struct Client *client, int16_t mp);
 void client_adjust_sp(struct Client *client, int16_t sp);
