@@ -1043,6 +1043,8 @@ static void on_timer_expired(int fd, short what, void *ctx)
             free(room->timers);
             hash_set_u32_remove(manager->rooms, room->id);
 
+            hash_set_addr_destroy(room->sessions);
+
             mtx_lock(manager->worker.roomMapLock);
             hash_set_u32_remove(manager->worker.roomMap, room->id);
             mtx_unlock(manager->worker.roomMapLock);
