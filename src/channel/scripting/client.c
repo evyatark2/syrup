@@ -5,6 +5,7 @@
 #include "../client.h"
 #include "script-manager.h"
 
+static int l_client_active_npc(lua_State *L);
 static int l_client_enable_actions(lua_State *L);
 static int l_client_end_quest_now(lua_State *L);
 static int l_client_change_job(lua_State *L);
@@ -38,6 +39,7 @@ static int l_client_warp(lua_State *L);
 static int l_client_reset_stats(lua_State *L);
 
 static const struct luaL_Reg clientlib[] = {
+    { "activeNpc", l_client_active_npc },
     { "changeJob", l_client_change_job },
     { "enableActions", l_client_enable_actions },
     { "endQuestNow", l_client_end_quest_now },
@@ -78,6 +80,13 @@ int luaopen_client(lua_State *L)
     lua_pushvalue(L, -1);
     lua_setfield(L, -2, "__index");
     luaL_setfuncs(L, clientlib, 0);
+    return 1;
+}
+
+static int l_client_active_npc(lua_State *L)
+{
+    struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
+    lua_pushinteger(L, client->npc);
     return 1;
 }
 

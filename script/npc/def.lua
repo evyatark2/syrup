@@ -1,3 +1,3 @@
 function talk(c)
-    c:sendOk("Unimplemented!")
+    c:sendOk("Unimplemented! ID: " .. c:activeNpc())
 end
