@@ -280,5 +280,8 @@ size_t npc_dialogue_packet(uint32_t npc, enum NpcDialogueType type, uint16_t mes
 #define UPDATE_SKILL_PACKET_LENGTH 26
 void update_skill_packet(uint32_t id, int8_t level, int8_t master_level, uint8_t *packet);
 
+#define POPUP_MESSAGE_PACKET_MAX_LENGTH 132 // Assuming a 128-character limit
+size_t popup_message_packet(uint16_t len, const char *message, uint8_t *packet);
+
 #endif
 

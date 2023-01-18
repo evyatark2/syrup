@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "../constants.h"
 #include "../packet.h"
@@ -1210,9 +1211,14 @@ struct ClientResult client_start_quest(struct Client *client, uint16_t qid, uint
     if (!start_quest(client, qid, npc, &success))
         return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_ERROR };
 
-    if (success)
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
-    return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_KICK };
+    if (!success) {
+        uint8_t packet[POPUP_MESSAGE_PACKET_MAX_LENGTH];
+        char *message = "Please check if you have enough space in your inventory.";
+        size_t len = popup_message_packet(strlen(message), message, packet);
+        session_write(client->session, len, packet);
+    }
+
+    return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
 }
 
 bool client_start_quest_now(struct Client *client, bool *success)
@@ -1274,9 +1280,14 @@ struct ClientResult client_end_quest(struct Client *client, uint16_t qid, uint32
     if (!end_quest(client, qid, npc, &success))
         return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_ERROR };
 
-    if (success)
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
-    return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_KICK };
+    if (!success) {
+        uint8_t packet[POPUP_MESSAGE_PACKET_MAX_LENGTH];
+        char *message = "Please check if you have enough space in your inventory.";
+        size_t len = popup_message_packet(strlen(message), message, packet);
+        session_write(client->session, len, packet);
+    }
+
+    return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
 }
 
 bool client_end_quest_now(struct Client *client, bool *success)
@@ -1855,6 +1866,10 @@ static bool check_quest_requirements(struct Character *chr, size_t req_count, co
 
 static bool start_quest(struct Client *client, uint16_t qid, uint32_t npc, bool *success)
 {
+    bool success_;
+    if (success == NULL)
+        success = &success_;
+
     struct Character *chr = &client->character;
 
     const struct QuestInfo *info = wz_get_quest_info(qid);
@@ -1874,10 +1889,10 @@ static bool start_quest(struct Client *client, uint16_t qid, uint32_t npc, bool 
         }
     }
 
-    *success = false;
     if (hash_set_u16_insert(chr->quests, &quest) == -1)
-        return true;
+        return false;
 
+    *success = false;
     for (size_t i = 0; i < info->startActCount; i++) {
         switch (info->startActs[i].type) {
         case QUEST_ACT_TYPE_EXP:
@@ -1905,8 +1920,32 @@ static bool start_quest(struct Client *client, uint16_t qid, uint32_t npc, bool 
             int16_t amounts[item_count];
 
             int32_t r;
-            if (has_prop)
+            if (has_prop) {
+                // If there is a random item, there should be at least one empty slot in each inventory
+                size_t j;
+                for (j = 0; j < chr->equipmentInventory.slotCount; j++)
+                    if (chr->equipmentInventory.items[j].isEmpty)
+                        break;
+
+                if (j == chr->equipmentInventory.slotCount) {
+                    hash_set_u16_remove(chr->quests, qid);
+                    return true;
+                }
+
+                for (size_t i = 0; i < 4; i++) {
+                    for (j = 0; j < chr->inventory[i].slotCount; j++) {
+                        if (chr->inventory[i].items[j].isEmpty)
+                            break;
+                    }
+
+                    if (j == chr->inventory[i].slotCount) {
+                        hash_set_u16_remove(chr->quests, qid);
+                        return true;
+                    }
+                }
+
                 r = rand() % total;
+            }
 
             has_prop = false;
             item_count = 0;
@@ -1924,11 +1963,15 @@ static bool start_quest(struct Client *client, uint16_t qid, uint32_t npc, bool 
             }
 
             bool success;
-            if (!client_gain_items(client, item_count, ids, amounts, true, &success))
+            if (!client_gain_items(client, item_count, ids, amounts, true, &success)) {
+                hash_set_u16_remove(chr->quests, qid);
                 return false;
+            }
 
-            if (!success)
-                return true; // The client should have verified that there is enough space for the items
+            if (!success) {
+                hash_set_u16_remove(chr->quests, qid);
+                return true;
+            }
         }
         break;
 
@@ -1951,12 +1994,15 @@ static bool start_quest(struct Client *client, uint16_t qid, uint32_t npc, bool 
         session_write(client->session, START_QUEST_PACKET_LENGTH, packet);
     }
 
-    *success = true;
     return true;
 }
 
 static bool end_quest(struct Client *client, uint16_t qid, uint32_t npc, bool *success)
 {
+    bool success_;
+    if (success == NULL)
+        success = &success_;
+
     struct Character *chr = &client->character;
 
     struct CompletedQuest quest = {
@@ -1964,11 +2010,8 @@ static bool end_quest(struct Client *client, uint16_t qid, uint32_t npc, bool *s
         .time = time(NULL),
     };
 
-    *success = false;
     if (hash_set_u16_insert(chr->completedQuests, &quest) == -1)
-        return true;
-
-    hash_set_u16_remove(chr->quests, qid);
+        return false;
 
     {
         uint8_t packet[UPDATE_QUEST_COMPLETION_TIME_PACKET_LENGTH];
@@ -1988,8 +2031,8 @@ static bool end_quest(struct Client *client, uint16_t qid, uint32_t npc, bool *s
         session_broadcast_to_room(client->session, SHOW_FOREIGN_EFFECT_PACKET_LENGTH, packet);
     }
 
+    *success = false;
     const struct QuestInfo *info = wz_get_quest_info(qid);
-
     bool next_quest = false;
     for (size_t i = 0; i < info->endActCount; i++) {
         switch (info->endActs[i].type) {
@@ -2020,8 +2063,31 @@ static bool end_quest(struct Client *client, uint16_t qid, uint32_t npc, bool *s
             int16_t amounts[item_count];
 
             int32_t r;
-            if (has_prop)
+            if (has_prop) {
+                // If there is a random item, there should be at least one empty slot in each inventory
+                size_t j;
+                for (j = 0; j < chr->equipmentInventory.slotCount; j++)
+                    if (chr->equipmentInventory.items[j].isEmpty)
+                        break;
+
+                if (j == chr->equipmentInventory.slotCount) {
+                    hash_set_u16_remove(chr->completedQuests, qid);
+                    return true;
+                }
+
+                for (size_t i = 0; i < 4; i++) {
+                    for (j = 0; j < chr->inventory[i].slotCount; j++) {
+                        if (chr->inventory[i].items[j].isEmpty)
+                            break;
+                    }
+
+                    if (j == chr->inventory[i].slotCount) {
+                        hash_set_u16_remove(chr->completedQuests, qid);
+                        return true;
+                    }
+                }
                 r = rand() % total;
+            }
 
             has_prop = false;
             item_count = 0;
@@ -2038,12 +2104,16 @@ static bool end_quest(struct Client *client, uint16_t qid, uint32_t npc, bool *s
                 }
             }
 
-            bool success;
-            if (!client_gain_items(client, item_count, ids, amounts, true, &success))
+            bool succ;
+            if (!client_gain_items(client, item_count, ids, amounts, true, &succ)) {
+                hash_set_u16_remove(chr->completedQuests, qid);
                 return false;
+            }
 
-            if (!success)
-                return true; // The client should have verified that there is enough space for the items
+            if (!succ) {
+                hash_set_u16_remove(chr->completedQuests, qid);
+                return true;
+            }
         }
         break;
 
@@ -2065,6 +2135,8 @@ static bool end_quest(struct Client *client, uint16_t qid, uint32_t npc, bool *s
         end_quest_packet(qid, npc, 0, packet);
         session_write(client->session, UPDATE_QUEST_COMPLETION_TIME_PACKET_LENGTH, packet);
     }
+
+    hash_set_u16_remove(chr->quests, qid);
 
     *success = true;
     return true;

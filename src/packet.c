@@ -1262,6 +1262,18 @@ void update_skill_packet(uint32_t id, int8_t level, int8_t master_level, uint8_t
     writer_u8(&writer, 4);
 }
 
+size_t popup_message_packet(uint16_t len, const char *message, uint8_t *packet)
+{
+    struct Writer writer;
+    writer_init(&writer, POPUP_MESSAGE_PACKET_MAX_LENGTH, packet);
+
+    writer_u16(&writer, 0x0044);
+    writer_u8(&writer, 1);
+    writer_sized_string(&writer, len, message);
+
+    return writer.pos;
+}
+
 static void add_skill_info(void *data, void *ctx)
 {
     struct Skill *skill = data;

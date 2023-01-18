@@ -104,12 +104,8 @@ static int l_client_end_quest_now(lua_State *L)
     if (!client_end_quest_now(client, &success))
         return luaL_error(L, "Memory error");
 
-    if (!success) {
-        lua_pushinteger(L, 0);
-        return lua_yield(L, 1);
-    }
-
-    return 0;
+    lua_pushboolean(L, success);
+    return 1;
 }
 
 static int l_client_change_job(lua_State *L)
@@ -290,12 +286,8 @@ static int l_client_start_quest_now(lua_State *L)
     if (!client_start_quest_now(client, &success))
         return luaL_error(L, "Memory error");
 
-    if (!success) {
-        lua_pushinteger(L, 0);
-        return lua_yield(L, 1);
-    }
-
-    return 0;
+    lua_pushboolean(L, success);
+    return 1;
 }
 
 static int l_client_send_ok(lua_State *L)
