@@ -217,27 +217,58 @@ struct LoginHandlerResult login_handler_handle(struct LoginHandler *handler, int
             return (struct LoginHandlerResult) { -1 };
         }
 
+        chr->monsterQuests = hash_set_u32_create(sizeof(struct MonsterRefCount), offsetof(struct MonsterRefCount, id));
+        if (chr->monsterQuests == NULL) {
+            database_request_destroy(handler->request);
+            return (struct LoginHandlerResult) { -1 };
+        }
+
         for (size_t i = 0; i < res->getCharacter.questCount; i++) {
             struct Quest quest = {
                 .id = res->getCharacter.quests[i],
                 .progressCount = 0,
             };
             hash_set_u16_insert(chr->quests, &quest); // TODO: Check
+                                                      //
+            const struct QuestInfo *info = wz_get_quest_info(quest.id);
+            for (size_t i = 0; i < info->endRequirementCount; i++) {
+                struct QuestRequirement *req = &info->endRequirements[i];
+                if (req->type == QUEST_REQUIREMENT_TYPE_MOB) {
+                }
+            }
         }
+
 
         for (size_t i = 0; i < res->getCharacter.progressCount; i++) {
             struct Quest *quest = hash_set_u16_get(chr->quests, res->getCharacter.progresses[i].questId); // TODO: Check
             const struct QuestInfo *info = wz_get_quest_info(quest->id);
             uint8_t j;
+            int16_t amount;
             for (size_t i_ = 0; i_ < info->endRequirementCount; i_++) {
                 struct QuestRequirement *req = &info->endRequirements[i_];
                 if (req->type == QUEST_REQUIREMENT_TYPE_MOB) {
                     for (size_t i_ = 0; i_ < req->mob.count; i_++) {
-                        if (req->mob.mobs[i_].id == res->getCharacter.progresses[i].progressId)
+                        if (req->mob.mobs[i_].id == res->getCharacter.progresses[i].progressId) {
                             j = i_;
+                            amount = req->mob.mobs[i_].count;
+                        }
                     }
                 }
             }
+
+            if (res->getCharacter.progresses[i].progress < amount) {
+                struct MonsterRefCount *m = hash_set_u32_get(chr->monsterQuests, res->getCharacter.progresses[i].progressId);
+                if (m != NULL) {
+                    m->refCount++;
+                } else {
+                    struct MonsterRefCount new = {
+                        .id = res->getCharacter.progresses[i].progressId,
+                        .refCount = 1
+                    };
+                    hash_set_u32_insert(chr->monsterQuests, &new);
+                }
+            }
+
             quest->progress[j].id = res->getCharacter.progresses[i].progressId;
             quest->progress[j].amount = res->getCharacter.progresses[i].progress;
             quest->progressCount++;

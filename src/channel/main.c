@@ -181,6 +181,10 @@ static int on_client_connect(struct Session *session, void *global_ctx, void *th
     client->managers.quest = ctx->questManager;
     client->managers.portal = ctx->portalManager;
     client->managers.npc = ctx->npcManager;
+    client->character.quests = NULL;
+    client->character.monsterQuests = NULL;
+    client->character.completedQuests = NULL;
+    client->character.skills = NULL;
     client->script = NULL;
     client->assigned = false;
     session_set_context(session, client);
@@ -1100,6 +1104,7 @@ static void on_client_disconnect(struct Session *session)
         if (client->handler == NULL) {
             hash_set_u32_destroy(client->character.skills);
             hash_set_u16_destroy(client->character.quests);
+            hash_set_u32_destroy(client->character.monsterQuests);
             hash_set_u16_destroy(client->character.completedQuests);
             free(client);
             return;
@@ -1115,6 +1120,7 @@ static void on_client_disconnect(struct Session *session)
                 logout_handler_destroy(client->handler);
                 hash_set_u32_destroy(client->character.skills);
                 hash_set_u16_destroy(client->character.quests);
+                hash_set_u32_destroy(client->character.monsterQuests);
                 hash_set_u16_destroy(client->character.completedQuests);
                 free(client);
             }
@@ -1122,11 +1128,18 @@ static void on_client_disconnect(struct Session *session)
             logout_handler_destroy(client->handler);
             hash_set_u32_destroy(client->character.skills);
             hash_set_u16_destroy(client->character.quests);
+            hash_set_u32_destroy(client->character.monsterQuests);
             hash_set_u16_destroy(client->character.completedQuests);
             free(client);
         } else {
             session_set_event(session, POLLIN, fd, on_database_lock_ready, true);
         }
+    } else {
+        hash_set_u32_destroy(client->character.skills);
+        hash_set_u16_destroy(client->character.quests);
+        hash_set_u32_destroy(client->character.monsterQuests);
+        hash_set_u16_destroy(client->character.completedQuests);
+        free(client);
     }
 }
 
@@ -1141,6 +1154,7 @@ static struct OnResumeResult on_resume_client_disconnect(struct Session *session
     logout_handler_destroy(client->handler);
     hash_set_u32_destroy(client->character.skills);
     hash_set_u16_destroy(client->character.quests);
+    hash_set_u32_destroy(client->character.monsterQuests);
     hash_set_u16_destroy(client->character.completedQuests);
     free(client);
     return (struct OnResumeResult) { .status = 0 };

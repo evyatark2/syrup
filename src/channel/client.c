@@ -1352,6 +1352,7 @@ struct ClientResult client_script_cont(struct Client *client, uint8_t action)
 
 struct CheckProgressContext {
     struct Session *session;
+    struct HashSetU32 *monsterQuests;
     uint32_t id;
 };
 
@@ -1364,9 +1365,12 @@ void client_kill_monster(struct Client *client, uint32_t id)
     client_gain_exp(client, info->exp, false);
     struct CheckProgressContext ctx = {
         .session = client->session,
+        .monsterQuests = chr->monsterQuests,
         .id = id
     };
-    hash_set_u16_foreach(chr->quests, check_progress, &ctx);
+
+    if (hash_set_u32_get(client->character.monsterQuests, id) != NULL)
+        hash_set_u16_foreach(chr->quests, check_progress, &ctx);
 }
 
 void client_send_ok(struct Client *client, size_t msg_len, const char *msg)
@@ -1882,6 +1886,16 @@ static bool start_quest(struct Client *client, uint16_t qid, uint32_t npc, bool 
         struct QuestRequirement *req = &info->endRequirements[i];
         if (req->type == QUEST_REQUIREMENT_TYPE_MOB) {
             for (size_t i = 0; i < req->mob.count; i++) {
+                struct MonsterRefCount *m = hash_set_u32_get(chr->monsterQuests, req->mob.mobs[i].id);
+                if (m == NULL) {
+                    struct MonsterRefCount new = {
+                        .id = req->mob.mobs[i].id,
+                        .refCount = 1
+                    };
+                    hash_set_u32_insert(chr->monsterQuests, &new);
+                } else {
+                    m->refCount++;
+                }
                 quest.progress[quest.progressCount].id = req->mob.mobs[i].id;
                 quest.progress[quest.progressCount].amount = 0;
                 quest.progressCount++;
@@ -2157,22 +2171,30 @@ static void check_progress(void *data, void *ctx_)
     }
 
     for (size_t i = 0; i < quest->progressCount; i++) {
-        int16_t count;
+        int16_t req_amount;
         for (uint8_t j = 0; j < req->mob.count; j++) {
             if (quest->progress[i].id == req->mob.mobs[j].id) {
-                count = req->mob.mobs[j].count;
+                req_amount = req->mob.mobs[j].count;
                 break;
             }
         }
 
-        if (quest->progress[i].id == ctx->id && quest->progress[i].amount < count) {
+        if (quest->progress[i].id == ctx->id) {
             quest->progress[i].amount++;
+            if (quest->progress[i].amount == req_amount) {
+                struct MonsterRefCount *monster = hash_set_u32_get(ctx->monsterQuests, ctx->id);
+                monster->refCount--;
+                if (monster->refCount == 0)
+                    hash_set_u32_remove(ctx->monsterQuests, ctx->id);
+            }
+
             char progress[15];
             size_t prog_len = quest_get_progress_string(quest, progress);
             uint8_t packet[UPDATE_QUEST_PACKET_MAX_LENGTH];
             size_t len = update_quest_packet(quest->id, prog_len, progress, packet);
             session_write(ctx->session, len, packet);
         }
+
     }
 }
 
