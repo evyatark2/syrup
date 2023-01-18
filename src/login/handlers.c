@@ -85,8 +85,8 @@ struct LoginHandlerResult login_handler_handle(struct LoginHandler *handler, int
                 if (handler->client->node == NULL)
                     ; // TODO
                 handler->client->account = account_get_default_account(handler->nameLength, handler->name);
-                struct LoginHandlerResult ret = { 0 };
-                ret.size = login_failure_packet(LOGIN_FAILURE_REASON_TOS, ret.packet);
+                struct LoginHandlerResult ret = { 0, LOGIN_FAILURE_PACKET_LENGTH };
+                login_failure_packet(LOGIN_FAILURE_REASON_TOS, ret.packet);
                 database_request_destroy(handler->request);
                 return ret;
             } else {
@@ -123,16 +123,16 @@ struct LoginHandlerResult login_handler_handle(struct LoginHandler *handler, int
                 uint8_t hash[ACCOUNT_HASH_LEN];
                 argon2id_hash_raw(1, 128, 4, handler->pass, handler->passLength, &res->getAccountCredentials.salt, 8, hash, ACCOUNT_HASH_LEN);
                 if (memcmp(res->getAccountCredentials.hash, hash, ACCOUNT_HASH_LEN) != 0) {
-                    struct LoginHandlerResult ret = { 0 };
-                    ret.size = login_failure_packet(LOGIN_FAILURE_REASON_INCORRECT_PASSWORD, ret.packet);
+                    struct LoginHandlerResult ret = { 0, LOGIN_FAILURE_PACKET_LENGTH };
+                    login_failure_packet(LOGIN_FAILURE_REASON_INCORRECT_PASSWORD, ret.packet);
                     database_request_destroy(handler->request);
                     return ret;
                 }
 
                 handler->client->node = account_login(res->getAccountCredentials.id);
                 if (handler->client->node == NULL) {
-                    struct LoginHandlerResult ret = { 0 };
-                    ret.size = login_failure_packet(LOGIN_FAILURE_REASON_LOGGED_IN, ret.packet);
+                    struct LoginHandlerResult ret = { 0, LOGIN_FAILURE_PACKET_LENGTH };
+                    login_failure_packet(LOGIN_FAILURE_REASON_LOGGED_IN, ret.packet);
                     database_request_destroy(handler->request);
                     return ret;
                 }
@@ -345,8 +345,8 @@ void gender_handler_destroy(struct GenderHandler *handler)
 struct PinResult handle_pin(struct Client *client, uint8_t c2, uint8_t c3)
 {
     if (c2 == 1 && c3 == 0) {
-        struct PinResult res = { 0 };
-        res.size = pin_packet(PIN_PACKET_MODE_ACCEPT, res.packet);
+        struct PinResult res = { 0, PIN_PACKET_LENGTH };
+        pin_packet(PIN_PACKET_MODE_ACCEPT, res.packet);
         return res;
     }
 
@@ -355,18 +355,18 @@ struct PinResult handle_pin(struct Client *client, uint8_t c2, uint8_t c3)
 
 struct ServerListResult handle_server_list(struct Client *client)
 {
-    struct ServerListResult res = { 0 };
+    struct ServerListResult res = { 0, .endSize = SERVER_LIST_END_PACKET_LENGTH };
     res.worldCount = 2;
     res.sizes[0] = server_list_packet(0, WORLD_FLAG_HOT, strlen("Hello!"), "Hello!", res.packets[0]);
     res.sizes[1] = server_list_packet(1, WORLD_FLAG_NEW, strlen("Howdy!"), "Howdy!", res.packets[1]);
-    res.endSize = server_list_end_packet(res.endPacket);
+    server_list_end_packet(res.endPacket);
     return res;
 }
 
 struct ServerStatusResult handle_server_status(struct Client *client, uint8_t world)
 {
-    struct ServerStatusResult res = { 0 };
-    res.size = server_status_packet(world == 0 ? SERVER_STATUS_NORMAL : SERVER_STATUS_CRITICAL, res.packet);
+    struct ServerStatusResult res = { 0, SERVER_STATUS_PACKET_LENGTH };
+    server_status_packet(world == 0 ? SERVER_STATUS_NORMAL : SERVER_STATUS_CRITICAL, res.packet);
     return res;
 }
 

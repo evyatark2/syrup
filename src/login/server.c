@@ -131,7 +131,7 @@ static bool kick_session(struct SessionContainer *container);
 static short poll_to_libevent(int mask);
 static int libevent_to_poll(short mask);
 
-struct PendingCharacter {
+struct LoggedInCharacter {
     uint32_t token;
     uint32_t id;
     int fd;
@@ -382,7 +382,7 @@ int assign_channel(uint32_t id, uint8_t world, uint8_t channel, uint32_t *token)
     if (fd == -1)
         return -1;
 
-    struct PendingCharacter pending = {
+    struct LoggedInCharacter pending = {
         .id = id,
         .fd = fd
     };
@@ -499,7 +499,7 @@ static void on_channel_read(struct bufferevent *bev, void *ctx)
 
             mtx_unlock(&channel->clientsMtx);
             hash_set_u32_destroy(channel->clients);
-            channel->clients = hash_set_u32_create(sizeof(struct PendingCharacter), offsetof(struct PendingCharacter, token));
+            channel->clients = hash_set_u32_create(sizeof(struct LoggedInCharacter), offsetof(struct LoggedInCharacter, token));
         } else {
             if (channel->clients == NULL) {
                 // We are not the first one to connect to the channel, and we don't have a logged-in list
@@ -508,7 +508,7 @@ static void on_channel_read(struct bufferevent *bev, void *ctx)
                 //    that we decided to drop the logged-in list in order to let the connected accounts re-login
                 // 2) The login server was restarted and the channel now received the second connection
                 // In both cases we let the channel server know to kick all clients
-                channel->clients = hash_set_u32_create(sizeof(struct PendingCharacter), offsetof(struct PendingCharacter, token));
+                channel->clients = hash_set_u32_create(sizeof(struct LoggedInCharacter), offsetof(struct LoggedInCharacter, token));
                 uint8_t one = 1;
                 bufferevent_write(bev, &one, 1);
             } else {
@@ -531,7 +531,7 @@ static void on_channel_read(struct bufferevent *bev, void *ctx)
         evbuffer_remove(bufferevent_get_input(bev), &token, 4);
         if (action == 0) {
             mtx_lock(&channel->clientsMtx);
-            struct PendingCharacter *chr = hash_set_u32_get(channel->clients, token);
+            struct LoggedInCharacter *chr = hash_set_u32_get(channel->clients, token);
             int fd = chr->fd;
             chr->fd = -1;
             mtx_unlock(&channel->clientsMtx);
@@ -911,7 +911,7 @@ static bool kick_session(struct SessionContainer *container)
 
 static void do_leave(void *data, void *ctx)
 {
-    struct PendingCharacter *chr = data;
+    struct LoggedInCharacter *chr = data;
     struct Channel *channel = ctx;
     if (chr->fd == -1) {
         channel->onClientLeave(chr->token);

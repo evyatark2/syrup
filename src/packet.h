@@ -34,7 +34,7 @@ enum LoginFailureReason {
 };
 
 #define LOGIN_FAILURE_PACKET_LENGTH 8
-size_t login_failure_packet(enum LoginFailureReason reason, uint8_t *packet);
+void login_failure_packet(enum LoginFailureReason reason, uint8_t *packet);
 
 enum PinPacketMode {
     PIN_PACKET_MODE_ACCEPT,
@@ -45,7 +45,7 @@ enum PinPacketMode {
 };
 
 #define PIN_PACKET_LENGTH 3
-size_t pin_packet(enum PinPacketMode mode, uint8_t *packet);
+void pin_packet(enum PinPacketMode mode, uint8_t *packet);
 
 enum WorldFlag {
     WORLD_FLAG_NONE,
@@ -58,7 +58,7 @@ enum WorldFlag {
 size_t server_list_packet(uint8_t world, enum WorldFlag flag, uint16_t mes_len, char *mes, uint8_t *packet);
 
 #define SERVER_LIST_END_PACKET_LENGTH 3
-size_t server_list_end_packet(uint8_t *packet);
+void server_list_end_packet(uint8_t *packet);
 
 enum ServerStatus {
     SERVER_STATUS_NORMAL,
@@ -67,13 +67,16 @@ enum ServerStatus {
 };
 
 #define SERVER_STATUS_PACKET_LENGTH 4
-size_t server_status_packet(enum ServerStatus status, uint8_t *packet);
+void server_status_packet(enum ServerStatus status, uint8_t *packet);
 
 #define CHARACTER_LIST_PACKET_MAX_LENGTH 2673 // Assuming a 6 character per world limit
 size_t character_list_packet(enum LoginFailureReason status, uint8_t char_count, struct CharacterStats *chars, uint8_t pic, uint8_t *packet);
 
 #define CHANNEL_IP_PACKET_LENGTH 19
-size_t channel_ip_packet(uint32_t addr, uint16_t port, uint32_t token, uint8_t *packet);
+void channel_ip_packet(uint32_t addr, uint16_t port, uint32_t token, uint8_t *packet);
+
+#define LOGIN_ERROR_PACKET_LENGTH 4
+void login_error_packet(uint8_t err, uint8_t *packet);
 
 #define NAME_CHECK_RESPONSE_PACKET_MAX_LENGTH 17
 size_t name_check_response_packet(uint8_t name_len, char *name, bool available, uint8_t *packet);

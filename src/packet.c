@@ -8,7 +8,8 @@
 
 static void add_skill_info(void *data, void *ctx);
 
-size_t login_success_packet(uint32_t id, uint8_t gender, uint8_t name_len, char *name, enum PicStatus pic, uint8_t *packet) {
+size_t login_success_packet(uint32_t id, uint8_t gender, uint8_t name_len, char *name, enum PicStatus pic, uint8_t *packet)
+{
     struct Writer writer;
     writer_init(&writer, 42 + name_len, packet);
     // Opcode
@@ -47,30 +48,34 @@ size_t login_success_packet(uint32_t id, uint8_t gender, uint8_t name_len, char 
     return 42 + name_len;
 }
 
-size_t login_failure_packet(enum LoginFailureReason reason, uint8_t *packet) {
+void login_failure_packet(enum LoginFailureReason reason, uint8_t *packet)
+{
     struct Writer writer;
     writer_init(&writer, LOGIN_FAILURE_PACKET_LENGTH, packet);
+
     writer_u16(&writer, 0x0000);
     writer_u16(&writer, reason);
     writer_u32(&writer, 0);
-    return LOGIN_FAILURE_PACKET_LENGTH;
 }
 
-size_t pin_packet(enum PinPacketMode mode, uint8_t *packet) {
+void pin_packet(enum PinPacketMode mode, uint8_t *packet)
+{
     struct Writer writer;
     writer_init(&writer, PIN_PACKET_LENGTH, packet);
+
     writer_u16(&writer, 0x0006);
     writer_u8(&writer, mode);
-    return PIN_PACKET_LENGTH;
 }
 
 char *WORLD_NAMES[] = {"Scania", "Bera"};
 
 #define STRINGIFY(x) #x
 
-size_t server_list_packet(uint8_t world, enum WorldFlag flag, uint16_t mes_len, char *mes, uint8_t *packet) {
+size_t server_list_packet(uint8_t world, enum WorldFlag flag, uint16_t mes_len, char *mes, uint8_t *packet)
+{
     struct Writer writer;
     writer_init(&writer, SERVER_LIST_PACKET_MAX_LENGTH, packet);
+
     writer_u16(&writer, 0x000A);
     writer_u8(&writer, world);
     writer_sized_string(&writer, strlen(WORLD_NAMES[world]), WORLD_NAMES[world]);
@@ -101,25 +106,29 @@ size_t server_list_packet(uint8_t world, enum WorldFlag flag, uint16_t mes_len, 
     return writer.pos;
 }
 
-size_t server_list_end_packet(uint8_t *packet) {
+void server_list_end_packet(uint8_t *packet)
+{
     struct Writer writer;
     writer_init(&writer, SERVER_LIST_END_PACKET_LENGTH, packet);
+
     writer_u16(&writer, 0x000A);
     writer_u8(&writer, 0xFF);
-    return SERVER_LIST_END_PACKET_LENGTH;
 }
 
-size_t server_status_packet(enum ServerStatus status, uint8_t *packet) {
+void server_status_packet(enum ServerStatus status, uint8_t *packet)
+{
     struct Writer writer;
     writer_init(&writer, SERVER_STATUS_PACKET_LENGTH, packet);
+
     writer_u16(&writer, 0x0003);
     writer_u16(&writer, status);
-    return SERVER_STATUS_PACKET_LENGTH;
 }
 
-size_t character_list_packet(enum LoginFailureReason status, uint8_t char_count, struct CharacterStats *chars, uint8_t pic, uint8_t *packet) {
+size_t character_list_packet(enum LoginFailureReason status, uint8_t char_count, struct CharacterStats *chars, uint8_t pic, uint8_t *packet)
+{
     struct Writer writer;
     writer_init(&writer, CHARACTER_LIST_PACKET_MAX_LENGTH, packet);
+
     writer_u16(&writer, 0x000B);
     writer_u8(&writer, status);
     writer_u8(&writer, char_count);
@@ -132,20 +141,30 @@ size_t character_list_packet(enum LoginFailureReason status, uint8_t char_count,
 
     writer_u8(&writer, pic);
     writer_u32(&writer, 6); // Total character slots; should be greater or equal to char_count
+
     return writer.pos;
 }
 
-size_t channel_ip_packet(uint32_t addr, uint16_t port, uint32_t token, uint8_t *packet) {
+void channel_ip_packet(uint32_t addr, uint16_t port, uint32_t token, uint8_t *packet)
+{
     struct Writer writer;
     writer_init(&writer, CHANNEL_IP_PACKET_LENGTH, packet);
+
     writer_u16(&writer, 0x000C);
     writer_u16(&writer, 0);
     writer_u32(&writer, addr);
     writer_u16(&writer, port);
     writer_u32(&writer, token);
     writer_zero(&writer, 5);
+}
 
-    return CHANNEL_IP_PACKET_LENGTH;
+void login_error_packet(uint8_t err, uint8_t *packet)
+{
+    struct Writer writer;
+    writer_init(&writer, LOGIN_ERROR_PACKET_LENGTH, packet);
+
+    writer_u16(&writer, 0x0009);
+    writer_u16(&writer, err);
 }
 
 size_t name_check_response_packet(uint8_t name_len, char *name, bool available, uint8_t *packet) {
