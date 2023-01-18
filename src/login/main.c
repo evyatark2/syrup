@@ -554,6 +554,8 @@ static int on_resume_client_packet(struct SessionContainer *session, int fd, int
     break;
 
     case PACKET_TYPE_REGISTER_PIC: {
+        uint64_t status;
+        read(fd, &status, 8);
         close(fd);
         struct RegisterPicResult res = register_pic_handler_handle(client->handler, status);
         // For now, assume that the result must be 0
@@ -564,6 +566,8 @@ static int on_resume_client_packet(struct SessionContainer *session, int fd, int
     break;
 
     case PACKET_TYPE_VERIFY_PIC: {
+        uint64_t status;
+        read(fd, &status, 8);
         close(fd);
         struct VerifyPicResult res = verify_pic_handler_handle(client->handler, status);
         // For now, assume that the result must be 0

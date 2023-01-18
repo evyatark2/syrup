@@ -726,16 +726,24 @@ struct RegisterPicResult register_pic_handler_handle(struct RegisterPicHandler *
     if (handler->state == 0) {
         struct RegisterPicResult ret = { .status = POLLIN };
         ret.fd = assign_channel(handler->characterId, handler->client->world, handler->client->channel, &handler->token);
-        handler->state++;
-        return ret;
+        if (ret.fd != -1) {
+            handler->state++;
+            return ret;
+        }
     }
 
     if (handler->state == 1) {
-        account_set_token(handler->client->node, handler->token);
-        struct RegisterPicResult ret = { .status = 0, .size = CHANNEL_IP_PACKET_LENGTH };
-        channel_ip_packet(LOGIN_CONFIG.worlds[handler->client->world].channels[handler->client->channel].ip, LOGIN_CONFIG.worlds[handler->client->world].channels[handler->client->channel].port, handler->token, ret.packet);
-        handler->client->loggedIn = true;
-        return ret;
+        if (status == 1) {
+            account_set_token(handler->client->node, handler->token);
+            struct RegisterPicResult ret = { .status = 0, .size = CHANNEL_IP_PACKET_LENGTH };
+            channel_ip_packet(LOGIN_CONFIG.worlds[handler->client->world].channels[handler->client->channel].ip, LOGIN_CONFIG.worlds[handler->client->world].channels[handler->client->channel].port, handler->token, ret.packet);
+            handler->client->loggedIn = true;
+            return ret;
+        } else {
+            struct RegisterPicResult ret = { .status = 0, .size = LOGIN_ERROR_PACKET_LENGTH };
+            login_error_packet(10, ret.packet);
+            return ret;
+        }
     }
 
     return (struct RegisterPicResult) { .status = -1 };
@@ -785,16 +793,24 @@ struct VerifyPicResult verify_pic_handler_handle(struct VerifyPicHandler *handle
     if (handler->state == 0) {
         struct VerifyPicResult ret = { .status = POLLIN };
         ret.fd = assign_channel(handler->characterId, handler->client->world, handler->client->channel, &handler->token);
-        handler->state++;
-        return ret;
+        if (ret.fd != -1) {
+            handler->state++;
+            return ret;
+        }
     }
 
     if (handler->state == 1) {
-        account_set_token(handler->client->node, handler->token);
-        struct VerifyPicResult ret = { .status = 0, .size = CHANNEL_IP_PACKET_LENGTH };
-        channel_ip_packet(LOGIN_CONFIG.worlds[handler->client->world].channels[handler->client->channel].ip, LOGIN_CONFIG.worlds[handler->client->world].channels[handler->client->channel].port, handler->token, ret.packet);
-        handler->client->loggedIn = true;
-        return ret;
+        if (status == 1) {
+            account_set_token(handler->client->node, handler->token);
+            struct VerifyPicResult ret = { .status = 0, .size = CHANNEL_IP_PACKET_LENGTH };
+            channel_ip_packet(LOGIN_CONFIG.worlds[handler->client->world].channels[handler->client->channel].ip, LOGIN_CONFIG.worlds[handler->client->world].channels[handler->client->channel].port, handler->token, ret.packet);
+            handler->client->loggedIn = true;
+            return ret;
+        } else {
+            struct VerifyPicResult ret = { .status = 0, .size = LOGIN_ERROR_PACKET_LENGTH };
+            login_error_packet(10, ret.packet);
+            return ret;
+        }
     }
 
     return (struct VerifyPicResult) { .status = -1 };
