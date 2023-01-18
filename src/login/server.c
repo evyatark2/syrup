@@ -555,7 +555,7 @@ static void on_channel_event(struct bufferevent *bev, short what, void *ctx)
         if (channel->attempts < 3) {
             channel->attempts++;
             if (channel->attempts == 3) {
-                // TODO: account_logout()
+                hash_set_u32_foreach(channel->clients, do_leave, channel);
                 hash_set_u32_destroy(channel->clients);
                 channel->clients = NULL;
             }
