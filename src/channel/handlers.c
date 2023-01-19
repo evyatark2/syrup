@@ -326,6 +326,22 @@ struct LoginHandlerResult login_handler_handle(struct LoginHandler *handler, int
 
         database_request_destroy(handler->request);
 
+        {
+            uint8_t packet[ENTER_MAP_PACKET_MAX_LENGTH];
+            size_t len = enter_map_packet(&handler->client->character, packet);
+            session_write(handler->client->session, len, packet);
+        }
+
+        session_write(handler->client->session, 2, (uint8_t[]) { 0x23, 0x00 }); // Force stat reset
+
+        {
+            uint8_t packet[SET_GENDER_PACKET_LENGTH];
+            set_gender_packet(handler->client->character.gender, packet);
+            session_write(handler->client->session, SET_GENDER_PACKET_LENGTH, packet);
+        }
+
+        session_write(handler->client->session, 3, (uint8_t[]) { 0x2F, 0x00, 0x01 });
+
         struct LoginHandlerResult ret = { 0 };
         //ret.size = enter_map_packet(&handler->client->character, ret.packet);
         return ret;

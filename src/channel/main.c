@@ -1052,24 +1052,6 @@ static struct OnPacketResult on_unassigned_client_packet(struct Session *session
             if (res.status < 0)
                 return (struct OnPacketResult) { .status = -1 };
 
-            session_write(session, res.size, res.packet);
-
-            {
-                uint8_t packet[ENTER_MAP_PACKET_MAX_LENGTH];
-                size_t len = enter_map_packet(&client->character, packet);
-                session_write(session, len, packet);
-            }
-
-            session_write(session, 2, (uint8_t[]) { 0x23, 0x00 }); // Force stat reset
-
-            {
-                uint8_t packet[SET_GENDER_PACKET_LENGTH];
-                set_gender_packet(client->character.gender, packet);
-                session_write(session, SET_GENDER_PACKET_LENGTH, packet);
-            }
-
-            session_write(session, 3, (uint8_t[]) { 0x2F, 0x00, 0x01 });
-
             return (struct OnPacketResult) { .status = 0, .room = client->character.map };
         }
     } else if (fd == -1) {
@@ -1099,22 +1081,6 @@ static struct OnResumeResult on_resume_client_packet(struct Session *session, in
 
         database_connection_unlock(client->conn);
         login_handler_destroy(client->handler);
-
-        {
-            uint8_t packet[ENTER_MAP_PACKET_MAX_LENGTH];
-            size_t len = enter_map_packet(&client->character, packet);
-            session_write(session, len, packet);
-        }
-
-        session_write(session, 2, (uint8_t[]) { 0x23, 0x00 }); // Force stat reset
-
-        {
-            uint8_t packet[SET_GENDER_PACKET_LENGTH];
-            set_gender_packet(client->character.gender, packet);
-            session_write(session, SET_GENDER_PACKET_LENGTH, packet);
-        }
-
-        session_write(session, 3, (uint8_t[]) { 0x2F, 0x00, 0x01 });
 
         return (struct OnResumeResult) { .status = 0, .room = client->character.map };
     }
@@ -1244,22 +1210,6 @@ static struct OnResumeResult on_database_lock_ready(struct Session *session, int
 
         database_connection_unlock(client->conn);
         login_handler_destroy(client->handler);
-
-        {
-            uint8_t packet[ENTER_MAP_PACKET_MAX_LENGTH];
-            size_t len = enter_map_packet(&client->character, packet);
-            session_write(session, len, packet);
-        }
-
-        session_write(session, 2, (uint8_t[]) { 0x23, 0x00 }); // Force stat reset
-
-        {
-            uint8_t packet[SET_GENDER_PACKET_LENGTH];
-            set_gender_packet(client->character.gender, packet);
-            session_write(session, SET_GENDER_PACKET_LENGTH, packet);
-        }
-
-        session_write(session, 3, (uint8_t[]) { 0x2F, 0x00, 0x01 });
 
         return (struct OnResumeResult) { .status = res.status, .room = client->character.map };
     }
