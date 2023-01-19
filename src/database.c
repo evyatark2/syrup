@@ -1822,10 +1822,10 @@ static int do_update_character(struct DatabaseRequest *req, int status)
         DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
     }
 
-    query = "INSERT INTO Skills VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE level = ?, master = ?";
-    DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
+    if (req->params.updateCharacter.skillCount > 0) {
+        query = "INSERT INTO Skills VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE level = ?, master = ?";
+        DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
 
-    {
         struct {
             uint32_t char_id;
             uint32_t skill_id;
@@ -1858,10 +1858,9 @@ static int do_update_character(struct DatabaseRequest *req, int status)
 
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { req->params.updateCharacter.skillCount });
 
+        DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
+        free(req->temp.updateCharacter.data);
     }
-
-    DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
-    free(req->temp.updateCharacter.data);
 
     //mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { 0 });
 
