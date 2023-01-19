@@ -1326,6 +1326,7 @@ static int do_update_character(struct DatabaseRequest *req, int status)
     DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
 
     // Update existing items
+    // TODO: Don't run this when the item count is 0
     query = "INSERT INTO Items (id, character_id, item_id, flags, owner, giver) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE character_id = ?, flags = ?, owner = ?, giver = ?, deleted = 0";
     DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
 
@@ -1483,6 +1484,7 @@ static int do_update_character(struct DatabaseRequest *req, int status)
     DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
 
     // Update existing equipment
+    // TODO: Don't run this when the item count is 0
     query = "INSERT INTO Equipment VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE level = ?, slots = ?, str = ?, dex = ?, int_ = ?, luk = ?, hp = ?, mp = ?, atk = ?, matk = ?, def = ?, mdef = ?, acc = ?, avoid = ?, speed = ?, jump = ?";
     DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
 

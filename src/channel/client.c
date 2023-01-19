@@ -341,7 +341,7 @@ void client_gain_exp(struct Client *client, int32_t exp, bool reward)
             {
                 uint8_t packet[SHOW_FOREIGN_EFFECT_PACKET_LENGTH];
                 show_foreign_effect_packet(client->character.id, 0, packet);
-                session_broadcast_to_room(client->session, SHOW_EFFECT_PACKET_LENGTH, packet);
+                session_broadcast_to_room(client->session, SHOW_FOREIGN_EFFECT_PACKET_LENGTH, packet);
             }
         }
     } while (exp > 0);
@@ -1766,7 +1766,7 @@ void client_change_job(struct Client *client, enum Job job)
     {
         uint8_t packet[SHOW_FOREIGN_EFFECT_PACKET_LENGTH];
         show_foreign_effect_packet(chr->id, 8, packet);
-        session_broadcast_to_room(client->session, SHOW_EFFECT_PACKET_LENGTH, packet);
+        session_broadcast_to_room(client->session, SHOW_FOREIGN_EFFECT_PACKET_LENGTH, packet);
     }
 }
 
@@ -2081,7 +2081,7 @@ static bool end_quest(struct Client *client, uint16_t qid, uint32_t npc, bool *s
     {
         uint8_t packet[SHOW_EFFECT_PACKET_LENGTH];
         show_effect_packet(9, packet);
-        session_broadcast_to_room(client->session, SHOW_EFFECT_PACKET_LENGTH, packet);
+        session_write(client->session, SHOW_EFFECT_PACKET_LENGTH, packet);
     }
 
     {
