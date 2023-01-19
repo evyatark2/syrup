@@ -1218,7 +1218,7 @@ static struct OnResumeResult on_database_lock_ready(struct Session *session, int
     case PACKET_TYPE_LOGOUT: {
         int status = logout_handler_handle(client->handler, 0);
         if (status > 0) {
-            session_set_event(session, status, database_connection_get_fd(client->conn), on_resume_client_packet);
+            session_set_event(session, status, database_connection_get_fd(client->conn), on_resume_client_disconnect);
             return (struct OnResumeResult) { .status = status };
         }
 
