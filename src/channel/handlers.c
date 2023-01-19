@@ -70,7 +70,6 @@ struct LoginHandlerResult login_handler_handle(struct LoginHandler *handler, int
         handler->state++;
         struct Character *chr = &handler->client->character;
         const union DatabaseResult *res = database_request_result(handler->request);
-        handler->client->character.spawnPoint = wz_get_portal_info_by_name(handler->client->character.map, "sp")->id;
         chr->id = handler->id;
         chr->nameLength = res->getCharacter.nameLength;
         memcpy(handler->client->character.name, res->getCharacter.name, res->getCharacter.nameLength);
@@ -79,7 +78,8 @@ struct LoginHandlerResult login_handler_handle(struct LoginHandler *handler, int
         //chr->y = info->y;
         //chr->fh = 0;
         //chr->stance = 6;
-        chr->spawnPoint = res->getCharacter.spawnPoint;
+        chr->map = res->getCharacter.map;
+        chr->spawnPoint = wz_get_portal_info_by_name(handler->client->character.map, "sp")->id;
         chr->job = res->getCharacter.job;
         chr->level = res->getCharacter.level;
         chr->exp = res->getCharacter.exp;

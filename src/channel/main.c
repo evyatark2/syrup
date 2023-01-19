@@ -726,8 +726,13 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             }
         }
         break;
-        case 3:
+
+        case 3: {
+            if (!client_forfeit_quest(client, qid))
+                return (struct OnPacketResult) { .status = -1 };
+        }
         break;
+
         case 4: {
             READ_OR_ERROR(reader_u32, &npc);
             if (READER_AVAILABLE() == 4) {

@@ -1519,6 +1519,7 @@ static struct Session *create_session(struct ChannelServer *server, int fd, stru
     session->token = 0;
     session->userEvent = NULL;
     session->writeEnable = false;
+    session->targetRoom = -1;
 
     return session;
 

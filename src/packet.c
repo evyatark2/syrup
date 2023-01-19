@@ -1143,6 +1143,17 @@ void update_quest_completion_time_packet(uint16_t qid, time_t time, uint8_t *pac
     writer_u64(&writer, (time * 1000L) * 10000L + 116444736010800000L + tm.tm_gmtoff * 1000L * 10000L); // Current time
 }
 
+void forfeit_quest_packet(uint16_t qid, uint8_t *packet)
+{
+    struct Writer writer;
+    writer_init(&writer, FORFEIT_QUEST_PACKET_LENGTH, packet);
+
+    writer_u16(&writer, 0x0027);
+    writer_u8(&writer, 1);
+    writer_u16(&writer, qid);
+    writer_u8(&writer, 0);
+}
+
 size_t modify_items_packet(uint8_t mod_count, struct InventoryModify *mods, uint8_t *packet)
 {
     struct Writer writer;

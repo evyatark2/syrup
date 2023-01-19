@@ -96,6 +96,7 @@ struct ClientResult client_start_quest(struct Client *client, uint16_t qid, uint
 bool client_start_quest_now(struct Client *client, bool *success);
 struct ClientResult client_end_quest(struct Client *client, uint16_t qid, uint32_t npc, bool scripted);
 bool client_end_quest_now(struct Client *client, bool *success);
+bool client_forfeit_quest(struct Client *client, uint16_t qid);
 struct ClientResult client_script_cont(struct Client *client, uint8_t action);
 void client_kill_monster(struct Client *client, uint32_t id);
 void client_send_ok(struct Client *client, size_t msg_len, const char *msg);

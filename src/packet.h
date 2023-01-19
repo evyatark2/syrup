@@ -237,6 +237,9 @@ size_t update_quest_packet(uint16_t id, uint16_t len, char *progress, uint8_t *p
 #define UPDATE_QUEST_COMPLETION_TIME_PACKET_LENGTH 14
 void update_quest_completion_time_packet(uint16_t qid, time_t time, uint8_t *packet);
 
+#define FORFEIT_QUEST_PACKET_LENGTH 6
+void forfeit_quest_packet(uint16_t qid, uint8_t *packet);
+
 enum InventoryModifyType {
     INVENTORY_MODIFY_TYPE_ADD,
     INVENTORY_MODIFY_TYPE_MODIFY,

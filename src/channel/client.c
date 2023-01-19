@@ -1419,6 +1419,45 @@ bool client_end_quest_now(struct Client *client, bool *success)
     return end_quest(client, client->qid, client->npc, success);
 }
 
+bool client_forfeit_quest(struct Client *client, uint16_t qid)
+{
+    struct Quest *quest = hash_set_u16_get(client->character.quests, qid);
+    if (quest == NULL)
+        return true;
+
+    const struct QuestInfo *info = wz_get_quest_info(qid);
+    for (size_t i = 0; i < info->endRequirementCount; i++) {
+        struct QuestRequirement *req = &info->endRequirements[i];
+        if (req->type == QUEST_REQUIREMENT_TYPE_MOB) {
+            for (uint8_t i = 0; i < quest->progressCount; i++) {
+                struct Progress *progress = &quest->progress[i];
+                for (uint8_t i = 0; i < req->mob.count; i++) {
+                    if (progress->id == req->mob.mobs[i].id) {
+                        if (progress->amount < req->mob.mobs[i].count) {
+                            struct MonsterRefCount *m = hash_set_u32_get(client->character.monsterQuests, progress->id);
+                            m->refCount--;
+                            if (m->refCount == 0)
+                                hash_set_u32_remove(client->character.monsterQuests, m->id);
+                        }
+                        break;
+                    }
+                }
+            }
+            break;
+        }
+    }
+
+    hash_set_u16_remove(client->character.quests, qid);
+
+    {
+        uint8_t packet[FORFEIT_QUEST_PACKET_LENGTH];
+        forfeit_quest_packet(qid, packet);
+        session_write(client->session, FORFEIT_QUEST_PACKET_LENGTH, packet);
+    }
+
+    return true;
+}
+
 struct ClientResult client_script_cont(struct Client *client, uint8_t action)
 {
     struct ScriptResult res;
