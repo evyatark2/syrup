@@ -2053,6 +2053,7 @@ static bool start_quest(struct Client *client, uint16_t qid, uint32_t npc, bool 
         session_write(client->session, START_QUEST_PACKET_LENGTH, packet);
     }
 
+    *success = true;
     return true;
 }
 
