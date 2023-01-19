@@ -186,7 +186,6 @@ static int on_client_connect(struct Session *session, void *global_ctx, void *th
     client->character.completedQuests = NULL;
     client->character.skills = NULL;
     client->script = NULL;
-    client->assigned = false;
     session_set_context(session, client);
 
     return 0;
@@ -239,14 +238,15 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         SKIP(7);
         READER_END();
         portal[len] = '\0';
-        uint32_t targetMap = wz_get_target_map(client->character.map, portal);
-        if (targetMap == -1)
+        uint32_t target_map = wz_get_target_map(client->character.map, portal);
+        if (target_map == -1)
             return (struct OnPacketResult) { .status = 0, .room = -1 };
-        uint8_t targetPortal = wz_get_target_portal(client->character.map, portal);
-        if (targetPortal == (uint8_t)-1)
+        uint8_t target_portal = wz_get_target_portal(client->character.map, portal);
+        if (target_portal == (uint8_t)-1)
             return (struct OnPacketResult) { .status = 0, .room = -1 };
-        client_warp(client, targetMap, targetPortal);
-        return (struct OnPacketResult) { .status = 0, .room = client->targetMap };
+        client_warp(client, target_map, target_portal);
+
+        return (struct OnPacketResult) { .status = 0, .room = target_map };
     }
     break;
 
@@ -1039,20 +1039,38 @@ static struct OnPacketResult on_unassigned_client_packet(struct Session *session
     if (fd == -2) {
         struct LoginHandlerResult res = login_handler_handle(client->handler, 0);
         if (res.status > 0) {
-            session_set_event(session, res.status, database_connection_get_fd(client->conn), on_resume_client_packet, false);
+            session_set_event(session, res.status, database_connection_get_fd(client->conn), on_resume_client_packet);
             return (struct OnPacketResult) { .status = res.status };
         } else {
             database_connection_unlock(client->conn);
             login_handler_destroy(client->handler);
             if (res.status < 0)
                 return (struct OnPacketResult) { .status = -1 };
+
             session_write(session, res.size, res.packet);
-            return (struct OnPacketResult) { .status = 0, .room = client->targetMap };
+
+            {
+                uint8_t packet[ENTER_MAP_PACKET_MAX_LENGTH];
+                size_t len = enter_map_packet(&client->character, packet);
+                session_write(session, len, packet);
+            }
+
+            session_write(session, 2, (uint8_t[]) { 0x23, 0x00 }); // Force stat reset
+
+            {
+                uint8_t packet[SET_GENDER_PACKET_LENGTH];
+                set_gender_packet(client->character.gender, packet);
+                session_write(session, SET_GENDER_PACKET_LENGTH, packet);
+            }
+
+            session_write(session, 3, (uint8_t[]) { 0x2F, 0x00, 0x01 });
+
+            return (struct OnPacketResult) { .status = 0, .room = client->character.map };
         }
     } else if (fd == -1) {
         return (struct OnPacketResult) { .status = -1 };
     } else {
-            session_set_event(session, POLLIN, fd, on_database_lock_ready, false);
+            session_set_event(session, POLLIN, fd, on_database_lock_ready);
         return (struct OnPacketResult) { .status = POLLIN };
     }
 }
@@ -1065,7 +1083,7 @@ static struct OnResumeResult on_resume_client_packet(struct Session *session, in
         struct LoginHandlerResult res = login_handler_handle(client->handler, status);
         if (res.status > 0) {
             if (res.status != session_get_event_disposition(session)) {
-                session_set_event(session, res.status, -1, on_resume_client_packet, client->assigned);
+                session_set_event(session, res.status, -1, on_resume_client_packet);
             }
             return (struct OnResumeResult) { .status = res.status };
         } else if (res.status < 0) {
@@ -1073,9 +1091,27 @@ static struct OnResumeResult on_resume_client_packet(struct Session *session, in
             login_handler_destroy(client->handler);
             return (struct OnResumeResult) { .status = res.status };
         }
+
         database_connection_unlock(client->conn);
         login_handler_destroy(client->handler);
-        return (struct OnResumeResult) { .status = 0, .room = client->targetMap };
+
+        {
+            uint8_t packet[ENTER_MAP_PACKET_MAX_LENGTH];
+            size_t len = enter_map_packet(&client->character, packet);
+            session_write(session, len, packet);
+        }
+
+        session_write(session, 2, (uint8_t[]) { 0x23, 0x00 }); // Force stat reset
+
+        {
+            uint8_t packet[SET_GENDER_PACKET_LENGTH];
+            set_gender_packet(client->character.gender, packet);
+            session_write(session, SET_GENDER_PACKET_LENGTH, packet);
+        }
+
+        session_write(session, 3, (uint8_t[]) { 0x2F, 0x00, 0x01 });
+
+        return (struct OnResumeResult) { .status = 0, .room = client->character.map };
     }
     break;
 
@@ -1089,7 +1125,7 @@ static struct OnResumeResult on_resume_client_packet(struct Session *session, in
 static void on_client_disconnect(struct Session *session)
 {
     struct Client *client = session_get_context(session);
-    if (client->assigned) {
+    if (session_get_room(session) != NULL) {
         struct Map *map = room_get_context(session_get_room(session));
         script_manager_free(client->script);
 
@@ -1114,7 +1150,7 @@ static void on_client_disconnect(struct Session *session)
         if (fd == -2) {
             int status = logout_handler_handle(client->handler, 0);
             if (status > 0) {
-                session_set_event(session, status, database_connection_get_fd(client->conn), on_resume_client_disconnect, true);
+                session_set_event(session, status, database_connection_get_fd(client->conn), on_resume_client_disconnect);
                 return;
             } else {
                 database_connection_unlock(client->conn);
@@ -1123,7 +1159,7 @@ static void on_client_disconnect(struct Session *session)
         } else if (fd == -1) {
             logout_handler_destroy(client->handler);
         } else {
-            session_set_event(session, POLLIN, fd, on_database_lock_ready, true);
+            session_set_event(session, POLLIN, fd, on_database_lock_ready);
             return;
         }
     }
@@ -1156,37 +1192,11 @@ static bool on_client_join(struct Session *session, void *thread_ctx)
 {
     struct Client *client = session_get_context(session);
 
-    client->character.map = client->targetMap;
-
-    if (!client->assigned) {
-        client->assigned = true;
-
-        {
-            uint8_t packet[ENTER_MAP_PACKET_MAX_LENGTH];
-            size_t len = enter_map_packet(&client->character, packet);
-            session_write(session, len, packet);
-        }
-
-        session_write(session, 2, (uint8_t[]) { 0x23, 0x00 }); // Force stat reset
-
-        {
-            uint8_t packet[SET_GENDER_PACKET_LENGTH];
-            set_gender_packet(client->character.gender, packet);
-            session_write(session, SET_GENDER_PACKET_LENGTH, packet);
-        }
-
-        session_write(session, 3, (uint8_t[]) { 0x2F, 0x00, 0x01 });
-    } else {
-        uint8_t packet[CHANGE_MAP_PACKET_LENGTH];
-        change_map_packet(&client->character, client->targetMap, client->targetPortal, packet);
-        session_write(session, CHANGE_MAP_PACKET_LENGTH, packet);
-    }
-
     client->conn = thread_ctx;
     //session_write(session, 3, (uint8_t[]) { 0xDE, 0x00, 0x00 }); // Disable UI
     //session_write(session, 3, (uint8_t[]) { 0xDD, 0x00, 0x00 }); // Lock UI
     //session_write(session, 2, (uint8_t[]) { 0x23, 0x00 }); // Force stat reset
-    const struct PortalInfo *info = wz_get_portal_info(client->targetMap, client->targetPortal);
+    const struct PortalInfo *info = wz_get_portal_info(client->character.map, client->character.spawnPoint);
     client->character.x = info->x;
     client->character.y = info->y;
     client->character.stance = 6;
@@ -1223,20 +1233,37 @@ static struct OnResumeResult on_database_lock_ready(struct Session *session, int
     case PACKET_TYPE_LOGIN: {
         struct LoginHandlerResult res = login_handler_handle(client->handler, 0);
         if (res.status > 0) {
-            session_set_event(session, res.status, database_connection_get_fd(client->conn), on_resume_client_packet, client->assigned);
+            session_set_event(session, res.status, database_connection_get_fd(client->conn), on_resume_client_packet);
             return (struct OnResumeResult) { .status = res.status };
         }
 
-        login_handler_destroy(client->handler);
         database_connection_unlock(client->conn);
-        return (struct OnResumeResult) { .status = res.status, .room = client->targetMap };
+        login_handler_destroy(client->handler);
+
+        {
+            uint8_t packet[ENTER_MAP_PACKET_MAX_LENGTH];
+            size_t len = enter_map_packet(&client->character, packet);
+            session_write(session, len, packet);
+        }
+
+        session_write(session, 2, (uint8_t[]) { 0x23, 0x00 }); // Force stat reset
+
+        {
+            uint8_t packet[SET_GENDER_PACKET_LENGTH];
+            set_gender_packet(client->character.gender, packet);
+            session_write(session, SET_GENDER_PACKET_LENGTH, packet);
+        }
+
+        session_write(session, 3, (uint8_t[]) { 0x2F, 0x00, 0x01 });
+
+        return (struct OnResumeResult) { .status = res.status, .room = client->character.map };
     }
     break;
 
     case PACKET_TYPE_LOGOUT: {
         int status = logout_handler_handle(client->handler, 0);
         if (status > 0) {
-            session_set_event(session, status, database_connection_get_fd(client->conn), on_resume_client_packet, client->assigned);
+            session_set_event(session, status, database_connection_get_fd(client->conn), on_resume_client_packet);
             return (struct OnResumeResult) { .status = status };
         }
 

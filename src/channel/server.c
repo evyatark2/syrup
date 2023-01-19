@@ -634,13 +634,13 @@ int session_get_event_disposition(struct Session *session)
     return libevent_to_poll(event_get_events(session->userEvent));
 }
 
-int session_set_event(struct Session *session, int status, int fd, OnResume *on_resume, bool assigned)
+int session_set_event(struct Session *session, int status, int fd, OnResume *on_resume)
 {
     struct Worker *worker = session->supervisor;
     if (session->userEvent != NULL)
         event_free(session->userEvent);
 
-    session->userEvent = event_new(worker->base, fd, poll_to_libevent(status) | EV_PERSIST, assigned ? on_worker_user_fd_ready : on_greeter_user_fd_ready, session);
+    session->userEvent = event_new(worker->base, fd, poll_to_libevent(status) | EV_PERSIST, session->targetRoom != -1 ? on_worker_user_fd_ready : on_greeter_user_fd_ready, session);
     if (session->userEvent == NULL)
         return -1;
 

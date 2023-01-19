@@ -1549,8 +1549,8 @@ void client_warp(struct Client *client, uint32_t map, uint8_t portal)
 {
     struct Character *chr = &client->character;
     client->scriptState = SCRIPT_STATE_WARP;
-    client->targetMap = map;
-    client->targetPortal = portal;
+    client->character.map = map;
+    client->character.spawnPoint = portal;
     {
         uint8_t packet[REMOVE_PLAYER_FROM_MAP_PACKET_LENGTH];
         remove_player_from_map_packet(chr->id, packet);
@@ -1558,6 +1558,12 @@ void client_warp(struct Client *client, uint32_t map, uint8_t portal)
     }
     map_leave(room_get_context(session_get_room(client->session)), client->map.handle);
     client->map.handle = NULL;
+
+    {
+        uint8_t packet[CHANGE_MAP_PACKET_LENGTH];
+        change_map_packet(&client->character, client->character.map, client->character.spawnPoint, packet);
+        session_write(client->session, CHANGE_MAP_PACKET_LENGTH, packet);
+    }
 }
 
 void client_reset_stats(struct Client *client)

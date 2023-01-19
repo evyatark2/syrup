@@ -42,9 +42,6 @@ struct Client {
     // TODO: Make this a handler queue
     void *handler;
     struct Character character;
-    uint32_t targetMap;
-    uint8_t targetPortal;
-    bool assigned;
     struct ScriptHandle *script;
     enum ScriptState scriptState;
     uint16_t qid;
