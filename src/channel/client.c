@@ -77,6 +77,130 @@ void client_adjust_sp(struct Client *client, int16_t sp)
     session_write(client->session, len, packet);
 }
 
+void client_raise_str(struct Client *client)
+{
+    if (client->character.ap > 0) {
+        client->character.str++;
+        client->character.ap--;
+    }
+
+    uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
+    union StatValue value[] = {
+        {
+            .i16 = client->character.str,
+        },
+        {
+            .i16 = client->character.ap,
+        }
+    };
+    size_t len = stat_change_packet(true, STAT_STR | STAT_AP, value, packet);
+    session_write(client->session, len, packet);
+}
+
+void client_raise_dex(struct Client *client)
+{
+    if (client->character.ap > 0) {
+        client->character.dex++;
+        client->character.ap--;
+    }
+
+    uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
+    union StatValue value[] = {
+        {
+            .i16 = client->character.dex,
+        },
+        {
+            .i16 = client->character.ap,
+        }
+    };
+    size_t len = stat_change_packet(true, STAT_DEX | STAT_AP, value, packet);
+    session_write(client->session, len, packet);
+}
+
+void client_raise_int(struct Client *client)
+{
+    if (client->character.ap > 0) {
+        client->character.int_++;
+        client->character.ap--;
+    }
+
+    uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
+    union StatValue value[] = {
+        {
+            .i16 = client->character.int_,
+        },
+        {
+            .i16 = client->character.ap,
+        }
+    };
+    size_t len = stat_change_packet(true, STAT_INT | STAT_AP, value, packet);
+    session_write(client->session, len, packet);
+}
+
+void client_raise_luk(struct Client *client)
+{
+    if (client->character.ap > 0) {
+        client->character.luk++;
+        client->character.ap--;
+    }
+
+    uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
+    union StatValue value[] = {
+        {
+            .i16 = client->character.luk,
+        },
+        {
+            .i16 = client->character.ap,
+        }
+    };
+    size_t len = stat_change_packet(true, STAT_LUK | STAT_AP, value, packet);
+    session_write(client->session, len, packet);
+}
+
+bool client_assign_sp(struct Client *client, uint32_t id)
+{
+    struct Character *chr = &client->character;
+
+    // TODO: Check if id is legal for this client to assign
+
+    if (id >= 1000 && id <= 1002) {
+        uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
+        size_t len = stat_change_packet(true, 0, NULL, packet);
+        session_write(client->session, len, packet);
+    } else if (chr->sp > 0) {
+        chr->sp--;
+        uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
+        union StatValue value = {
+            .i16 = chr->sp,
+        };
+        size_t len = stat_change_packet(true, STAT_SP, &value, packet);
+        session_write(client->session, len, packet);
+    } else {
+        return true;
+    }
+
+    struct Skill *skill = hash_set_u32_get(chr->skills, id);
+    if (skill == NULL) {
+        struct Skill new = {
+            .id = id,
+            .level = 1,
+            .masterLevel = 0
+        };
+        hash_set_u32_insert(chr->skills, &new);
+        skill = hash_set_u32_get(chr->skills, id);
+    } else {
+        skill->level++;
+    }
+
+    {
+        uint8_t packet[UPDATE_SKILL_PACKET_LENGTH];
+        update_skill_packet(id, skill->level, skill->masterLevel, packet);
+        session_write(client->session, UPDATE_SKILL_PACKET_LENGTH, packet);
+    }
+
+    return true;
+}
+
 void client_gain_exp(struct Client *client, int32_t exp, bool reward)
 {
     struct Character *chr = &client->character;
@@ -1505,130 +1629,6 @@ void client_reset_stats(struct Client *client)
     };
     size_t len = stat_change_packet(true, STAT_STR | STAT_DEX | STAT_INT | STAT_LUK | STAT_AP | STAT_SP, values, packet);
     session_write(client->session, len, packet);
-}
-
-void client_raise_str(struct Client *client)
-{
-    if (client->character.ap > 0) {
-        client->character.str++;
-        client->character.ap--;
-    }
-
-    uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
-    union StatValue value[] = {
-        {
-            .i16 = client->character.str,
-        },
-        {
-            .i16 = client->character.ap,
-        }
-    };
-    size_t len = stat_change_packet(true, STAT_STR | STAT_AP, value, packet);
-    session_write(client->session, len, packet);
-}
-
-void client_raise_dex(struct Client *client)
-{
-    if (client->character.ap > 0) {
-        client->character.dex++;
-        client->character.ap--;
-    }
-
-    uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
-    union StatValue value[] = {
-        {
-            .i16 = client->character.dex,
-        },
-        {
-            .i16 = client->character.ap,
-        }
-    };
-    size_t len = stat_change_packet(true, STAT_DEX | STAT_AP, value, packet);
-    session_write(client->session, len, packet);
-}
-
-void client_raise_int(struct Client *client)
-{
-    if (client->character.ap > 0) {
-        client->character.int_++;
-        client->character.ap--;
-    }
-
-    uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
-    union StatValue value[] = {
-        {
-            .i16 = client->character.int_,
-        },
-        {
-            .i16 = client->character.ap,
-        }
-    };
-    size_t len = stat_change_packet(true, STAT_INT | STAT_AP, value, packet);
-    session_write(client->session, len, packet);
-}
-
-void client_raise_luk(struct Client *client)
-{
-    if (client->character.ap > 0) {
-        client->character.luk++;
-        client->character.ap--;
-    }
-
-    uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
-    union StatValue value[] = {
-        {
-            .i16 = client->character.luk,
-        },
-        {
-            .i16 = client->character.ap,
-        }
-    };
-    size_t len = stat_change_packet(true, STAT_LUK | STAT_AP, value, packet);
-    session_write(client->session, len, packet);
-}
-
-bool client_assign_sp(struct Client *client, uint32_t id)
-{
-    struct Character *chr = &client->character;
-
-    // TODO: Check if id is legal for this client to assign
-
-    if (id >= 1000 && id <= 1002) {
-        uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
-        size_t len = stat_change_packet(true, 0, NULL, packet);
-        session_write(client->session, len, packet);
-    } else if (chr->sp > 0) {
-        chr->sp--;
-        uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
-        union StatValue value = {
-            .i16 = chr->sp,
-        };
-        size_t len = stat_change_packet(true, STAT_SP, &value, packet);
-        session_write(client->session, len, packet);
-    } else {
-        return true;
-    }
-
-    struct Skill *skill = hash_set_u32_get(chr->skills, id);
-    if (skill == NULL) {
-        struct Skill new = {
-            .id = id,
-            .level = 1,
-            .masterLevel = 0
-        };
-        hash_set_u32_insert(chr->skills, &new);
-        skill = hash_set_u32_get(chr->skills, id);
-    } else {
-        skill->level++;
-    }
-
-    {
-        uint8_t packet[UPDATE_SKILL_PACKET_LENGTH];
-        update_skill_packet(id, skill->level, skill->masterLevel, packet);
-        session_write(client->session, UPDATE_SKILL_PACKET_LENGTH, packet);
-    }
-
-    return true;
 }
 
 void client_change_job(struct Client *client, enum Job job)
