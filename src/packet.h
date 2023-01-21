@@ -99,7 +99,7 @@ size_t add_player_to_map_packet(struct Character *chr, uint8_t *packet);
 #define MOVE_PLAYER_PACKET_MAX_LENGTH 3863
 size_t move_player_packet(uint32_t id, size_t len, uint8_t *data, uint8_t *packet);
 
-#define DAMAGE_PLAYER_PACKET_MAX_LENGTH 28
+#define DAMAGE_PLAYER_PACKET_MAX_LENGTH 26
 size_t damange_player_packet(uint8_t skill, uint32_t monster_id, uint32_t char_id, int32_t damage, int32_t fake, uint8_t direction, uint8_t *packet);
 
 #define REMOVE_PLAYER_FROM_MAP_PACKET_LENGTH 6

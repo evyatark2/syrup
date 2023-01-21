@@ -542,7 +542,7 @@ size_t damange_player_packet(uint8_t skill, uint32_t monster_id, uint32_t char_i
     if (skill != (uint8_t)-4) {
         writer_u32(&writer, monster_id);
         writer_u8(&writer, direction);
-        writer_u32(&writer, 0);
+        writer_u16(&writer, 0);
         writer_i32(&writer, damage);
         if (fake > 0)
             writer_i32(&writer, fake);
