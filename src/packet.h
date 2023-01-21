@@ -240,6 +240,9 @@ void update_quest_completion_time_packet(uint16_t qid, time_t time, uint8_t *pac
 #define FORFEIT_QUEST_PACKET_LENGTH 6
 void forfeit_quest_packet(uint16_t qid, uint8_t *packet);
 
+#define CHAT_PACKET_MAX_LENGTH 90
+size_t chat_packet(uint32_t id, bool gm, uint16_t len, char *string, uint8_t show, uint8_t *packet);
+
 enum InventoryModifyType {
     INVENTORY_MODIFY_TYPE_ADD,
     INVENTORY_MODIFY_TYPE_MODIFY,

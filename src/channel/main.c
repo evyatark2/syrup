@@ -472,6 +472,24 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
     }
     break;
 
+    case 0x0031: {
+        uint16_t str_len = 80;
+        char string[80];
+        uint8_t show;
+        READER_BEGIN(size, packet);
+        READ_OR_ERROR(reader_sized_string, &str_len, string);
+        if (string[0] != '/')
+            READ_OR_ERROR(reader_u8, &show);
+        READER_END();
+
+        if (string[0] != '/') {
+            uint8_t packet[CHAT_PACKET_MAX_LENGTH];
+            size_t len = chat_packet(client->character.id, false, str_len, string, show, packet);
+            room_broadcast(session_get_room(session), len, packet);
+        }
+    }
+    break;
+
     case 0x003A: {
         struct Map *map = room_get_context(session_get_room(session));
         uint32_t oid;

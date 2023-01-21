@@ -1154,6 +1154,20 @@ void forfeit_quest_packet(uint16_t qid, uint8_t *packet)
     writer_u8(&writer, 0);
 }
 
+size_t chat_packet(uint32_t id, bool gm, uint16_t len, char *string, uint8_t show, uint8_t *packet)
+{
+    struct Writer writer;
+    writer_init(&writer, CHAT_PACKET_MAX_LENGTH, packet);
+
+    writer_u16(&writer, 0x00A2);
+    writer_u32(&writer, id);
+    writer_bool(&writer, gm);
+    writer_sized_string(&writer, len, string);
+    writer_u8(&writer, show);
+
+    return writer.pos;
+}
+
 size_t modify_items_packet(uint8_t mod_count, struct InventoryModify *mods, uint8_t *packet)
 {
     struct Writer writer;

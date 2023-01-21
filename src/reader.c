@@ -78,7 +78,7 @@ bool reader_u32(struct Reader *reader, uint32_t *data)
 }
 
 /**
- * @param[in,out] max_len As input, it indicates the maximum length of \p string and as output it holds the number of bytes that were read
+ * @param[in,out] max_len As input, it indicates the maximum length of \p string and as output, it holds the number of bytes that were written to \p string
  */
 bool reader_sized_string(struct Reader *reader, uint16_t *max_len, char *string)
 {
