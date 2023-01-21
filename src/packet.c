@@ -421,7 +421,7 @@ void change_map_packet(struct Character *chr, uint32_t to, uint8_t portal, uint8
     writer_u32(&writer, 0);
     writer_u8(&writer, 0);
     writer_u32(&writer, to);
-    writer_u8(&writer, portal); // Spawn point
+    writer_u8(&writer, portal);
     writer_u16(&writer, chr->hp);
     writer_bool(&writer, false);
     struct timeval time;

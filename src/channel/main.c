@@ -235,18 +235,29 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         SKIP(1); // 0 - from dying; 1 - regular portal
         READ_OR_ERROR(reader_u32, &id);
         READ_OR_ERROR(reader_sized_string, &len, portal);
-        SKIP(7);
+        SKIP(1);
         READER_END();
-        portal[len] = '\0';
-        uint32_t target_map = wz_get_target_map(client->character.map, portal);
-        if (target_map == -1)
-            return (struct OnPacketResult) { .status = 0, .room = -1 };
-        uint8_t target_portal = wz_get_target_portal(client->character.map, portal);
-        if (target_portal == (uint8_t)-1)
-            return (struct OnPacketResult) { .status = 0, .room = -1 };
-        client_warp(client, target_map, target_portal);
+        if (client->character.hp > 0) {
+            portal[len] = '\0';
+            uint32_t target_map = wz_get_target_map(client->character.map, portal);
+            if (target_map == -1)
+                return (struct OnPacketResult) { .status = 0, .room = -1 };
+            uint8_t target_portal = wz_get_target_portal(client->character.map, portal);
+            if (target_portal == (uint8_t)-1)
+                return (struct OnPacketResult) { .status = 0, .room = -1 };
+            client_warp(client, target_map, target_portal);
 
-        return (struct OnPacketResult) { .status = 0, .room = target_map };
+            return (struct OnPacketResult) { .status = 0, .room = target_map };
+        } else {
+            uint32_t id = wz_get_map_nearest_town(client->character.map);
+            const struct PortalInfo *portal = wz_get_portal_info_by_name(id, "sp");
+
+            client_warp(client, id, portal->id);
+
+            client_set_hp(client, 50);
+
+            return (struct OnPacketResult) { .status = 0, .room = id };
+        }
     }
     break;
 

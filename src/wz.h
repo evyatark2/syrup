@@ -70,7 +70,7 @@ struct PortalInfo {
 struct MapInfo {
     uint32_t id;
     float mobRate;
-    uint32_t returnMapId;
+    uint32_t returnMap;
     bool swim;
     char onFirstUserEnter[SCRIPT_NAME_MAX_LENGTH+1];
     char onUserEnter[SCRIPT_NAME_MAX_LENGTH+1];
@@ -281,6 +281,7 @@ int wz_init();
 int wz_init_equipment();
 void wz_terminate();
 void wz_terminate_equipment();
+uint32_t wz_get_map_nearest_town(uint32_t id);
 uint32_t wz_get_target_map(uint32_t id, char *target);
 uint8_t wz_get_target_portal(uint32_t id, char *target);
 const struct FootholdRTree *wz_get_foothold_tree_for_map(uint32_t id);

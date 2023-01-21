@@ -824,6 +824,12 @@ void wz_terminate_equipment()
     free(EQUIP_INFOS);
 }
 
+uint32_t wz_get_map_nearest_town(uint32_t id)
+{
+    size_t i = cmph_search(MAP_INFO_MPH, (void *)&id, sizeof(uint32_t));
+    return MAP_INFOS[i].returnMap;
+}
+
 uint32_t wz_get_target_map(uint32_t id, char *target)
 {
     size_t i = cmph_search(MAP_INFO_MPH, (void *)&id, sizeof(uint32_t));
@@ -1137,7 +1143,7 @@ static void on_map_start(void *user_data, const XML_Char *name, const XML_Char *
             ctx->skip++;
             if (!strcmp(name, "int")) {
                 if (!strcmp(key, "returnMap")) {
-                    MAP_INFOS[ctx->currentMap].returnMapId = strtol(value, NULL, 10);
+                    MAP_INFOS[ctx->currentMap].returnMap = strtol(value, NULL, 10);
                 } else if (!strcmp(key, "fieldLimit")) {
                 } else if (!strcmp(key, "VRTop")) {
                 } else if (!strcmp(key, "VRBottom")) {
