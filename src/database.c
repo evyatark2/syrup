@@ -172,6 +172,8 @@ struct DatabaseRequest *database_request_create(struct DatabaseConnection *conn,
         req->res.getCharacter.progresses = NULL;
         req->res.getCharacter.completedQuests = NULL;
         req->res.getCharacter.skills = NULL;
+    } else if (req->params.type == DATABASE_REQUEST_TYPE_UPDATE_CHARACTER) {
+        req->temp.updateCharacter.data = NULL;
     }
 
     return req;
@@ -193,6 +195,8 @@ void database_request_destroy(struct DatabaseRequest *req)
         free(req->res.getCharacter.completedQuests);
         free(req->res.getCharacter.progresses);
         free(req->res.getCharacter.quests);
+    } else if (req->params.type == DATABASE_REQUEST_TYPE_UPDATE_CHARACTER) {
+        free(req->temp.updateCharacter.data);
     }
 
     free(req);
@@ -1589,9 +1593,9 @@ static int do_update_character(struct DatabaseRequest *req, int status)
 
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { count });
 
-        // TODO: Find a way to free up the data when DO_ASYNC fails
         DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
         free(req->temp.updateCharacter.data);
+        req->temp.updateCharacter.data = NULL;
 
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { 0 });
 
