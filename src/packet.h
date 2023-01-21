@@ -243,6 +243,9 @@ void forfeit_quest_packet(uint16_t qid, uint8_t *packet);
 #define CHAT_PACKET_MAX_LENGTH 90
 size_t chat_packet(uint32_t id, bool gm, uint16_t len, char *string, uint8_t show, uint8_t *packet);
 
+#define FACE_EXPRESSION_PACKET_LENGTH 10
+void face_expression_packet(uint32_t id, uint32_t emote, uint8_t *packet);
+
 enum InventoryModifyType {
     INVENTORY_MODIFY_TYPE_ADD,
     INVENTORY_MODIFY_TYPE_MODIFY,

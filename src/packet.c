@@ -1168,6 +1168,16 @@ size_t chat_packet(uint32_t id, bool gm, uint16_t len, char *string, uint8_t sho
     return writer.pos;
 }
 
+void face_expression_packet(uint32_t id, uint32_t emote, uint8_t *packet)
+{
+    struct Writer writer;
+    writer_init(&writer, FACE_EXPRESSION_PACKET_LENGTH, packet);
+
+    writer_u16(&writer, 0x00C1);
+    writer_u32(&writer, id);
+    writer_u32(&writer, emote);
+}
+
 size_t modify_items_packet(uint8_t mod_count, struct InventoryModify *mods, uint8_t *packet)
 {
     struct Writer writer;

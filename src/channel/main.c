@@ -490,6 +490,21 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
     }
     break;
 
+    case 0x0033: {
+        uint32_t emote;
+        READER_BEGIN(size, packet);
+        READ_OR_ERROR(reader_u32, &emote);
+        READER_END();
+
+        // TODO: Check emote legality
+        {
+            uint8_t packet[FACE_EXPRESSION_PACKET_LENGTH];
+            face_expression_packet(client->character.id, emote, packet);
+            session_broadcast_to_room(client->session, FACE_EXPRESSION_PACKET_LENGTH, packet);
+        }
+    }
+    break;
+
     case 0x003A: {
         struct Map *map = room_get_context(session_get_room(session));
         uint32_t oid;
