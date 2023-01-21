@@ -1329,28 +1329,7 @@ static int do_update_character(struct DatabaseRequest *req, int status)
 
     DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
 
-    // Update existing items
-    // TODO: Don't run this when the item count is 0
-    query = "INSERT INTO Items (id, character_id, item_id, flags, owner, giver) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE character_id = ?, flags = ?, owner = ?, giver = ?, deleted = 0";
-    DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
-
-    struct {
-        uint64_t id;
-        uint32_t charId;
-        uint32_t itemId;
-        uint8_t flags;
-        char owner[CHARACTER_MAX_NAME_LENGTH];
-        unsigned long ownerLength;
-        char owner_ind;
-        char giver[CHARACTER_MAX_NAME_LENGTH];
-        unsigned long giverLength;
-        char giver_ind;
-    } *data = malloc((req->params.updateCharacter.equippedCount + req->params.updateCharacter.equipCount + req->params.updateCharacter.itemCount) * sizeof(*data));
-    req->temp.updateCharacter.data = data;
-    if (data == NULL)
-        return -1;
-
-    size_t count = 0;
+    bool item_count_not_zero = false;
     for (size_t i = 0; i < 3; i++) {
         size_t item_count = i == 0 ?
             req->params.updateCharacter.equippedCount : (i == 1 ?
@@ -1364,47 +1343,92 @@ static int do_update_character(struct DatabaseRequest *req, int status)
                         &req->params.updateCharacter.inventoryItems[j].item);
 
             if (item->id != 0) {
-                data[count].id = item->id;
-                data[count].charId = req->params.updateCharacter.id;
-                data[count].itemId = item->itemId;
-                data[count].flags = item->flags;
-                strncpy(data[count].owner, item->owner, item->ownerLength);
-                data[count].ownerLength = item->ownerLength;
-                data[count].owner_ind = data[count].ownerLength != 0 ? STMT_INDICATOR_NONE : STMT_INDICATOR_NULL;
-                strncpy(data[count].giver, item->giver, item->giverLength);
-                data[count].giverLength = item->giverLength;
-                data[count].giver_ind = data[count].giverLength != 0 ? STMT_INDICATOR_NONE : STMT_INDICATOR_NULL;
-                count++;
+                item_count_not_zero = true;
+                break;
             }
         }
+
+        if (item_count_not_zero)
+            break;
     }
 
-    INPUT_BINDER_INIT(10);
-    INPUT_BINDER_u64(&data->id);
-    INPUT_BINDER_u32(&data->charId);
-    INPUT_BINDER_u32(&data->itemId);
-    INPUT_BINDER_u8(&data->flags);
-    INPUT_BINDER_bulk_sized_string(data->owner, &data->ownerLength, &data->owner_ind);
-    INPUT_BINDER_bulk_sized_string(data->giver, &data->giverLength, &data->giver_ind);
-    INPUT_BINDER_u32(&data->charId);
-    INPUT_BINDER_u8(&data->flags);
-    INPUT_BINDER_bulk_sized_string(data->owner, &data->ownerLength, &data->owner_ind);
-    INPUT_BINDER_bulk_sized_string(data->giver, &data->giverLength, &data->giver_ind);
-    INPUT_BINDER_FINALIZE(req->stmt);
+    // Update existing items
+    if (item_count_not_zero) {
+        query = "INSERT INTO Items (id, character_id, item_id, flags, owner, giver) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE character_id = ?, flags = ?, owner = ?, giver = ?, deleted = 0";
+        DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
 
-    mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { sizeof(*data) });
+        struct {
+            uint64_t id;
+            uint32_t charId;
+            uint32_t itemId;
+            uint8_t flags;
+            char owner[CHARACTER_MAX_NAME_LENGTH];
+            unsigned long ownerLength;
+            char owner_ind;
+            char giver[CHARACTER_MAX_NAME_LENGTH];
+            unsigned long giverLength;
+            char giver_ind;
+        } *data = malloc((req->params.updateCharacter.equippedCount + req->params.updateCharacter.equipCount + req->params.updateCharacter.itemCount) * sizeof(*data));
+        req->temp.updateCharacter.data = data;
+        if (data == NULL)
+            return -1;
 
-    mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { count });
+        size_t count = 0;
+        for (size_t i = 0; i < 3; i++) {
+            size_t item_count = i == 0 ?
+                req->params.updateCharacter.equippedCount : (i == 1 ?
+                        req->params.updateCharacter.equipCount :
+                        req->params.updateCharacter.itemCount);
 
-    // TODO: Find a way to free up the data when DO_ASYNC fails
-    DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
-    free(req->temp.updateCharacter.data);
+            for (size_t j = 0; j < item_count; j++) {
+                struct DatabaseItem *item = i == 0 ?
+                    &req->params.updateCharacter.equippedEquipment[j].item : (i == 1 ?
+                            &req->params.updateCharacter.equipmentInventory[j].equip.item :
+                            &req->params.updateCharacter.inventoryItems[j].item);
 
-    mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { 0 });
+                if (item->id != 0) {
+                    data[count].id = item->id;
+                    data[count].charId = req->params.updateCharacter.id;
+                    data[count].itemId = item->itemId;
+                    data[count].flags = item->flags;
+                    strncpy(data[count].owner, item->owner, item->ownerLength);
+                    data[count].ownerLength = item->ownerLength;
+                    data[count].owner_ind = data[count].ownerLength != 0 ? STMT_INDICATOR_NONE : STMT_INDICATOR_NULL;
+                    strncpy(data[count].giver, item->giver, item->giverLength);
+                    data[count].giverLength = item->giverLength;
+                    data[count].giver_ind = data[count].giverLength != 0 ? STMT_INDICATOR_NONE : STMT_INDICATOR_NULL;
+                    count++;
+                }
+            }
+        }
 
-    mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { 0 });
+        INPUT_BINDER_INIT(10);
+        INPUT_BINDER_u64(&data->id);
+        INPUT_BINDER_u32(&data->charId);
+        INPUT_BINDER_u32(&data->itemId);
+        INPUT_BINDER_u8(&data->flags);
+        INPUT_BINDER_bulk_sized_string(data->owner, &data->ownerLength, &data->owner_ind);
+        INPUT_BINDER_bulk_sized_string(data->giver, &data->giverLength, &data->giver_ind);
+        INPUT_BINDER_u32(&data->charId);
+        INPUT_BINDER_u8(&data->flags);
+        INPUT_BINDER_bulk_sized_string(data->owner, &data->ownerLength, &data->owner_ind);
+        INPUT_BINDER_bulk_sized_string(data->giver, &data->giverLength, &data->giver_ind);
+        INPUT_BINDER_FINALIZE(req->stmt);
 
-    DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
+        mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { sizeof(*data) });
+
+        mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { count });
+
+        DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
+        free(req->temp.updateCharacter.data);
+        req->temp.updateCharacter.data = NULL;
+
+        mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { 0 });
+
+        mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { 0 });
+
+        DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
+    }
 
     // Insert new items - Probably can't batch the request as we need the ID of each inserted item
     query = "INSERT INTO Items (character_id, item_id, flags, owner, giver) VALUES (?, ?, ?, ?, ?)";
@@ -1487,12 +1511,32 @@ static int do_update_character(struct DatabaseRequest *req, int status)
 
     DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
 
-    // Update existing equipment
-    // TODO: Don't run this when the item count is 0
-    query = "INSERT INTO Equipment VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE level = ?, slots = ?, str = ?, dex = ?, int_ = ?, luk = ?, hp = ?, mp = ?, atk = ?, matk = ?, def = ?, mdef = ?, acc = ?, avoid = ?, speed = ?, jump = ?";
-    DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
+    item_count_not_zero = false;
+    for (size_t i = 0; i < 2; i++) {
+        size_t item_count = i == 0 ?
+            req->params.updateCharacter.equippedCount :
+            req->params.updateCharacter.equipCount;
 
-    {
+        for (size_t j = 0; j < item_count; j++) {
+            struct DatabaseEquipment *equip = i == 0 ?
+                &req->params.updateCharacter.equippedEquipment[j] :
+                &req->params.updateCharacter.equipmentInventory[j].equip;
+
+            if (equip->id != 0) {
+                item_count_not_zero = true;
+                break;
+            }
+        }
+
+        if (item_count_not_zero)
+            break;
+    }
+
+    // Update existing equipment
+    if (item_count_not_zero) {
+        query = "INSERT INTO Equipment VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE level = ?, slots = ?, str = ?, dex = ?, int_ = ?, luk = ?, hp = ?, mp = ?, atk = ?, matk = ?, def = ?, mdef = ?, acc = ?, avoid = ?, speed = ?, jump = ?";
+        DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
+
         struct {
             uint64_t id;
             uint64_t item;
