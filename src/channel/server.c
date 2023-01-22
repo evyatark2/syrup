@@ -1517,6 +1517,7 @@ static struct Session *create_session(struct ChannelServer *server, int fd, stru
     hash_set_addr_insert(server->sessions, &new);
 
     session->token = 0;
+    session->room = NULL;
     session->userEvent = NULL;
     session->writeEnable = false;
     session->targetRoom = -1;
