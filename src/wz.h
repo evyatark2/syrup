@@ -229,6 +229,9 @@ struct QuestInfo {
 struct ItemInfo {
     uint32_t id;
     int16_t slotMax;
+    int32_t price;
+    bool untradable;
+    bool oneOfAKind;
 };
 
 struct EquipInfo {
@@ -274,6 +277,7 @@ struct ConsumableInfo {
     int16_t speed;
     int16_t jump;
     int32_t time;
+    bool consumeOnPickup;
     // And more to come!
 };
 

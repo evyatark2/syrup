@@ -2337,6 +2337,9 @@ static void on_item_start(void *user_data, const XML_Char *name, const XML_Char 
 
             ITEM_INFOS[ITEM_INFO_COUNT].id = strtol(attrs[1], NULL, 10);
             ITEM_INFOS[ITEM_INFO_COUNT].slotMax = 100;
+            ITEM_INFOS[ITEM_INFO_COUNT].price = 0;
+            ITEM_INFOS[ITEM_INFO_COUNT].untradable = false;
+            ITEM_INFOS[ITEM_INFO_COUNT].oneOfAKind = false;
             struct ItemParserStackNode *new = malloc(sizeof(struct ItemParserStackNode));
             new->next = ctx->head;
             new->type = ITEM_ITEM_TYPE_ITEM;
@@ -2375,6 +2378,12 @@ static void on_item_start(void *user_data, const XML_Char *name, const XML_Char 
 
                 if (!strcmp(key, "slotMax"))
                     ITEM_INFOS[ITEM_INFO_COUNT].slotMax = strtol(value, NULL, 10);
+                else if (!strcmp(key, "price"))
+                    ITEM_INFOS[ITEM_INFO_COUNT].price = strtol(value, NULL, 10);
+                else if (!strcmp(key, "tradeBlock"))
+                    ITEM_INFOS[ITEM_INFO_COUNT].untradable = strtol(value, NULL, 10) > 0;
+                else if (!strcmp(key, "only"))
+                    ITEM_INFOS[ITEM_INFO_COUNT].oneOfAKind = strtol(value, NULL, 10) > 0;
             }
         }
         break;
@@ -2582,6 +2591,7 @@ static void on_consumable_start(void *user_data, const XML_Char *name, const XML
             CONSUMABLE_INFOS[CONSUMABLE_INFO_COUNT].speed = 0;
             CONSUMABLE_INFOS[CONSUMABLE_INFO_COUNT].jump = 0;
             CONSUMABLE_INFOS[CONSUMABLE_INFO_COUNT].time = 0;
+            CONSUMABLE_INFOS[CONSUMABLE_INFO_COUNT].consumeOnPickup = false;
             struct ConsumableParserStackNode *new = malloc(sizeof(struct ConsumableParserStackNode));
             new->next = ctx->head;
             new->type = CONSUMABLE_ITEM_TYPE_ITEM;
@@ -2644,6 +2654,8 @@ static void on_consumable_start(void *user_data, const XML_Char *name, const XML
                     CONSUMABLE_INFOS[CONSUMABLE_INFO_COUNT].jump = strtol(value, NULL, 10);
                 else if (!strcmp(key, "time"))
                     CONSUMABLE_INFOS[CONSUMABLE_INFO_COUNT].time = strtol(value, NULL, 10);
+                else if (!strcmp(key, "consumeOnPickup"))
+                    CONSUMABLE_INFOS[CONSUMABLE_INFO_COUNT].consumeOnPickup = strtol(value, NULL, 10) > 0;
             }
         }
         break;
