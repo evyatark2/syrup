@@ -26,6 +26,7 @@ static int l_client_is_quest_started(lua_State *L);
 static int l_client_level(lua_State *L);
 static int l_client_meso(lua_State *L);
 static int l_client_send_accept_decline(lua_State *L);
+static int l_client_send_simple(lua_State *L);
 static int l_client_send_next(lua_State *L);
 static int l_client_send_ok(lua_State *L);
 static int l_client_send_prev(lua_State *L);
@@ -61,6 +62,7 @@ static const struct luaL_Reg clientlib[] = {
     { "mp", l_client_mp },
     { "resetStats", l_client_reset_stats },
     { "sendAcceptDecline", l_client_send_accept_decline },
+    { "sendSimple", l_client_send_simple },
     { "sendNext", l_client_send_next },
     { "sendOk", l_client_send_ok },
     { "sendPrev", l_client_send_prev },
@@ -341,6 +343,15 @@ static int l_client_send_accept_decline(lua_State *L)
     size_t len;
     const char *str = luaL_checklstring(L, 2, &len);
     client_send_accept_decline(client, len, str);
+    return lua_yield(L, 0);
+}
+
+static int l_client_send_simple(lua_State *L)
+{
+    struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
+    size_t len;
+    const char *str = luaL_checklstring(L, 2, &len);
+    client_send_simple(client, len, str);
     return lua_yield(L, 0);
 }
 

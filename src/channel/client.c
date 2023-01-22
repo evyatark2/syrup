@@ -1545,10 +1545,10 @@ bool client_forfeit_quest(struct Client *client, uint16_t qid)
     return true;
 }
 
-struct ClientResult client_script_cont(struct Client *client, uint8_t action)
+struct ClientResult client_script_cont(struct Client *client, uint32_t action)
 {
     struct ScriptResult res;
-    if (client->scriptState != SCRIPT_STATE_WARP && ((client->scriptState != SCRIPT_STATE_SIMPLE && action == (uint8_t)-1) || (client->scriptState == SCRIPT_STATE_SIMPLE && action == 0))) {
+    if (client->scriptState != SCRIPT_STATE_WARP && action == -1) {
         script_manager_free(client->script);
         client->script = NULL;
         return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
@@ -1631,6 +1631,22 @@ void client_send_ok(struct Client *client, size_t msg_len, const char *msg)
     session_write(client->session, len, packet);
 }
 
+void client_send_yes_no(struct Client *client, size_t msg_len, const char *msg)
+{
+    client->scriptState = SCRIPT_STATE_YES_NO;
+    uint8_t packet[NPC_DIALOGUE_PACKET_MAX_LENGTH];
+    size_t len = npc_dialogue_packet(client->npc, NPC_DIALOGUE_TYPE_YES_NO, msg_len, msg, packet);
+    session_write(client->session, len, packet);
+}
+
+void client_send_simple(struct Client *client, size_t msg_len, const char *msg)
+{
+    client->scriptState = SCRIPT_STATE_SIMPLE;
+    uint8_t packet[NPC_DIALOGUE_PACKET_MAX_LENGTH];
+    size_t len = npc_dialogue_packet(client->npc, NPC_DIALOGUE_TYPE_SIMPLE, msg_len, msg, packet);
+    session_write(client->session, len, packet);
+}
+
 void client_send_next(struct Client *client, size_t msg_len, const char *msg)
 {
     client->scriptState = SCRIPT_STATE_NEXT;
@@ -1652,14 +1668,6 @@ void client_send_prev(struct Client *client, size_t msg_len, const char *msg)
     client->scriptState = SCRIPT_STATE_PREV;
     uint8_t packet[NPC_DIALOGUE_PACKET_MAX_LENGTH];
     size_t len = npc_dialogue_packet(client->npc, NPC_DIALOGUE_TYPE_PREV, msg_len, msg, packet);
-    session_write(client->session, len, packet);
-}
-
-void client_send_yes_no(struct Client *client, size_t msg_len, const char *msg)
-{
-    client->scriptState = SCRIPT_STATE_YES_NO;
-    uint8_t packet[NPC_DIALOGUE_PACKET_MAX_LENGTH];
-    size_t len = npc_dialogue_packet(client->npc, NPC_DIALOGUE_TYPE_YES_NO, msg_len, msg, packet);
     session_write(client->session, len, packet);
 }
 
@@ -2327,7 +2335,6 @@ static void check_progress(void *data, void *ctx_)
             size_t len = update_quest_packet(quest->id, prog_len, progress, packet);
             session_write(ctx->session, len, packet);
         }
-
     }
 }
 

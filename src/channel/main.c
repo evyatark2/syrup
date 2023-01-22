@@ -544,12 +544,26 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
     case 0x003C: {
         uint8_t last;
         uint8_t action;
+        uint32_t selection = -1;
         READER_BEGIN(size, packet);
         READ_OR_ERROR(reader_u8, &last);
         READ_OR_ERROR(reader_u8, &action);
+        if (client->scriptState == SCRIPT_STATE_SIMPLE) {
+            if (READER_AVAILABLE() >= 4) {
+                READ_OR_ERROR(reader_u32, &selection);
+            } else if (READER_AVAILABLE() > 0) {
+                uint8_t sel_u8;
+                READ_OR_ERROR(reader_u8, &sel_u8);
+                selection = sel_u8;
+            }
+        }
+
         READER_END();
         if (client->script != NULL) {
-            struct ClientResult res = client_script_cont(client, action);
+            uint32_t action_u32 = client->scriptState == SCRIPT_STATE_SIMPLE ?
+                selection :
+                (action == (uint8_t)-1 ? -1 : action);
+            struct ClientResult res = client_script_cont(client, action_u32);
             switch (res.type) {
             case CLIENT_RESULT_TYPE_KICK:
             case CLIENT_RESULT_TYPE_ERROR:
