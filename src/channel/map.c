@@ -409,9 +409,8 @@ void map_for_each_npc(struct Map *map, void (*f)(struct Npc *, void *), void *ct
 
 void map_for_each_monster(struct Map *map, void (*f)(struct Monster *, void *), void *ctx)
 {
-    for (size_t i = 0; i < map->spawnerCount; i++) {
+    for (size_t i = 0; i < map->spawnerCount; i++)
         f(&map->monsters[i], ctx);
-    }
 }
 
 void map_for_each_drop(struct Map *map, void (*f)(struct Drop *, void *), void *ctx)
