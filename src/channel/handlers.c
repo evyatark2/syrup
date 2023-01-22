@@ -230,13 +230,6 @@ struct LoginHandlerResult login_handler_handle(struct LoginHandler *handler, int
                 .progressCount = 0,
             };
             hash_set_u16_insert(chr->quests, &quest); // TODO: Check
-                                                      //
-            const struct QuestInfo *info = wz_get_quest_info(quest.id);
-            for (size_t i = 0; i < info->endRequirementCount; i++) {
-                struct QuestRequirement *req = &info->endRequirements[i];
-                if (req->type == QUEST_REQUIREMENT_TYPE_MOB) {
-                }
-            }
         }
 
 

@@ -2320,7 +2320,7 @@ static void check_progress(void *data, void *ctx_)
             }
         }
 
-        if (quest->progress[i].id == ctx->id) {
+        if (quest->progress[i].id == ctx->id && quest->progress[i].amount < req_amount) {
             quest->progress[i].amount++;
             if (quest->progress[i].amount == req_amount) {
                 struct MonsterRefCount *monster = hash_set_u32_get(ctx->monsterQuests, ctx->id);
