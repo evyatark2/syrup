@@ -1,5 +1,5 @@
-DROP DATABASE IF EXISTS syrup;
-CREATE DATABASE syrup;
+-- DROP DATABASE IF EXISTS syrup;
+CREATE DATABASE IF NOT EXISTS syrup;
 USE syrup;
 
 CREATE TABLE IF NOT EXISTS Accounts (
@@ -219,6 +219,14 @@ CREATE TABLE IF NOT EXISTS Buddies (
     PRIMARY KEY (character_id, buddy_id),
     FOREIGN KEY (character_id) REFERENCES Characters (id) ON DELETE CASCADE,
     FOREIGN KEY (buddy_id) REFERENCES Characters (id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS MonsterBooks (
+    character_id INT UNSIGNED,
+    card_id INT UNSIGNED,
+    quantity TINYINT NOT NULL,
+    PRIMARY KEY (character_id, monster_id),
+    FOREIGN KEY (character_id) REFERENCES Characters (id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS temp_drop_data (
@@ -12779,9 +12787,9 @@ INSERT IGNORE INTO temp_drop_data VALUES
 (7140000 , 4031171 , 1     , 1     , 7101  , 100000)  ,
 (9500137 , 4031171 , 1     , 1     , 7101  , 100000);
 
-INSERT INTO MonsterItemDrops SELECT monster_id, item_id, chance FROM temp_drop_data WHERE quest_id = 0 && item_id != 0 && min = 1 && max = 1;
-INSERT INTO MonsterQuestItemDrops SELECT monster_id, item_id, quest_id, chance FROM temp_drop_data WHERE quest_id != 0 && item_id != 0 && min = 1 && max = 1;
-INSERT INTO MonsterMesoDrops SELECT monster_id, min, max, chance FROM temp_drop_data WHERE item_id = 0;
-INSERT INTO MonsterMultiItemDrops SELECT monster_id, item_id, min, max, chance FROM temp_drop_data WHERE quest_id = 0 && item_id != 0 && (min != 1 || max != 1);
+INSERT IGNORE INTO MonsterItemDrops SELECT monster_id, item_id, chance FROM temp_drop_data WHERE quest_id = 0 && item_id != 0 && min = 1 && max = 1;
+INSERT IGNORE INTO MonsterQuestItemDrops SELECT monster_id, item_id, quest_id, chance FROM temp_drop_data WHERE quest_id != 0 && item_id != 0 && min = 1 && max = 1;
+INSERT IGNORE INTO MonsterMesoDrops SELECT monster_id, min, max, chance FROM temp_drop_data WHERE item_id = 0;
+INSERT IGNORE INTO MonsterMultiItemDrops SELECT monster_id, item_id, min, max, chance FROM temp_drop_data WHERE quest_id = 0 && item_id != 0 && (min != 1 || max != 1);
 
 DROP TABLE temp_drop_data;

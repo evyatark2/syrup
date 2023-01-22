@@ -68,6 +68,10 @@ struct DatabaseRequest {
                     int8_t skillLevel;
                     int8_t skillMasterLevel;
                 };
+                struct {
+                    uint32_t cardId;
+                    int8_t quantity;
+                };
             };
         } getCharacter;
         struct {
@@ -173,6 +177,7 @@ struct DatabaseRequest *database_request_create(struct DatabaseConnection *conn,
         req->res.getCharacter.progresses = NULL;
         req->res.getCharacter.completedQuests = NULL;
         req->res.getCharacter.skills = NULL;
+        req->res.getCharacter.monsterBook = NULL;
     } else if (req->params.type == DATABASE_REQUEST_TYPE_UPDATE_CHARACTER) {
         req->temp.updateCharacter.data = NULL;
     }
@@ -192,6 +197,7 @@ void database_request_destroy(struct DatabaseRequest *req)
         }
         free(req->res.getMonsterDrops.monsters);
     } else if (req->params.type == DATABASE_REQUEST_TYPE_GET_CHARACTER) {
+        free(req->res.getCharacter.monsterBook);
         free(req->res.getCharacter.skills);
         free(req->res.getCharacter.completedQuests);
         free(req->res.getCharacter.progresses);
@@ -1274,6 +1280,38 @@ static int do_get_character(struct DatabaseRequest *req, int status)
         DO_ASYNC(ret, ret == 1, mysql_stmt_fetch, req, status);
     }
 
+    DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
+
+    query = "SELECT card_id, quantity FROM MonsterBooks WHERE character_id = ?";
+    DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
+
+    INPUT_BINDER_INIT(1);
+    INPUT_BINDER_u32(&req->params.getCharacter.id);
+    INPUT_BINDER_FINALIZE(req->stmt);
+
+    OUTPUT_BINDER_INIT(2);
+    OUTPUT_BINDER_u32(&req->temp.getCharacter.cardId);
+    OUTPUT_BINDER_i8(&req->temp.getCharacter.quantity);
+    OUTPUT_BINDER_FINALIZE(req->stmt);
+
+    DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
+
+    DO_ASYNC(ret, ret != 0, mysql_stmt_store_result, req, status);
+
+    req->res.getCharacter.monsterBook = malloc(mysql_stmt_num_rows(req->stmt) * sizeof(struct DatabaseMonsterBookEntry));
+    if (req->res.getCharacter.monsterBook == NULL)
+        return -1;
+
+    DO_ASYNC(ret, ret == 1, mysql_stmt_fetch, req, status);
+    req->res.getCharacter.monsterBookEntryCount = 0;
+    while (ret != MYSQL_NO_DATA) {
+        req->res.getCharacter.monsterBook[req->res.getCharacter.monsterBookEntryCount].id = req->temp.getCharacter.cardId;
+        req->res.getCharacter.monsterBook[req->res.getCharacter.monsterBookEntryCount].quantity = req->temp.getCharacter.quantity;
+        req->res.getCharacter.monsterBookEntryCount++;
+
+        DO_ASYNC(ret, ret == 1, mysql_stmt_fetch, req, status);
+    }
+
     END_ASYNC()
 
     return 0;
@@ -1946,11 +1984,27 @@ static int do_update_character(struct DatabaseRequest *req, int status)
         DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
     }
 
-    //mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { 0 });
+    DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
 
-    //mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { 0 });
+    if (req->params.updateCharacter.monsterBookEntryCount > 0) {
+        char query[87];
+        int len = sprintf(query, "INSERT INTO MonsterBooks VALUES (%" PRIu32 ", ?, ?) ON DUPLICATE KEY UPDATE quantity = ?", req->params.updateCharacter.id);
+        DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, len);
 
-    //DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
+        INPUT_BINDER_INIT(3);
+        INPUT_BINDER_u32(&req->params.updateCharacter.monsterBook->id);
+        INPUT_BINDER_i8(&req->params.updateCharacter.monsterBook->quantity);
+
+        // UPDATE
+        INPUT_BINDER_i8(&req->params.updateCharacter.monsterBook->quantity);
+        INPUT_BINDER_FINALIZE(req->stmt);
+
+        mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { sizeof(struct DatabaseMonsterBookEntry) });
+
+        mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { req->params.updateCharacter.monsterBookEntryCount });
+
+        DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
+    }
 
     END_ASYNC();
 

@@ -78,6 +78,11 @@ struct DatabaseSkill {
     int8_t masterLevel;
 };
 
+struct DatabaseMonsterBookEntry {
+    uint32_t id;
+    int8_t quantity;
+};
+
 struct RequestParams {
     enum DatabaseRequestType type;
     union {
@@ -181,6 +186,8 @@ struct RequestParams {
             struct DatabaseCompletedQuest *completedQuests;
             size_t skillCount;
             struct DatabaseSkill *skills;
+            size_t monsterBookEntryCount;
+            struct DatabaseMonsterBookEntry *monsterBook;
         } updateCharacter;
     };
 };
@@ -345,6 +352,8 @@ union DatabaseResult {
         struct DatabaseCompletedQuest *completedQuests;
         size_t skillCount;
         struct DatabaseSkill *skills;
+        size_t monsterBookEntryCount;
+        struct DatabaseMonsterBookEntry *monsterBook;
     } getCharacter;
     struct {
         size_t count;

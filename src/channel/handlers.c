@@ -324,6 +324,28 @@ struct LoginHandlerResult login_handler_handle(struct LoginHandler *handler, int
             hash_set_u32_insert(chr->skills, &skill); // TODO: Check
         }
 
+        chr->monsterBook = hash_set_u32_create(sizeof(struct MonsterBookEntry), offsetof(struct MonsterBookEntry, id));
+        if (chr->monsterBook == NULL) {
+            hash_set_u32_destroy(chr->skills);
+            chr->skills = NULL;
+            hash_set_u16_destroy(chr->completedQuests);
+            chr->completedQuests = NULL;
+            hash_set_u32_destroy(chr->monsterQuests);
+            chr->monsterQuests = NULL;
+            hash_set_u16_destroy(chr->quests);
+            chr->quests = NULL;
+            database_request_destroy(handler->request);
+            return (struct LoginHandlerResult) { -1 };
+        }
+
+        for (size_t i = 0; i < res->getCharacter.monsterBookEntryCount; i++) {
+            struct MonsterBookEntry entry = {
+                .id = res->getCharacter.monsterBook[i].id,
+                .count = res->getCharacter.monsterBook[i].quantity,
+            };
+            hash_set_u32_insert(chr->monsterBook, &entry);
+        }
+
         database_request_destroy(handler->request);
 
         {
@@ -372,6 +394,7 @@ struct LogoutHandler {
     void *progresses;
     void *completedQuests;
     void *skills;
+    void *monsterBook;
 };
 
 struct LogoutHandler *logout_handler_create(struct Client *client)
@@ -414,6 +437,13 @@ struct AddSkillContext {
 };
 
 static void add_skill(void *data, void *ctx);
+
+struct AddMonsterBookContext {
+    struct DatabaseMonsterBookEntry *monsterBook;
+    size_t currentEntry;
+};
+
+static void add_monster_book_entry(void *data, void *ctx);
 
 int logout_handler_handle(struct LogoutHandler *handler, int status)
 {
@@ -604,6 +634,25 @@ int logout_handler_handle(struct LogoutHandler *handler, int status)
 
         params.updateCharacter.skillCount = ctx4.currentSkill;
 
+        params.updateCharacter.monsterBook = malloc(hash_set_u32_size(chr->monsterBook) * sizeof(struct DatabaseMonsterBookEntry));
+        if (params.updateCharacter.monsterBook == NULL) {
+            free(handler->skills);
+            free(handler->completedQuests);
+            free(handler->progresses);
+            free(handler->quests);
+            return -1;
+        }
+
+        handler->monsterBook = params.updateCharacter.monsterBook;
+
+        struct AddMonsterBookContext ctx5 = {
+            .monsterBook = params.updateCharacter.monsterBook,
+            .currentEntry = 0,
+        };
+        hash_set_u32_foreach(chr->monsterBook, add_monster_book_entry, &ctx5);
+
+        params.updateCharacter.monsterBookEntryCount = ctx5.currentEntry;
+
         handler->request = database_request_create(handler->client->conn, &params);
         if (handler->request == NULL) {
             free(handler->skills);
@@ -712,5 +761,15 @@ static void add_skill(void *data, void *ctx_)
     ctx->skills[ctx->currentSkill].level = skill->level;
     ctx->skills[ctx->currentSkill].masterLevel = skill->masterLevel;
     ctx->currentSkill++;
+}
+
+static void add_monster_book_entry(void *data, void *ctx_)
+{
+    struct MonsterBookEntry *entry = data;
+    struct AddMonsterBookContext *ctx = ctx_;
+
+    ctx->monsterBook[ctx->currentEntry].id = entry->id;
+    ctx->monsterBook[ctx->currentEntry].quantity = entry->count;
+    ctx->currentEntry++;
 }
 

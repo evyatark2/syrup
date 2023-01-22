@@ -6,8 +6,6 @@
 #include "writer.h"
 #include "hash-map.h"
 
-static void add_skill_info(void *data, void *ctx);
-
 size_t login_success_packet(uint32_t id, uint8_t gender, uint8_t name_len, char *name, enum PicStatus pic, uint8_t *packet)
 {
     struct Writer writer;
@@ -190,6 +188,8 @@ size_t create_character_response_packet(struct CharacterStats *chr, uint8_t *pac
 
 static void add_quest_info(void *data, void *ctx_);
 static void add_completed_quest_info(void *data, void *ctx_);
+static void add_skill_info(void *data, void *ctx);
+static void add_monster_book_entry(void *data, void *ctx);
 
 size_t enter_map_packet(struct Character *chr, uint8_t *packet) {
     struct Writer writer;
@@ -376,18 +376,18 @@ size_t enter_map_packet(struct Character *chr, uint8_t *packet) {
     writer_u16(&writer, 0); // 0 - No partner, 1 - Partner exists (additional information about them needs to be provided)
 
     // Teleport rock locations
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 5; i++)
         writer_u32(&writer, 999999999);
-    }
 
     // VIP teleport rock locations
-    for (int i = 0; i < 10; i++) {
+    for (int i = 0; i < 10; i++)
         writer_u32(&writer, 999999999);
-    }
 
-    writer_u32(&writer, 0); // Monster book cover
+    // Monster book
+    writer_u32(&writer, 0); // Cover
     writer_u8(&writer, 0);
-    writer_u16(&writer, 0); // Monster book card count
+    writer_u16(&writer, hash_set_u32_size(chr->monsterBook));
+    hash_set_u32_foreach(chr->monsterBook, add_monster_book_entry, &writer);
 
     writer_u16(&writer, 0); // New year records count
 
@@ -1178,6 +1178,17 @@ void face_expression_packet(uint32_t id, uint32_t emote, uint8_t *packet)
     writer_u32(&writer, emote);
 }
 
+void add_card_packet(bool full, uint32_t id, int8_t count, uint8_t *packet)
+{
+    struct Writer writer;
+    writer_init(&writer, ADD_CARD_PACKET_LENGTH, packet);
+
+    writer_u16(&writer, 0x0053);
+    writer_bool(&writer, !full);
+    writer_u32(&writer, id);
+    writer_i32(&writer, count);
+}
+
 size_t modify_items_packet(uint8_t mod_count, struct InventoryModify *mods, uint8_t *packet)
 {
     struct Writer writer;
@@ -1337,6 +1348,15 @@ static void add_skill_info(void *data, void *ctx)
     writer_u32(writer, skill->level);
     writer_u64(writer, 150842304000000000L); // DEFAULT_TIME
     // writer_u32(writer, skill->masterLevel); // Only when the skill is a 4th job skill
+}
+
+static void add_monster_book_entry(void *data, void *ctx)
+{
+    struct MonsterBookEntry *entry = data;
+    struct Writer *writer = ctx;
+
+    writer_u16(writer, entry->id % 10000);
+    writer_i8(writer, entry->count);
 }
 
 static void exp_gain_packet_internal(struct Writer *writer, int32_t exp, int32_t equip_bonus, int32_t party_bonus, bool white, bool in_chat)

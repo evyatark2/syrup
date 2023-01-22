@@ -232,6 +232,8 @@ struct ItemInfo {
     int32_t price;
     bool untradable;
     bool oneOfAKind;
+    bool monsterBook;
+    uint32_t mobId;
 };
 
 struct EquipInfo {

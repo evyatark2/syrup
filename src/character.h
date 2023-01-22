@@ -104,6 +104,11 @@ struct Skill {
     int8_t masterLevel;
 };
 
+struct MonsterBookEntry {
+    uint32_t id;
+    int8_t count;
+};
+
 size_t quest_get_progress_string(struct Quest *quest, char *out);
 
 struct Character {
@@ -169,6 +174,8 @@ struct Character {
     struct HashSetU16 *completedQuests;
 
     struct HashSetU32 *skills;
+
+    struct HashSetU32 *monsterBook;
 };
 
 struct CharacterStats character_to_character_stats(struct Character *chr);

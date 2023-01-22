@@ -185,6 +185,7 @@ static int on_client_connect(struct Session *session, void *global_ctx, void *th
     client->character.monsterQuests = NULL;
     client->character.completedQuests = NULL;
     client->character.skills = NULL;
+    client->character.monsterBook = NULL;
     client->script = NULL;
     session_set_context(session, client);
 
@@ -973,8 +974,13 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             break;
 
             case DROP_TYPE_ITEM:
-                if (!client_gain_inventory_item(client, &drop->item, &success))
+                if (drop->item.item.itemId / 1000000 == 2 && wz_get_consumable_info(drop->item.item.itemId)->consumeOnPickup) {
+                    client_use_item_immediate(client, drop->item.item.itemId);
+                    map_remove_drop(room_get_context(session_get_room(session)), client->character.id, oid);
+                    return (struct OnPacketResult) { .status = 0, .room = -1 };
+                } else if (!client_gain_inventory_item(client, &drop->item, &success)) {
                     return (struct OnPacketResult) { .status = -1 };
+                }
 
                 id = drop->item.item.itemId;
             break;
@@ -1153,6 +1159,7 @@ static void on_client_disconnect(struct Session *session)
         client->handlerType = PACKET_TYPE_LOGOUT;
         client->handler = logout_handler_create(client);
         if (client->handler == NULL) {
+            hash_set_u32_destroy(client->character.monsterBook);
             hash_set_u32_destroy(client->character.skills);
             hash_set_u16_destroy(client->character.quests);
             hash_set_u32_destroy(client->character.monsterQuests);
@@ -1179,6 +1186,7 @@ static void on_client_disconnect(struct Session *session)
         }
     }
 
+    hash_set_u32_destroy(client->character.monsterBook);
     hash_set_u32_destroy(client->character.skills);
     hash_set_u16_destroy(client->character.quests);
     hash_set_u32_destroy(client->character.monsterQuests);
@@ -1195,6 +1203,7 @@ static struct OnResumeResult on_resume_client_disconnect(struct Session *session
 
     database_connection_unlock(client->conn);
     logout_handler_destroy(client->handler);
+    hash_set_u32_destroy(client->character.monsterBook);
     hash_set_u32_destroy(client->character.skills);
     hash_set_u16_destroy(client->character.quests);
     hash_set_u32_destroy(client->character.monsterQuests);
@@ -1268,6 +1277,7 @@ static struct OnResumeResult on_database_lock_ready(struct Session *session, int
 
         database_connection_unlock(client->conn);
         logout_handler_destroy(client->handler);
+        hash_set_u32_destroy(client->character.monsterBook);
         hash_set_u32_destroy(client->character.skills);
         hash_set_u16_destroy(client->character.quests);
         hash_set_u32_destroy(client->character.monsterQuests);

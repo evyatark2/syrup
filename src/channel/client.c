@@ -655,6 +655,7 @@ bool client_gain_items(struct Client *client, size_t len, const uint32_t *ids, c
 bool client_gain_inventory_item(struct Client *client, const struct InventoryItem *item, bool *success)
 {
     struct Character *chr = &client->character;
+
     struct InventoryModify *mods = malloc(sizeof(struct InventoryModify));
     if (mods == NULL)
         return false;
@@ -1236,6 +1237,92 @@ bool client_use_item(struct Client *client, uint8_t slot, uint32_t id)
         };
         uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
         size_t len = modify_items_packet(1, &mod, packet);
+        session_write(client->session, len, packet);
+    }
+
+    return true;
+}
+
+bool client_use_item_immediate(struct Client *client, uint32_t id)
+{
+    struct Character *chr = &client->character;
+
+    const struct ConsumableInfo *info = wz_get_consumable_info(id);
+    if (info == NULL)
+        return false;
+
+    //apply_effects(client, info)
+    enum Stat stats = 0;
+    size_t value_count = 0;
+    union StatValue values[2];
+
+    if (info->hp != 0 || info->hpR != 0) {
+        int16_t hp = info->hp + character_get_effective_hp(chr) * info->hpR / 100; // TODO: This addition can overflow
+        if (chr->hp > character_get_effective_hp(chr) - hp)
+            hp = character_get_effective_hp(chr) - chr->hp;
+
+        chr->hp += hp;
+
+        values[value_count].i16 = chr->hp,
+        stats |= STAT_HP;
+        value_count++;
+    }
+
+    if (info->mp != 0 || info->mpR != 0) {
+        int16_t mp = info->mp + character_get_effective_mp(chr) * info->mpR / 100; // TODO: This addition can overflow
+        if (chr->mp > character_get_effective_mp(chr) - mp)
+            mp = character_get_effective_mp(chr) - chr->mp;
+
+        chr->mp += mp;
+
+        values[value_count].i16 = chr->mp;
+        stats |= STAT_MP;
+        value_count++;
+    }
+
+    if (wz_get_item_info(id)->monsterBook) {
+        struct MonsterBookEntry *entry = hash_set_u32_get(chr->monsterBook, id);
+        if (entry == NULL || entry->count < 5) {
+            if (entry == NULL) {
+                    struct MonsterBookEntry new = {
+                    .id = id,
+                    .count = 0
+                };
+                hash_set_u32_insert(chr->monsterBook, &new);
+                entry = hash_set_u32_get(chr->monsterBook, id);
+            }
+
+            entry->count++;
+
+            {
+                uint8_t packet[ADD_CARD_PACKET_LENGTH];
+                add_card_packet(false, id, entry->count, packet);
+                session_write(client->session, ADD_CARD_PACKET_LENGTH, packet);
+            }
+
+            {
+                uint8_t packet[SHOW_EFFECT_PACKET_LENGTH];
+                show_effect_packet(0x0D, packet);
+                session_write(client->session, SHOW_EFFECT_PACKET_LENGTH, packet);
+            }
+        } else {
+            uint8_t packet[ADD_CARD_PACKET_LENGTH];
+            add_card_packet(true, id, 5, packet);
+            session_write(client->session, ADD_CARD_PACKET_LENGTH, packet);
+        }
+
+        // Show monster card effect to other players regardless if the card slot is full or not
+        {
+            uint8_t packet[SHOW_FOREIGN_EFFECT_PACKET_LENGTH];
+            show_foreign_effect_packet(chr->id, 0x0D, packet);
+            session_write(client->session, SHOW_FOREIGN_EFFECT_PACKET_LENGTH, packet);
+        }
+    }
+
+    // Also enables actions if value_count is 0
+    {
+        uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
+        size_t len = stat_change_packet(true, stats, values, packet);
         session_write(client->session, len, packet);
     }
 
@@ -2081,13 +2168,13 @@ static bool end_quest(struct Client *client, uint16_t qid, uint32_t npc, bool *s
 
     {
         uint8_t packet[SHOW_EFFECT_PACKET_LENGTH];
-        show_effect_packet(9, packet);
+        show_effect_packet(0x09, packet);
         session_write(client->session, SHOW_EFFECT_PACKET_LENGTH, packet);
     }
 
     {
         uint8_t packet[SHOW_FOREIGN_EFFECT_PACKET_LENGTH];
-        show_foreign_effect_packet(chr->id, 9, packet);
+        show_foreign_effect_packet(chr->id, 0x09, packet);
         session_broadcast_to_room(client->session, SHOW_FOREIGN_EFFECT_PACKET_LENGTH, packet);
     }
 

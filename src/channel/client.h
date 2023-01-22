@@ -90,6 +90,7 @@ bool client_move_item(struct Client *client, uint8_t inventory, uint8_t src, uin
 bool client_equip(struct Client *client, uint8_t src, enum EquipSlot dst);
 bool client_unequip(struct Client *client, enum EquipSlot src, uint8_t dst);
 bool client_use_item(struct Client *client, uint8_t slot, uint32_t id);
+bool client_use_item_immediate(struct Client *client, uint32_t id);
 bool client_is_quest_started(struct Client *client, uint16_t qid);
 struct ClientResult client_npc_talk(struct Client *client, uint32_t npc);
 struct ClientResult client_start_quest(struct Client *client, uint16_t qid, uint32_t npc, bool scripted);
