@@ -2387,8 +2387,6 @@ static void on_item_start(void *user_data, const XML_Char *name, const XML_Char 
                     ITEM_INFOS[ITEM_INFO_COUNT].oneOfAKind = strtol(value, NULL, 10) > 0;
                 else if (!strcmp(key, "monsterBook"))
                     ITEM_INFOS[ITEM_INFO_COUNT].monsterBook = strtol(value, NULL, 10) > 0;
-                else if (!strcmp(key, "mob"))
-                    ITEM_INFOS[ITEM_INFO_COUNT].mobId = strtol(value, NULL, 10);
             }
         }
         break;

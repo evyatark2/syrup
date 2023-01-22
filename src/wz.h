@@ -233,7 +233,6 @@ struct ItemInfo {
     bool untradable;
     bool oneOfAKind;
     bool monsterBook;
-    uint32_t mobId;
 };
 
 struct EquipInfo {
