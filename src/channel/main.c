@@ -437,11 +437,9 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         SKIP(4);
         READER_END();
 
-        uint32_t projectile = 0;
-
         {
-            uint8_t packet[CLOSE_RANGE_ATTACK_PACKET_MAX_LENGTH];
-            size_t len = ranged_attack_packet(client->character.id, skill, 0, monster_count, hit_count, oids, damage, display, direction, stance, speed, projectile, packet);
+            uint8_t packet[RANGED_ATTACK_PACKET_MAX_LENGTH];
+            size_t len = ranged_attack_packet(client->character.id, skill, 0, monster_count, hit_count, oids, damage, display, direction, stance, speed, client->character.inventory[0].items[client->character.activeProjectile].item.item.itemId, packet);
             session_broadcast_to_room(session, len, packet);
         }
 

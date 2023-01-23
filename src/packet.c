@@ -722,7 +722,7 @@ size_t close_range_attack_packet(uint32_t id, uint8_t skill, uint8_t skill_level
 size_t ranged_attack_packet(uint32_t id, uint8_t skill, uint8_t skill_level, uint8_t monster_count, uint8_t hit_count, uint32_t *oids, int32_t *damage, uint8_t display, uint8_t direction, uint8_t stance, uint8_t speed, uint32_t projectile, uint8_t *packet)
 {
     struct Writer writer;
-    writer_init(&writer, CLOSE_RANGE_ATTACK_PACKET_MAX_LENGTH, packet);
+    writer_init(&writer, RANGED_ATTACK_PACKET_MAX_LENGTH, packet);
 
     writer_u16(&writer, 0x00BB);
     writer_u32(&writer, id);
@@ -731,20 +731,22 @@ size_t ranged_attack_packet(uint32_t id, uint8_t skill, uint8_t skill_level, uin
     writer_u8(&writer, 0x5B);
     writer_u8(&writer, skill_level);
     if (skill_level > 0)
-        writer_u8(&writer, skill);
+        writer_u32(&writer, skill);
 
     writer_u8(&writer, display);
     writer_u8(&writer, direction);
     writer_u8(&writer, stance);
     writer_u8(&writer, speed);
     writer_u8(&writer, 0x0A);
-    writer_u32(&writer, projectile); // Projectile ID
+    writer_u32(&writer, projectile);
     for (uint8_t i = 0; i < monster_count; i++) {
         writer_u32(&writer, oids[i]);
         writer_u8(&writer, 0);
         for (uint8_t j = 0; j < hit_count; j++)
             writer_i32(&writer, damage[i * hit_count + j]);
     }
+
+    writer_u32(&writer, 0);
 
     return writer.pos;
 }

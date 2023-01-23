@@ -210,6 +210,45 @@ struct LoginHandlerResult login_handler_handle(struct LoginHandler *handler, int
             item->quantity = res->getCharacter.inventoryItems[i].count;
         }
 
+        chr->activeProjectile = -1;
+
+        if (!chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].isEmpty) {
+            // Bow
+            if (chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].equip.item.itemId / 10000 == 145) {
+                for (uint8_t i = 0; i < chr->inventory[0].slotCount; i++) {
+                    if (!chr->inventory[0].items[i].isEmpty && chr->inventory[0].items[i].item.item.itemId / 1000 == 2060) {
+                        chr->activeProjectile = i;
+                        break;
+                    }
+                }
+            // Crossbow
+            } else if (chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].equip.item.itemId / 10000 == 146) {
+                for (uint8_t i = 0; i < chr->inventory[0].slotCount; i++) {
+                    if (!chr->inventory[0].items[i].isEmpty && chr->inventory[0].items[i].item.item.itemId / 1000 == 2061) {
+                        chr->activeProjectile = i;
+                        break;
+                    }
+                }
+            // Claw
+            } else if (chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].equip.item.itemId / 10000 == 147) {
+                for (uint8_t i = 0; i < chr->inventory[0].slotCount; i++) {
+                    if (!chr->inventory[0].items[i].isEmpty && chr->inventory[0].items[i].item.item.itemId / 10000 == 207 && chr->inventory[0].items[i].item.quantity > 0) {
+                        chr->activeProjectile = i;
+                        break;
+                    }
+                }
+            // Gun
+            } else if (chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].equip.item.itemId / 10000 == 149) {
+                for (uint8_t i = 0; i < chr->inventory[0].slotCount; i++) {
+                    if (!chr->inventory[0].items[i].isEmpty && chr->inventory[0].items[i].item.item.itemId / 1000 == 2330 && chr->inventory[0].items[i].item.quantity > 0) {
+                        chr->activeProjectile = i;
+                        break;
+                    }
+                }
+            }
+            // TODO: Capsules
+        }
+
         chr->quests = hash_set_u16_create(sizeof(struct Quest), offsetof(struct Quest, id));
         if (chr->quests == NULL) {
             database_request_destroy(handler->request);

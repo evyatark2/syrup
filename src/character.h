@@ -167,6 +167,8 @@ struct Character {
 
     struct Inventory inventory[4]; // All other inventories - 0: Use, 1: Set-up 2: Etc. 3: Cash
 
+    uint8_t activeProjectile;
+
     struct HashSetU16 *quests;
     // For each monster ID in this set, there is a reference count of the number of quests that have this monster as a requirement.
     // This is used in client_kill_monster() to quickly check if the monster has a quest before starting to iterate over the elements of \p quests
