@@ -703,6 +703,31 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
     }
     break;
 
+    case 0x005E: {
+        int32_t amount;
+        READER_BEGIN(size, packet);
+        SKIP(4);
+        READ_OR_ERROR(reader_i32, &amount);
+        READER_END();
+
+        if (amount < 10 || amount > 50000)
+            return (struct OnPacketResult) { .status = -1 };
+
+        if (client->character.mesos < amount)
+            return (struct OnPacketResult) { .status = 0, .room = -1 };
+
+        client_gain_meso(client, -amount, false, false);
+
+        struct Drop drop = {
+            .type = DROP_TYPE_MESO,
+            .pos.x = client->character.x,
+            .pos.y = client->character.y,
+            .meso = amount
+        };
+        map_add_drop_batch(room_get_context(session_get_room(session)), client->character.id, -1, 1, &drop);
+    }
+    break;
+
     case 0x0064: {
         if (client->script != NULL)
             return (struct OnPacketResult) { .status = 0, .room = -1 };
@@ -1334,7 +1359,7 @@ static void notify_drop_on_map(struct Drop *drop, void *ctx)
     switch (drop->type) {
     case DROP_TYPE_MESO: {
         uint8_t packet[SPAWN_MESO_DROP_PACKET_LENGTH];
-        spawn_meso_drop_packet(drop->oid, 0, drop->pos.x, drop->pos.y, 0, packet);
+        spawn_meso_drop_packet(drop->oid, drop->meso, 0, drop->pos.x, drop->pos.y, 0, packet);
         session_write(ctx, SPAWN_MESO_DROP_PACKET_LENGTH, packet);
     }
     break;
