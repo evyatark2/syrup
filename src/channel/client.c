@@ -811,6 +811,10 @@ bool client_gain_equipment(struct Client *client, const struct Equipment *item, 
 
 bool client_remove_item(struct Client *client, uint8_t inv, uint8_t src, int16_t amount, bool *success, struct InventoryItem *item)
 {
+    struct InventoryItem item_;
+    if (item == NULL)
+        item = &item_;
+
     struct Character *chr = &client->character;
     if (inv < 2 || inv > 5)
         return false;
@@ -1035,6 +1039,41 @@ bool client_move_item(struct Client *client, uint8_t inventory, uint8_t src, uin
                     // Destination isn't full and it can consume the whole source - remove the source and modify the destination's item count
                     chr->inventory[inventory].items[dst].item.quantity += chr->inventory[inventory].items[src].item.quantity;
                     chr->inventory[inventory].items[src].isEmpty = true;
+                    if (inventory == 0 && !chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].isEmpty) {
+                        if (chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].equip.item.itemId / 10000 == 145) {
+                            // Bow
+                            for (uint8_t i = src + 1; i < chr->inventory[0].slotCount; i++) {
+                                if (!chr->inventory[0].items[i].isEmpty && chr->inventory[0].items[i].item.item.itemId / 1000 == 2060) {
+                                    chr->activeProjectile = i;
+                                    break;
+                                }
+                            }
+                        } else if (chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].equip.item.itemId / 10000 == 146) {
+                            // Crossbow
+                            for (uint8_t i = src + 1; i < chr->inventory[0].slotCount; i++) {
+                                if (!chr->inventory[0].items[i].isEmpty && chr->inventory[0].items[i].item.item.itemId / 1000 == 2061) {
+                                    chr->activeProjectile = i;
+                                    break;
+                                }
+                            }
+                        } else if (chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].equip.item.itemId / 10000 == 147) {
+                            // Claw
+                            for (uint8_t i = src + 1; i < chr->inventory[0].slotCount; i++) {
+                                if (!chr->inventory[0].items[i].isEmpty && chr->inventory[0].items[i].item.item.itemId / 10000 == 207 && chr->inventory[0].items[i].item.quantity > 0) {
+                                    chr->activeProjectile = i;
+                                    break;
+                                }
+                            }
+                        } else if (chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].equip.item.itemId / 10000 == 149) {
+                            // Gun
+                            for (uint8_t i = src + 1; i < chr->inventory[0].slotCount; i++) {
+                                if (!chr->inventory[0].items[i].isEmpty && chr->inventory[0].items[i].item.item.itemId / 1000 == 2330 && chr->inventory[0].items[i].item.quantity > 0) {
+                                    chr->activeProjectile = i;
+                                    break;
+                                }
+                            }
+                        }
+                    }
                     mods[0].mode = INVENTORY_MODIFY_TYPE_REMOVE;
                     mods[0].inventory = inventory + 2;
                     mods[0].slot = src + 1;
@@ -1148,7 +1187,6 @@ bool client_move_item(struct Client *client, uint8_t inventory, uint8_t src, uin
         }
 
         return true;
-
     }
 }
 

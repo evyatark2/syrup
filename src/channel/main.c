@@ -437,6 +437,9 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         SKIP(4);
         READER_END();
 
+        bool success;
+        client_remove_item(client, 2, client->character.activeProjectile + 1, 1, &success, NULL);
+
         {
             uint8_t packet[RANGED_ATTACK_PACKET_MAX_LENGTH];
             size_t len = ranged_attack_packet(client->character.id, skill, 0, monster_count, hit_count, oids, damage, display, direction, stance, speed, client->character.inventory[0].items[client->character.activeProjectile].item.item.itemId, packet);
