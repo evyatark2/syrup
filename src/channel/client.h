@@ -9,7 +9,7 @@
 #include "../packet.h"
 #include "map.h"
 #include "../character.h"
-#include "../database.h"
+//#include "../database.h"
 
 enum PacketType {
     PACKET_TYPE_LOGIN,
@@ -46,19 +46,20 @@ struct Client {
     enum ScriptState scriptState;
     uint16_t qid;
     uint32_t npc;
+    uint32_t shop;
 };
 
 enum ClientResultType {
-    CLIENT_RESULT_TYPE_KICK = -2,
-    CLIENT_RESULT_TYPE_ERROR,
-    CLIENT_RESULT_TYPE_SUCCESS,
-    CLIENT_RESULT_TYPE_WARP,
+    CLIENT_RESULT_TYPE_BAN = -2, // The client packet-edited
+    CLIENT_RESULT_TYPE_ERROR = -1,
+    CLIENT_RESULT_TYPE_SUCCESS = 0,
+    CLIENT_RESULT_TYPE_WARP = 1,
 };
 
 struct ClientResult {
     enum ClientResultType type;
     union {
-        const char *reason;
+        const char *reason; // Used for kicking
         struct {
             uint32_t map;
             uint8_t portal;
@@ -100,6 +101,9 @@ bool client_end_quest_now(struct Client *client, bool *success);
 bool client_forfeit_quest(struct Client *client, uint16_t qid);
 struct ClientResult client_script_cont(struct Client *client, uint32_t action);
 void client_kill_monster(struct Client *client, uint32_t id);
+struct ClientResult client_open_shop(struct Client *client, uint32_t id);
+struct ClientResult client_buy(struct Client *client, uint16_t pos, uint32_t id, int16_t quantity, int32_t price);
+bool client_close_shop(struct Client *client);
 void client_send_ok(struct Client *client, size_t msg_len, const char *msg);
 void client_send_yes_no(struct Client *client, size_t msg_len, const char *msg);
 void client_send_simple(struct Client *client, size_t msg_len, const char *msg);

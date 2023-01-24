@@ -12,6 +12,7 @@
 #include "client.h"
 #include "drops.h"
 #include "server.h"
+#include "shop.h"
 #include "handlers.h"
 #include "../constants.h"
 #include "../reader.h"
@@ -75,12 +76,25 @@ int main()
         return -1;
     }
     int ret = drops_load_from_db(conn);
-    database_connection_destroy(conn);
-    if (ret == -1)
+    if (ret == -1) {
+        channel_config_unload();
         return -1;
+    }
 
-    if (wz_init() != 0)
+    ret = shops_load_from_db(conn);
+    database_connection_destroy(conn);
+    if (ret == -1) {
+        drops_unload();
+        channel_config_unload();
         return -1;
+    }
+
+    if (wz_init() != 0) {
+        shops_unload();
+        drops_unload();
+        channel_config_unload();
+        return -1;
+    }
 
     struct GlobalContext ctx;
 
@@ -187,6 +201,7 @@ static int on_client_connect(struct Session *session, void *global_ctx, void *th
     client->character.skills = NULL;
     client->character.monsterBook = NULL;
     client->script = NULL;
+    client->shop = -1;
     session_set_context(session, client);
 
     return 0;
@@ -531,7 +546,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
 
         struct ClientResult res = client_npc_talk(client, npc->id);
             switch (res.type) {
-            case CLIENT_RESULT_TYPE_KICK:
+            case CLIENT_RESULT_TYPE_BAN:
             case CLIENT_RESULT_TYPE_ERROR:
                 return (struct OnPacketResult) { .status = -1 };
             case CLIENT_RESULT_TYPE_SUCCESS:
@@ -566,7 +581,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
                 (action == (uint8_t)-1 ? -1 : action);
             struct ClientResult res = client_script_cont(client, action_u32);
             switch (res.type) {
-            case CLIENT_RESULT_TYPE_KICK:
+            case CLIENT_RESULT_TYPE_BAN:
             case CLIENT_RESULT_TYPE_ERROR:
                 return (struct OnPacketResult) { .status = -1 };
             case CLIENT_RESULT_TYPE_SUCCESS:
@@ -575,6 +590,46 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
                 return (struct OnPacketResult) { .status = 0, .room = res.map };
             }
         }
+    }
+    break;
+
+    case 0x003D: {
+        uint8_t action;
+        READER_BEGIN(size, packet);
+        READ_OR_ERROR(reader_u8, &action);
+        switch (action) {
+        case 0: { // Buy
+            uint16_t position;
+            uint32_t id;
+            int16_t quantity;
+            int32_t price;
+            READ_OR_ERROR(reader_u16, &position);
+            READ_OR_ERROR(reader_u32, &id);
+            READ_OR_ERROR(reader_i16, &quantity);
+            READ_OR_ERROR(reader_i32, &price);
+            struct ClientResult res = client_buy(client, position, id, quantity, price);
+            if (res.type < 0)
+                return (struct OnPacketResult) { .status = -1 };
+
+            return (struct OnPacketResult) { .status = 0, .room = -1 };
+        }
+        break;
+
+        case 1: // Sell
+        break;
+
+        case 2: // Recharge
+        break;
+
+        case 3: // Leave
+            if (!client_close_shop(client))
+                return (struct OnPacketResult) { .status = -1 };
+
+            return (struct OnPacketResult) { .status = 0, .room = -1 };
+        break;
+
+        }
+        READER_END();
     }
     break;
 
@@ -749,7 +804,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             return (struct OnPacketResult) { .status = -1 };
         struct ClientResult res = client_portal_script(client, info->script);
         switch (res.type) {
-        case CLIENT_RESULT_TYPE_KICK:
+        case CLIENT_RESULT_TYPE_BAN:
         case CLIENT_RESULT_TYPE_ERROR:
             return (struct OnPacketResult) { .status = -1 };
         case CLIENT_RESULT_TYPE_SUCCESS:
@@ -781,7 +836,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             }
             struct ClientResult res = client_start_quest(client, qid, npc, false);
             switch (res.type) {
-            case CLIENT_RESULT_TYPE_KICK:
+            case CLIENT_RESULT_TYPE_BAN:
             case CLIENT_RESULT_TYPE_ERROR:
                 return (struct OnPacketResult) { .status = -1 };
             case CLIENT_RESULT_TYPE_SUCCESS:
@@ -801,7 +856,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             uint8_t selection;
             struct ClientResult res = client_end_quest(client, qid, npc, false);
             switch (res.type) {
-            case CLIENT_RESULT_TYPE_KICK:
+            case CLIENT_RESULT_TYPE_BAN:
             case CLIENT_RESULT_TYPE_ERROR:
                 return (struct OnPacketResult) { .status = -1 };
             case CLIENT_RESULT_TYPE_SUCCESS:
@@ -826,7 +881,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             }
             struct ClientResult res = client_start_quest(client, qid, npc, true);
             switch (res.type) {
-            case CLIENT_RESULT_TYPE_KICK:
+            case CLIENT_RESULT_TYPE_BAN:
             case CLIENT_RESULT_TYPE_ERROR:
                 return (struct OnPacketResult) { .status = -1 };
             case CLIENT_RESULT_TYPE_SUCCESS:
@@ -845,7 +900,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             }
             struct ClientResult res = client_end_quest(client, qid, npc, true);
             switch (res.type) {
-            case CLIENT_RESULT_TYPE_KICK:
+            case CLIENT_RESULT_TYPE_BAN:
             case CLIENT_RESULT_TYPE_ERROR:
                 return (struct OnPacketResult) { .status = -1 };
             case CLIENT_RESULT_TYPE_SUCCESS:
@@ -1082,7 +1137,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         if (client->script != NULL) {
             struct ClientResult res = client_script_cont(client, 0);
             switch (res.type) {
-            case CLIENT_RESULT_TYPE_KICK:
+            case CLIENT_RESULT_TYPE_BAN:
             case CLIENT_RESULT_TYPE_ERROR:
                 return (struct OnPacketResult) { .status = -1 };
             case CLIENT_RESULT_TYPE_SUCCESS:

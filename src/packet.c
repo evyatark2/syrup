@@ -772,6 +772,36 @@ void kill_monster_packet(uint32_t oid, bool animation, uint8_t *packet)
     writer_bool(&writer, animation);
 }
 
+size_t open_shop_packet(uint32_t id, uint16_t item_count, struct ShopItem *items, uint8_t *packet)
+{
+    struct Writer writer;
+    writer_init(&writer, OPEN_SHOP_PACKET_MAX_LENGTH, packet);
+
+    writer_u16(&writer, 0x0131);
+    writer_u32(&writer, id);
+    writer_u16(&writer, item_count);
+    for (uint16_t i = 0; i < item_count; i++) {
+        writer_u32(&writer, items[i].id);
+        writer_i32(&writer, items[i].price);
+        writer_u32(&writer, 0);
+        writer_u32(&writer, 0);
+        writer_u32(&writer, 0);
+        writer_u16(&writer, 1); // Stack size
+        writer_u16(&writer, 1); // Buyable
+    }
+
+    return writer.pos;
+}
+
+void shop_action_response(uint8_t code, uint8_t *packet)
+{
+    struct Writer writer;
+    writer_init(&writer, SHOP_ACTION_RESPONSE_PACKET_LENGTH, packet);
+
+    writer_u16(&writer, 0x0132);
+    writer_u8(&writer, code);
+}
+
 size_t stat_change_packet(bool enable_actions, enum Stat stats, union StatValue *values, uint8_t *packet)
 {
     // Count the number of stat changes

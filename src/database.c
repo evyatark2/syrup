@@ -82,6 +82,9 @@ struct DatabaseRequest {
         struct {
             struct DatabaseDropData drop;
         };
+        struct {
+            struct DatabaseShopItem shopItem;
+        };
     } temp;
 };
 
@@ -172,6 +175,9 @@ struct DatabaseRequest *database_request_create(struct DatabaseConnection *conn,
     if (req->params.type == DATABASE_REQUEST_TYPE_GET_MONSTER_DROPS) {
         req->res.getMonsterDrops.count = 0;
         req->res.getMonsterDrops.monsters = NULL;
+    } else if (req->params.type == DATABASE_REQUEST_TYPE_GET_SHOPS) {
+        req->res.getShops.count = 0;
+        req->res.getShops.shops = NULL;
     } else if (req->params.type == DATABASE_REQUEST_TYPE_GET_CHARACTER) {
         req->res.getCharacter.quests = NULL;
         req->res.getCharacter.progresses = NULL;
@@ -196,6 +202,12 @@ void database_request_destroy(struct DatabaseRequest *req)
             free(monster->multiItemDrops.drops);
         }
         free(req->res.getMonsterDrops.monsters);
+    } else if (req->params.type == DATABASE_REQUEST_TYPE_GET_SHOPS) {
+        for (size_t i = 0; i < req->res.getShops.count; i++) {
+            struct Shop *shop = &req->res.getShops.shops[i];
+            free(shop->items);
+        }
+        free(req->res.getShops.shops);
     } else if (req->params.type == DATABASE_REQUEST_TYPE_GET_CHARACTER) {
         free(req->res.getCharacter.monsterBook);
         free(req->res.getCharacter.skills);
@@ -487,6 +499,7 @@ static int do_get_characters_exists(struct DatabaseRequest *req, int status);
 static int do_try_create_character(struct DatabaseRequest *req, int status);
 static int do_get_character(struct DatabaseRequest *req, int status);
 static int do_get_monster_drops(struct DatabaseRequest *req, int status);
+static int do_get_shops(struct DatabaseRequest *req, int status);
 static int do_update_character(struct DatabaseRequest *req, int status);
 
 int database_request_execute(struct DatabaseRequest *req, int status)
@@ -521,6 +534,9 @@ int database_request_execute(struct DatabaseRequest *req, int status)
 
         case DATABASE_REQUEST_TYPE_GET_MONSTER_DROPS:
             return do_get_monster_drops(req, status);
+
+        case DATABASE_REQUEST_TYPE_GET_SHOPS:
+            return do_get_shops(req, status);
 
         case DATABASE_REQUEST_TYPE_UPDATE_CHARACTER:
             return do_update_character(req, status);
@@ -2160,6 +2176,71 @@ static int do_get_monster_drops(struct DatabaseRequest *req, int status)
             monster->multiItemDrops.drops[monster->multiItemDrops.count].max = req->temp.drop.max;
             monster->multiItemDrops.drops[monster->multiItemDrops.count].chance = req->temp.drop.chance;
             monster->multiItemDrops.count++;
+
+            ret = mysql_stmt_fetch(req->stmt);
+            assert(ret == 0 || ret == MYSQL_NO_DATA);
+        }
+    }
+
+    return 0;
+}
+
+static int do_get_shops(struct DatabaseRequest *req, int status)
+{
+    int ret;
+    const char *query = "SELECT DISTINCT shop_id FROM ShopItems";
+    assert(mysql_stmt_prepare(req->stmt, query, strlen(query)) == 0);
+
+    uint32_t id;
+    OUTPUT_BINDER_INIT(1);
+    OUTPUT_BINDER_u32(&id);
+    OUTPUT_BINDER_FINALIZE(req->stmt);
+
+    assert(mysql_stmt_execute(req->stmt) == 0);
+    assert(mysql_stmt_store_result(req->stmt) == 0);
+
+    req->res.getShops.shops = malloc(mysql_stmt_num_rows(req->stmt) * sizeof(struct Shop));
+    if (req->res.getShops.shops == NULL)
+        return -1;
+
+    ret = mysql_stmt_fetch(req->stmt);
+    assert(ret == 0 || ret == MYSQL_NO_DATA);
+    while (ret != MYSQL_NO_DATA) {
+        req->res.getShops.shops[req->res.getShops.count].id = id;
+        req->res.getShops.shops[req->res.getShops.count].count = 0;
+        req->res.getShops.count++;
+
+        ret = mysql_stmt_fetch(req->stmt);
+        assert(ret == 0 || ret == MYSQL_NO_DATA);
+    }
+
+    for (size_t i = 0; i < req->res.getShops.count; i++) {
+        struct Shop *shop = &req->res.getShops.shops[i];
+        assert(mysql_stmt_reset(req->stmt) == 0);
+
+        query = "SELECT item_id, price FROM ShopItems WHERE shop_id = ? ORDER BY position";
+        mysql_stmt_prepare(req->stmt, query, strlen(query));
+
+        INPUT_BINDER_INIT(1);
+        INPUT_BINDER_u32(&shop->id);
+        INPUT_BINDER_FINALIZE(req->stmt);
+
+        OUTPUT_BINDER_INIT(2);
+        OUTPUT_BINDER_u32(&req->temp.shopItem.id);
+        OUTPUT_BINDER_i32(&req->temp.shopItem.price);
+        OUTPUT_BINDER_FINALIZE(req->stmt);
+
+        assert(mysql_stmt_execute(req->stmt) == 0);
+        assert(mysql_stmt_store_result(req->stmt) == 0);
+
+        shop->items = malloc(mysql_stmt_num_rows(req->stmt) * sizeof(struct DatabaseShopItem));
+
+        ret = mysql_stmt_fetch(req->stmt);
+        assert(ret == 0 || ret == MYSQL_NO_DATA);
+        while (ret != MYSQL_NO_DATA) {
+            shop->items[shop->count].id = req->temp.shopItem.id;
+            shop->items[shop->count].price = req->temp.shopItem.price;
+            shop->count++;
 
             ret = mysql_stmt_fetch(req->stmt);
             assert(ret == 0 || ret == MYSQL_NO_DATA);

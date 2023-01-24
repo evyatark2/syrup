@@ -25,6 +25,7 @@ enum DatabaseRequestType {
     DATABASE_REQUEST_TYPE_TRY_CREATE_CHARACTER,
     DATABASE_REQUEST_TYPE_GET_CHARACTER,
     DATABASE_REQUEST_TYPE_GET_MONSTER_DROPS,
+    DATABASE_REQUEST_TYPE_GET_SHOPS,
     DATABASE_REQUEST_TYPE_UPDATE_CHARACTER
 };
 
@@ -248,6 +249,17 @@ struct MonsterDrops {
     struct MonsterMultiItemDrops multiItemDrops;
 };
 
+struct DatabaseShopItem {
+    uint32_t id;
+    int32_t price;
+};
+
+struct Shop {
+    uint32_t id;
+    size_t count;
+    struct DatabaseShopItem *items;
+};
+
 union DatabaseResult {
     struct {
         bool created;
@@ -359,6 +371,10 @@ union DatabaseResult {
         size_t count;
         struct MonsterDrops *monsters;
     } getMonsterDrops;
+    struct {
+        size_t count;
+        struct Shop *shops;
+    } getShops;
 };
 
 void database_connection_set_credentials(char *host, char *user, char *password, char *db, uint16_t port, char *socket);

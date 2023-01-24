@@ -20,6 +20,7 @@ static int l_client_hp(lua_State *L);
 static int l_client_max_hp(lua_State *L);
 static int l_client_max_mp(lua_State *L);
 static int l_client_mp(lua_State *L);
+static int l_client_open_shop(lua_State *L);
 static int l_client_job(lua_State *L);
 static int l_client_has_item(lua_State *L);
 static int l_client_is_quest_started(lua_State *L);
@@ -60,6 +61,7 @@ static const struct luaL_Reg clientlib[] = {
     { "maxMp", l_client_max_mp },
     { "meso", l_client_meso },
     { "mp", l_client_mp },
+    { "openShop", l_client_open_shop },
     { "resetStats", l_client_reset_stats },
     { "sendAcceptDecline", l_client_send_accept_decline },
     { "sendSimple", l_client_send_simple },
@@ -160,6 +162,14 @@ static int l_client_mp(lua_State *L)
     struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
     lua_pushinteger(L, client->character.mp);
     return 1;
+}
+
+static int l_client_open_shop(lua_State *L)
+{
+    struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
+    uint32_t id = luaL_checkinteger(L, 2);
+    client_open_shop(client, id);
+    return 0;
 }
 
 static int l_client_set_mp(lua_State *L)

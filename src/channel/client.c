@@ -7,6 +7,7 @@
 
 #include "../constants.h"
 #include "../packet.h"
+#include "shop.h"
 #include "scripting/script-manager.h"
 #include "scripting/client.h"
 #include "../hash-map.h"
@@ -825,6 +826,9 @@ bool client_remove_item(struct Client *client, uint8_t inv, uint8_t src, int16_t
         return false;
 
     *success = false;
+    if (client->shop != -1)
+        return true;
+
     if (chr->inventory[inv].items[src].isEmpty)
         return true;
 
@@ -957,6 +961,9 @@ bool client_remove_equip(struct Client *client, bool equipped, uint8_t src, bool
 bool client_move_item(struct Client *client, uint8_t inventory, uint8_t src, uint8_t dst)
 {
     struct Character *chr = &client->character;
+    if (client->shop != -1)
+        return true;
+
     if (inventory < 1 || inventory > 5)
         return false;
 
@@ -1555,7 +1562,7 @@ struct ClientResult client_npc_talk(struct Client *client, uint32_t npc)
     case SCRIPT_RESULT_VALUE_KICK:
         script_manager_free(client->script);
         client->script = NULL;
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_KICK };
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
     case SCRIPT_RESULT_VALUE_FAILURE:
         script_manager_free(client->script);
         client->script = NULL;
@@ -1581,20 +1588,20 @@ struct ClientResult client_start_quest(struct Client *client, uint16_t qid, uint
 
     const struct QuestInfo *info = wz_get_quest_info(qid);
     if (info == NULL)
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_KICK };
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
 
     if (hash_set_u16_get(chr->quests, qid) != NULL)
         return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
 
     // TODO: Also check if this quest isn't repeatable
     if (hash_set_u16_get(chr->completedQuests, qid) != NULL)
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_KICK };
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
 
     if ((scripted && !info->startScript) || (!scripted && info->startScript))
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_KICK };
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
 
     if (!check_quest_requirements(chr, info->startRequirementCount, info->startRequirements, npc))
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_KICK };
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
 
     if (info->startScript) {
         client->npc = npc;
@@ -1607,7 +1614,7 @@ struct ClientResult client_start_quest(struct Client *client, uint16_t qid, uint
         case SCRIPT_RESULT_VALUE_KICK:
             script_manager_free(client->script);
             client->script = NULL;
-            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_KICK };
+            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
         case SCRIPT_RESULT_VALUE_FAILURE:
             script_manager_free(client->script);
             client->script = NULL;
@@ -1651,19 +1658,19 @@ struct ClientResult client_end_quest(struct Client *client, uint16_t qid, uint32
 
     const struct QuestInfo *info = wz_get_quest_info(qid);
     if (info == NULL)
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_KICK };
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
 
     if (hash_set_u16_get(chr->completedQuests, qid) != NULL)
         return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
 
     if (hash_set_u16_get(chr->quests, qid) == NULL)
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_KICK };
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
 
     if ((scripted && !info->endScript) || (!scripted && info->endScript))
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_KICK };
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
 
     if (!check_quest_requirements(chr, info->endRequirementCount, info->endRequirements, npc))
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_KICK };
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
 
     if (info->endScript) {
         client->npc = npc;
@@ -1676,7 +1683,7 @@ struct ClientResult client_end_quest(struct Client *client, uint16_t qid, uint32
         case SCRIPT_RESULT_VALUE_KICK:
             script_manager_free(client->script);
             client->script = NULL;
-            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_KICK };
+            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
         case SCRIPT_RESULT_VALUE_FAILURE:
             script_manager_free(client->script);
             client->script = NULL;
@@ -1790,7 +1797,7 @@ struct ClientResult client_script_cont(struct Client *client, uint32_t action)
     case SCRIPT_RESULT_VALUE_KICK:
         script_manager_free(client->script);
         client->script = NULL;
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_KICK };
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
     case SCRIPT_RESULT_VALUE_FAILURE:
         script_manager_free(client->script);
         client->script = NULL;
@@ -1826,6 +1833,88 @@ void client_kill_monster(struct Client *client, uint32_t id)
 
     if (hash_set_u32_get(client->character.monsterQuests, id) != NULL)
         hash_set_u16_foreach(chr->quests, check_progress, &ctx);
+}
+
+struct ClientResult client_open_shop(struct Client *client, uint32_t id)
+{
+    if (client->shop == -1) {
+        client->shop = id;
+
+        const struct ShopInfo *info = shop_info_find(id);
+        if (info == NULL)
+            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN, .reason = "" };
+
+        struct ShopItem items[info->count];
+        for (size_t i = 0; i < info->count; i++) {
+            items[i].id = info->items[i].id;
+            items[i].price = info->items[i].price;
+        }
+
+        uint8_t packet[OPEN_SHOP_PACKET_MAX_LENGTH];
+        size_t len = open_shop_packet(id, info->count, items, packet);
+        if (session_write(client->session, len, packet) == -1)
+            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_ERROR };
+    }
+
+    return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
+}
+
+struct ClientResult client_buy(struct Client *client, uint16_t pos, uint32_t id, int16_t quantity, int32_t price)
+{
+    if (client->shop == -1)
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN, .reason = "Client tried to buy from a shop that isn't open" };
+
+    const struct ShopInfo *shop = shop_info_find(client->shop);
+    if (pos >= shop->count)
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN, .reason = "Client tried to buy an illegal shop position" };
+
+    if (shop->items[pos].id != id)
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN, .reason = "Client tried to buy an item with an incorrect ID" };
+
+    if (quantity <= 0)
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN, .reason = "Client tried to buy a non-positive quantity of an item" };
+
+    if (shop->items[pos].id / 1000000 == 1 && quantity > 1)
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN, .reason = "Client tried to buy multiple of an equipment" };
+
+    // TODO: Check if price is per item or total
+    if (shop->items[pos].price != price)
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN, .reason = "Client tried to buy an item with an incorrect price" };
+
+    // Players can drop meso while in the shop, so this can be a legal packet
+    if (client->character.mesos < price) {
+        uint8_t packet[SHOP_ACTION_RESPONSE_PACKET_LENGTH];
+        shop_action_response(2, packet);
+        if (session_write(client->session, SHOP_ACTION_RESPONSE_PACKET_LENGTH, packet) == -1)
+            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_ERROR };
+
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
+    }
+
+    bool success;
+    if (!client_gain_items(client, 1, &id, &quantity, false, &success))
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_ERROR };
+
+    client_gain_meso(client, -price, false, false);
+
+    if (!success)
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN, .reason = "Client tried to buy an item while not having a slot for it" };
+
+    uint8_t packet[SHOP_ACTION_RESPONSE_PACKET_LENGTH];
+    shop_action_response(0, packet);
+    if (session_write(client->session, SHOP_ACTION_RESPONSE_PACKET_LENGTH, packet) == -1)
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_ERROR };
+
+    return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
+}
+
+bool client_close_shop(struct Client *client)
+{
+    if (client->shop == -1)
+        return false;
+
+    client->shop = -1;
+    return true;
 }
 
 void client_send_ok(struct Client *client, size_t msg_len, const char *msg)
@@ -2080,7 +2169,7 @@ struct ClientResult client_portal_script(struct Client *client, const char *port
     case SCRIPT_RESULT_VALUE_KICK:
         script_manager_free(client->script);
         client->script = NULL;
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_KICK };
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
     case SCRIPT_RESULT_VALUE_FAILURE:
         script_manager_free(client->script);
         client->script = NULL;

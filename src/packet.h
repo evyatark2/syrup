@@ -140,6 +140,17 @@ void monster_hp_packet(uint32_t oid, uint8_t hp, uint8_t *packet);
 #define KILL_MONSTER_PACKET_LENGTH 8
 void kill_monster_packet(uint32_t oid, bool animation, uint8_t *packet);
 
+struct ShopItem {
+    uint32_t id;
+    int32_t price;
+};
+
+#define OPEN_SHOP_PACKET_MAX_LENGTH 6128 // Assuming a 255-max shop item count
+size_t open_shop_packet(uint32_t id, uint16_t item_count, struct ShopItem *items, uint8_t *packet);
+
+#define SHOP_ACTION_RESPONSE_PACKET_LENGTH 3
+void shop_action_response(uint8_t code, uint8_t *packet);
+
 enum Stat {
     STAT_SKIN = 0x1,
     STAT_FACE = 0x2,
