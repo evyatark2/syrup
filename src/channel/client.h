@@ -47,6 +47,7 @@ struct Client {
     uint16_t qid;
     uint32_t npc;
     uint32_t shop;
+    struct HashSetU32 *visibleMapObjects;
 };
 
 enum ClientResultType {
@@ -67,6 +68,8 @@ struct ClientResult {
     };
 };
 
+struct Client *client_create(struct Session *session, struct DatabaseConnection *conn, struct ScriptManager *quest_manager, struct ScriptManager *portal_mananger, struct ScriptManager *npc_manager);
+bool client_announce_drop(struct Client *client, uint32_t owner_id, uint32_t dropper_oid, bool player_drop, const struct Drop *drop);
 void client_set_hp(struct Client *client, int16_t hp);
 void client_adjust_hp(struct Client *client, int32_t hp);
 void client_set_mp(struct Client *client, int16_t mp);

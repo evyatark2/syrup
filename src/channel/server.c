@@ -756,6 +756,16 @@ void room_broadcast(struct Room *room, size_t len, uint8_t *packet)
     hash_set_addr_foreach(room->sessions, do_broadcast, &ctx);
 }
 
+void room_foreach(struct Room *room, void (*f)(struct Session *src, struct Session *dst, void *ctx), void *ctx_)
+{
+    struct ForeachContext ctx = {
+        .session = NULL,
+        .f = f,
+        .ctx = ctx_
+    };
+    hash_set_addr_foreach(room->sessions, do_foreach, &ctx);
+}
+
 struct TimerHandle *room_add_timer(struct Room *room, uint64_t msec, void (*f)(struct Room *, struct TimerHandle *), void *data, bool keep_alive)
 {
     struct RoomManager *manager = room->manager;

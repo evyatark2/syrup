@@ -185,25 +185,11 @@ static void destroy_context(void *ctx)
 static int on_client_connect(struct Session *session, void *global_ctx, void *thread_ctx, struct sockaddr *addr)
 {
     struct GlobalContext *ctx = global_ctx;
-    struct Client *client = malloc(sizeof(struct Client));
+    struct Client *client = client_create(session, thread_ctx, ctx->questManager, ctx->portalManager, ctx->npcManager);
     if (client == NULL)
         return -1;
 
-    client->session = session;
-    client->conn = thread_ctx;
-    client->map.handle = NULL;
-    client->managers.quest = ctx->questManager;
-    client->managers.portal = ctx->portalManager;
-    client->managers.npc = ctx->npcManager;
-    client->character.quests = NULL;
-    client->character.monsterQuests = NULL;
-    client->character.completedQuests = NULL;
-    client->character.skills = NULL;
-    client->character.monsterBook = NULL;
-    client->script = NULL;
-    client->shop = -1;
     session_set_context(session, client);
-
     return 0;
 }
 
@@ -686,7 +672,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
                 }
             }
 
-            map_add_drop_batch(map, client->character.id, -1, 1, &drop);
+            map_add_player_drop(map, client->character.id, &drop);
         } else {
             if (quantity != -1)
                 return (struct OnPacketResult) { .status = -1 };
@@ -782,7 +768,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             .pos.y = client->character.y,
             .meso = amount
         };
-        map_add_drop_batch(room_get_context(session_get_room(session)), client->character.id, -1, 1, &drop);
+        map_add_player_drop(room_get_context(session_get_room(session)), client->character.id, &drop);
     }
     break;
 

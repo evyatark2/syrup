@@ -36,7 +36,10 @@ struct Drop {
     struct Point pos;
     union {
         int32_t meso;
-        struct InventoryItem item;
+        struct {
+            uint16_t qid;
+            struct InventoryItem item;
+        };
         struct Equipment equip;
     };
 };
@@ -159,15 +162,13 @@ const struct Npc *map_get_npc(struct Map *map, uint32_t oid);
 bool map_move_monster(struct Map *map, struct MapHandle *controller, uint8_t activity, uint32_t oid, int16_t x, int16_t y, uint16_t fh, uint8_t stance, size_t len, uint8_t *raw_data);
 
 /**
- * Add a drop batch to a map.
+ * Add a drop to a map
  *
- * \param map The map to add the batch to
- * \param char_id The ID of the batch owner. If it was dropped by a non-player map object then only this character or any of its party members will be able to pick up the drop for a limited amount of time
- * \param oid The object ID the object that dropped it, or -1 if it was dropped by a player
- * \param count The size of drops
- * \param drops An array of the drops to drop
+ * \param map The map to add the drop to
+ * \param char_id The ID of the dropper
+ * \param drop The drop
  */
-void map_add_drop_batch(struct Map *map, uint32_t char_id, uint32_t oid, size_t count, struct Drop *drops);
+void map_add_player_drop(struct Map *map, uint32_t char_id, struct Drop *drop);
 
 /**
  * Get a drop

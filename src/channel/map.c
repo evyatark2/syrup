@@ -6,8 +6,10 @@
 #define XXH_INLINE_ALL
 #include <xxhash.h>
 
+#include "client.h"
 #include "server.h"
 #include "drops.h"
+#include "../hash-map.h"
 #include "../packet.h"
 #include "../wz.h"
 
@@ -138,6 +140,14 @@ static bool map_calculate_drop_position(struct Map *map, struct Point *p);
 static void on_next_drop(struct Room *room, struct TimerHandle *handle);
 static void on_drop_time_expired(struct Room *room, struct TimerHandle *handle);
 static void on_respawn(struct Room *room, struct TimerHandle *handle);
+
+struct AnnounceItemDropContext {
+    uint32_t charId;
+    uint32_t dropperOid;
+    struct Drop *drop;
+};
+
+static void do_announce_item_drop(struct Session *src, struct Session *dst, void *ctx_);
 
 struct Map *map_create(struct Room *room)
 {
@@ -510,6 +520,7 @@ uint32_t map_damage_monster_by(struct Map *map, struct MapHandle *handle, uint32
                         break;
 
                         case DROP_TYPE_ITEM:
+                            drops[drop_count].qid = info->drops[i].isQuest ? info->drops[i].questId : 0;
                             drops[drop_count].item.item.id = 0;
                             drops[drop_count].item.item.itemId = info->drops[i].itemId;
                             drops[drop_count].item.item.ownerLength = 0;
@@ -536,7 +547,101 @@ uint32_t map_damage_monster_by(struct Map *map, struct MapHandle *handle, uint32
                     }
                 }
 
-                map_add_drop_batch(map, char_id, monster->oid, drop_count, drops);
+                if (drop_count > 1) {
+                    if (map->droppingBatchCount == map->droppingBatchCapacity) {
+                        void *temp = realloc(map->droppingBatches, (map->droppingBatchCapacity * 2) * sizeof(struct DroppingBatch *));
+                        if (temp == NULL)
+                            return -1;
+
+                        map->droppingBatches = temp;
+                        map->droppingBatchCapacity *= 2;
+                    }
+
+                    struct DroppingBatch *batch = malloc(sizeof(struct DroppingBatch) + drop_count * sizeof(struct Drop));
+                    if (batch == NULL)
+                        return -1;
+
+                    batch->timer = room_add_timer(map->room, 300, on_next_drop, batch, true);
+
+                    // Drop the first one immediatly
+                    // Also can't be player drop as they come in 1's
+                    struct Drop *drop = &drops[0];
+                    drop->oid = object_list_allocate(&map->objectList);
+                    struct MapObject *object = object_list_get(&map->objectList, drop->oid);
+                    object->type = MAP_OBJECT_DROPPING;
+                    object->index = map->droppingBatchCount;
+                    object->index2 = 0;
+
+                    struct AnnounceItemDropContext ctx = {
+                        .charId = char_id,
+                        .dropperOid = monster->oid,
+                        .drop = drop
+                    };
+                    room_foreach(map->room, do_announce_item_drop, &ctx);
+
+                    for (size_t i = 0; i < drop_count; i++)
+                        batch->drops[i] = drops[i];
+
+                    map->droppingBatches[map->droppingBatchCount] = batch;
+                    batch->index = map->droppingBatchCount;
+                    batch->count = drop_count;
+                    batch->current = 1;
+                    batch->char_id = char_id;
+                    batch->monster_oid = monster->oid;
+                    map->droppingBatchCount++;
+                } else if (drop_count == 1) {
+                    if (map->dropBatchEnd == map->dropBatchCapacity) {
+                        void *temp = realloc(map->dropBatches, (map->dropBatchCapacity * 2) * sizeof(struct DropBatch));
+                        if (temp == NULL)
+                            return -1; // TODO: Delete the drops
+
+                        map->dropBatches = temp;
+                        map->dropBatchCapacity *= 2;
+                    }
+
+                    struct DropBatch *batch = &map->dropBatches[map->dropBatchEnd];
+                    batch->timer = room_add_timer(map->room, 15 * 1000, on_drop_time_expired, NULL, true);
+
+                    batch->drops = malloc(sizeof(struct Drop));
+                    *batch->drops = *drops;
+                    struct Drop *drop = &batch->drops[0];
+                    drop->oid = object_list_allocate(&map->objectList);
+                    struct MapObject *object = object_list_get(&map->objectList, drop->oid);
+                    object->type = MAP_OBJECT_DROP;
+                    object->index = map->dropBatchEnd;
+                    object->index2 = 0;
+                    batch->count = 1;
+                    map->dropBatchEnd++;
+
+                    switch (drop->type) {
+                    case DROP_TYPE_MESO: {
+                        uint8_t packet[DROP_MESO_FROM_OBJECT_PACKET_LENGTH];
+                        drop_meso_from_object_packet(drop->oid, drop->meso, char_id, drop->pos.x, drop->pos.y, drop->pos.x, drop->pos.y, monster->oid, false, packet);
+                        room_broadcast(map->room, DROP_MESO_FROM_OBJECT_PACKET_LENGTH, packet);
+                    }
+                        break;
+
+                    case DROP_TYPE_ITEM: {
+                        struct AnnounceItemDropContext ctx = {
+                            .charId = char_id,
+                            .dropperOid = monster->oid,
+                            .drop = drop
+                        };
+                        room_foreach(map->room, do_announce_item_drop, &ctx);
+                    }
+                    break;
+
+                    case DROP_TYPE_EQUIP: {
+                        uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
+                        drop_item_from_object_packet(drop->oid, drop->equip.item.itemId, char_id, drop->pos.x, drop->pos.y, drop->pos.x, drop->pos.y, monster->oid, false, packet);
+                        room_broadcast(map->room, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet);
+                    }
+                    break;
+                    }
+
+                    map_kill_monster(map, monster->oid);
+                }
+
             } else {
                 map_kill_monster(map, monster->oid);
             }
@@ -580,116 +685,52 @@ bool map_move_monster(struct Map *map, struct MapHandle *controller, uint8_t act
     return true;
 }
 
-void map_add_drop_batch(struct Map *map, uint32_t char_id, uint32_t monster_oid, size_t count, struct Drop *drops)
+void map_add_player_drop(struct Map *map, uint32_t char_id, struct Drop *drop)
 {
-    if (count == 0) {
-        return;
-    } else if (count != 1) {
-        if (map->droppingBatchCount == map->droppingBatchCapacity) {
-            void *temp = realloc(map->droppingBatches, (map->droppingBatchCapacity * 2) * sizeof(struct DroppingBatch *));
-            if (temp == NULL)
-                return;
+    if (map->dropBatchEnd == map->dropBatchCapacity) {
+        void *temp = realloc(map->dropBatches, (map->dropBatchCapacity * 2) * sizeof(struct DropBatch));
+        if (temp == NULL)
+            return; // TODO: Delete the drops
 
-            map->droppingBatches = temp;
-            map->droppingBatchCapacity *= 2;
-        }
+        map->dropBatches = temp;
+        map->dropBatchCapacity *= 2;
+    }
 
-        struct DroppingBatch *batch = malloc(sizeof(struct DroppingBatch) + count * sizeof(struct Drop));
-        if (batch == NULL)
-            return;
+    struct DropBatch *batch = &map->dropBatches[map->dropBatchEnd];
+    batch->timer = room_add_timer(map->room, 15 * 1000, on_drop_time_expired, NULL, true);
 
-        batch->timer = room_add_timer(map->room, 300, on_next_drop, batch, true);
+    batch->drops = malloc(sizeof(struct Drop));
+    *batch->drops = *drop;
+    drop = &batch->drops[0];
+    drop->oid = object_list_allocate(&map->objectList);
+    struct MapObject *object = object_list_get(&map->objectList, drop->oid);
+    object->type = MAP_OBJECT_DROP;
+    object->index = map->dropBatchEnd;
+    object->index2 = 0;
+    batch->count = 1;
+    map->dropBatchEnd++;
 
-        // Drop the first one immediatly
-        // Also can't be player drop as they come in 1's
-        struct Drop *drop = &drops[0];
-        drop->oid = object_list_allocate(&map->objectList);
-        struct MapObject *object = object_list_get(&map->objectList, drop->oid);
-        object->type = MAP_OBJECT_DROPPING;
-        object->index = map->droppingBatchCount;
-        object->index2 = 0;
-        switch (drop->type) {
-        case DROP_TYPE_MESO: {
-            uint8_t packet[DROP_MESO_FROM_OBJECT_PACKET_LENGTH];
-            drop_meso_from_object_packet(drop->oid, drop->meso, char_id, drop->pos.x, drop->pos.y, drop->pos.x, drop->pos.y, monster_oid, false, packet);
-            room_broadcast(map->room, DROP_MESO_FROM_OBJECT_PACKET_LENGTH, packet);
-        }
+    switch (drop->type) {
+    case DROP_TYPE_MESO: {
+        uint8_t packet[DROP_MESO_FROM_OBJECT_PACKET_LENGTH];
+        drop_meso_from_object_packet(drop->oid, drop->meso, char_id, drop->pos.x, drop->pos.y, drop->pos.x, drop->pos.y, char_id, true, packet);
+        room_broadcast(map->room, DROP_MESO_FROM_OBJECT_PACKET_LENGTH, packet);
+    }
+    break;
 
-            break;
-        case DROP_TYPE_ITEM: {
-            uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
-            drop_item_from_object_packet(drop->oid, drop->item.item.itemId, char_id, drop->pos.x, drop->pos.y, drop->pos.x, drop->pos.y, monster_oid, false, packet);
-            room_broadcast(map->room, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet);
-        }
-        break;
+    case DROP_TYPE_ITEM: {
+        uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
+        drop_item_from_object_packet(drop->oid, drop->item.item.itemId, char_id, drop->pos.x, drop->pos.y, drop->pos.x, drop->pos.y, char_id, true, packet);
+        room_broadcast(map->room, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet);
+    }
+    break;
 
-        case DROP_TYPE_EQUIP: {
-            uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
-            drop_item_from_object_packet(drop->oid, drop->equip.item.itemId, char_id, drop->pos.x, drop->pos.y, drop->pos.x, drop->pos.y, monster_oid, false, packet);
-            room_broadcast(map->room, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet);
-        }
-        break;
-        }
-
-        for (size_t i = 0; i < count; i++)
-            batch->drops[i] = drops[i];
-
-        map->droppingBatches[map->droppingBatchCount] = batch;
-        batch->index = map->droppingBatchCount;
-        batch->count = count;
-        batch->current = 1;
-        batch->char_id = char_id;
-        batch->monster_oid = monster_oid;
-        map->droppingBatchCount++;
-    } else {
-        if (map->dropBatchEnd == map->dropBatchCapacity) {
-            void *temp = realloc(map->dropBatches, (map->dropBatchCapacity * 2) * sizeof(struct DropBatch));
-            if (temp == NULL)
-                return; // TODO: Delete the drops
-
-            map->dropBatches = temp;
-            map->dropBatchCapacity *= 2;
-        }
-
-        struct DropBatch *batch = &map->dropBatches[map->dropBatchEnd];
-        batch->timer = room_add_timer(map->room, 15 * 1000, on_drop_time_expired, NULL, true);
-
-        batch->drops = malloc(sizeof(struct Drop));
-        *batch->drops = *drops;
-        struct Drop *drop = &batch->drops[0];
-        drop->oid = object_list_allocate(&map->objectList);
-        struct MapObject *object = object_list_get(&map->objectList, drop->oid);
-        object->type = MAP_OBJECT_DROP;
-        object->index = map->dropBatchEnd;
-        object->index2 = 0;
-        batch->count = 1;
-        map->dropBatchEnd++;
-
-        switch (drop->type) {
-        case DROP_TYPE_MESO: {
-            uint8_t packet[DROP_MESO_FROM_OBJECT_PACKET_LENGTH];
-            drop_meso_from_object_packet(drop->oid, drop->meso, char_id, drop->pos.x, drop->pos.y, drop->pos.x, drop->pos.y, monster_oid == -1 ? char_id : monster_oid, monster_oid == -1, packet);
-            room_broadcast(map->room, DROP_MESO_FROM_OBJECT_PACKET_LENGTH, packet);
-        }
-        break;
-
-        case DROP_TYPE_ITEM: {
-            uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
-            drop_item_from_object_packet(drop->oid, drop->item.item.itemId, char_id, drop->pos.x, drop->pos.y, drop->pos.x, drop->pos.y, monster_oid == -1 ? char_id : monster_oid, monster_oid == -1, packet);
-            room_broadcast(map->room, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet);
-        }
-        break;
-
-        case DROP_TYPE_EQUIP: {
-            uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
-            drop_item_from_object_packet(drop->oid, drop->equip.item.itemId, char_id, drop->pos.x, drop->pos.y, drop->pos.x, drop->pos.y, monster_oid == -1 ? char_id : monster_oid, monster_oid == -1, packet);
-            room_broadcast(map->room, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet);
-        }
-        break;
-        }
-
-        if (monster_oid != -1)
-            map_kill_monster(map, monster_oid);
+    case DROP_TYPE_EQUIP: {
+        uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
+        drop_item_from_object_packet(drop->oid, drop->equip.item.itemId, char_id, drop->pos.x, drop->pos.y, drop->pos.x, drop->pos.y, char_id, true, packet);
+        room_broadcast(map->room, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet);
+    }
+    break;
     }
 }
 
@@ -820,28 +861,13 @@ static void on_next_drop(struct Room *room, struct TimerHandle *handle)
     object->type = MAP_OBJECT_DROPPING;
     object->index = batch->index;
     object->index2 = batch->current;
-    switch (drop->type) {
-    case DROP_TYPE_MESO: {
-        uint8_t packet[DROP_MESO_FROM_OBJECT_PACKET_LENGTH];
-        drop_meso_from_object_packet(drop->oid, drop->meso, batch->char_id, drop->pos.x, drop->pos.y, drop->pos.x, drop->pos.y, batch->monster_oid, false, packet);
-        room_broadcast(map->room, DROP_MESO_FROM_OBJECT_PACKET_LENGTH, packet);
-    }
 
-    break;
-    case DROP_TYPE_ITEM: {
-        uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
-        drop_item_from_object_packet(drop->oid, drop->item.item.itemId, batch->char_id, drop->pos.x, drop->pos.y, drop->pos.x, drop->pos.y, batch->monster_oid, false, packet);
-        room_broadcast(map->room, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet);
-    }
-    break;
-
-    case DROP_TYPE_EQUIP: {
-        uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
-        drop_item_from_object_packet(drop->oid, drop->equip.item.itemId, batch->char_id, drop->pos.x, drop->pos.y, drop->pos.x, drop->pos.y, batch->monster_oid, false, packet);
-        room_broadcast(map->room, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet);
-    }
-    break;
-    }
+    struct AnnounceItemDropContext ctx = {
+        .charId = batch->char_id,
+        .dropperOid = batch->monster_oid,
+        .drop = drop
+    };
+    room_foreach(map->room, do_announce_item_drop, &ctx);
 
     batch->current++;
     if (batch->current < batch->count) {
@@ -989,6 +1015,13 @@ static void on_respawn(struct Room *room, struct TimerHandle *handle)
     map->deadCount = 0;
 
     map->respawnHandle = room_add_timer(map->room, 10 * 1000, on_respawn, NULL, false);
+}
+
+static void do_announce_item_drop(struct Session *n_, struct Session *dst, void *ctx_)
+{
+    struct AnnounceItemDropContext *ctx = ctx_;
+    struct Client *client = session_get_context(dst);
+    client_announce_drop(client, ctx->charId, ctx->dropperOid, false, ctx->drop);
 }
 
 static int object_list_init(struct ObjectList *list)

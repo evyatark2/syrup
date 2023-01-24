@@ -87,6 +87,7 @@ uint32_t room_get_id(struct Room *room);
 void room_set_context(struct Room *room, void *ctx);
 void *room_get_context(struct Room *room);
 void room_broadcast(struct Room *room, size_t len, uint8_t *packet);
+void room_foreach(struct Room *room, void (*f)(struct Session *src, struct Session *dst, void *ctx), void *ctx_);
 /// Enable the keep alive trigger
 void room_keep_alive(struct Room *room);
 /// Disable the keep alive trigger

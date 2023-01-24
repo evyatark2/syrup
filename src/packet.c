@@ -931,7 +931,7 @@ void drop_item_from_object_packet(uint32_t oid, uint32_t item_id, uint32_t owner
     writer_init(&writer, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet);
 
     writer_u16(&writer, 0x010C);
-    writer_u8(&writer, 1);
+    writer_u8(&writer, 1); // mod
     writer_u32(&writer, oid);
     writer_bool(&writer, false);
     writer_u32(&writer, item_id);

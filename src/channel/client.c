@@ -16,6 +16,79 @@ static bool check_quest_requirements(struct Character *chr, size_t req_count, co
 static bool start_quest(struct Client *client, uint16_t qid, uint32_t npc, bool *success);
 static bool end_quest(struct Client *client, uint16_t qid, uint32_t npc, bool *success);
 
+struct Client *client_create(struct Session *session, struct DatabaseConnection *conn, struct ScriptManager *quest_manager, struct ScriptManager *portal_mananger, struct ScriptManager *npc_manager)
+{
+    struct Client *client = malloc(sizeof(struct Client));
+    if (client == NULL)
+        return NULL;
+
+    client->visibleMapObjects = hash_set_u32_create(sizeof(uint32_t), 0);
+    if (client->visibleMapObjects == NULL) {
+        free(client);
+        return NULL;
+    }
+
+    client->session = session;
+    client->conn = conn;
+    client->map.handle = NULL;
+    client->managers.quest = quest_manager;
+    client->managers.portal = portal_mananger;
+    client->managers.npc = npc_manager;
+    client->character.quests = NULL;
+    client->character.monsterQuests = NULL;
+    client->character.completedQuests = NULL;
+    client->character.skills = NULL;
+    client->character.monsterBook = NULL;
+    client->script = NULL;
+    client->shop = -1;
+
+    return client;
+}
+
+bool client_announce_drop(struct Client *client, uint32_t owner_id, uint32_t dropper_oid, bool player_drop, const struct Drop *drop)
+{
+    if (hash_set_u32_insert(client->visibleMapObjects, &drop->oid) == -1)
+        return false;
+
+    switch (drop->type) {
+    case DROP_TYPE_MESO: {
+        uint8_t packet[DROP_MESO_FROM_OBJECT_PACKET_LENGTH];
+        drop_meso_from_object_packet(drop->oid, drop->meso, owner_id, drop->pos.x, drop->pos.y, drop->pos.x, drop->pos.y, dropper_oid, player_drop, packet);
+        if (session_write(client->session, DROP_MESO_FROM_OBJECT_PACKET_LENGTH, packet) == -1)
+            return false;
+    }
+    break;
+
+    case DROP_TYPE_ITEM: {
+        if (drop->qid != 0) {
+            struct Quest *quest = hash_set_u16_get(client->character.quests, drop->qid);
+            if (quest != NULL) {
+                uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
+                drop_item_from_object_packet(drop->oid, drop->item.item.itemId, owner_id, drop->pos.x, drop->pos.y, drop->pos.x, drop->pos.y, dropper_oid, player_drop, packet);
+                if (session_write(client->session, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet) == -1)
+                    return false;
+            }
+        } else {
+            uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
+            drop_item_from_object_packet(drop->oid, drop->item.item.itemId, owner_id, drop->pos.x, drop->pos.y, drop->pos.x, drop->pos.y, dropper_oid, player_drop, packet);
+            if (session_write(client->session, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet) == -1)
+                return false;
+        }
+    }
+    break;
+
+    case DROP_TYPE_EQUIP: {
+            uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
+            drop_item_from_object_packet(drop->oid, drop->equip.item.itemId, owner_id, drop->pos.x, drop->pos.y, drop->pos.x, drop->pos.y, dropper_oid, player_drop, packet);
+            if (session_write(client->session, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet) == -1)
+                return false;
+    }
+    break;
+    }
+
+    return true;
+}
+
 void client_set_hp(struct Client *client, int16_t hp)
 {
     struct Character *chr = &client->character;
@@ -1984,6 +2057,7 @@ void client_warp(struct Client *client, uint32_t map, uint8_t portal)
         remove_player_from_map_packet(chr->id, packet);
         session_broadcast_to_room(client->session, REMOVE_PLAYER_FROM_MAP_PACKET_LENGTH, packet);
     }
+
     map_leave(room_get_context(session_get_room(client->session)), client->map.handle);
     client->map.handle = NULL;
 
