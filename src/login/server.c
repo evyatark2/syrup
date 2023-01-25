@@ -244,7 +244,7 @@ struct LoginServer *login_server_create(OnLog *on_log, CreateUserContext *create
             bufferevent_enable(channel->event, EV_READ | EV_WRITE);
 
             struct timeval time = {
-                .tv_sec = 30,
+                .tv_sec = 10,
                 .tv_usec = 0
             };
             bufferevent_set_timeouts(channel->event, &time, NULL);
@@ -503,7 +503,7 @@ static void on_channel_read(struct bufferevent *bev, void *ctx)
             if (channel->clients == NULL) {
                 // We are not the first one to connect to the channel, and we don't have a logged-in list
                 // This means that either:
-                // 1) The connection to the channel server was lost and we waited long enough (1 min 30 sec) to reconnect
+                // 1) The connection to the channel server was lost and we waited long enough (30 sec) to reconnect
                 //    that we decided to drop the logged-in list in order to let the connected accounts re-login
                 // 2) The login server was restarted and the channel now received the second connection
                 // In both cases we let the channel server know to kick all clients
@@ -571,7 +571,7 @@ static void on_channel_event(struct bufferevent *bev, short what, void *ctx)
         bufferevent_setcb(new, on_channel_read, NULL, on_channel_event, channel);
         bufferevent_enable(new, EV_READ | EV_WRITE);
         struct timeval time = {
-            .tv_sec = 30,
+            .tv_sec = 10,
             .tv_usec = 0
         };
         bufferevent_set_timeouts(new, &time, NULL);
