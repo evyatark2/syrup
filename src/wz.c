@@ -178,8 +178,22 @@ struct ItemParserStackNode {
     enum ItemItemType type;
 };
 
+enum EquipItemItemType {
+    EQUIP_ITEM_ITEM_TYPE_TOP_LEVEL,
+    EQUIP_ITEM_ITEM_TYPE_INFO,
+};
+
+struct EquipItemParserStackNode {
+    struct EquipItemParserStackNode *next;
+    enum EquipItemItemType type;
+};
+
 struct ItemParserContext {
-    struct ItemParserStackNode *head;
+    XML_Parser parser;
+    union {
+        struct ItemParserStackNode *head;
+        struct EquipItemParserStackNode *head2;
+    };
     size_t itemCapacity;
     uint32_t skip;
 };
@@ -229,12 +243,14 @@ static void on_quest_act_start(void *user_data, const XML_Char *name, const XML_
 static void on_quest_act_end(void *user_data, const XML_Char *name);
 static void on_item_start(void *user_data, const XML_Char *name, const XML_Char **attrs);
 static void on_item_end(void *user_data, const XML_Char *name);
+static void on_equip_item_start(void *user_data, const XML_Char *name, const XML_Char **attrs);
+static void on_equip_item_end(void *user_data, const XML_Char *name);
 static void on_equip_start(void *user_data, const XML_Char *name, const XML_Char **attrs);
 static void on_equip_end(void *user_data, const XML_Char *name);
 static void on_consumable_start(void *user_data, const XML_Char *name, const XML_Char **attrs);
 static void on_consumable_end(void *user_data, const XML_Char *name);
 
-int wz_init()
+int wz_init(void)
 {
     //int shm;
     //sem_t *sem;
@@ -554,6 +570,7 @@ int wz_init()
 
         {
             struct ItemParserContext ctx = {
+                .parser = parser,
                 .head = NULL,
                 .itemCapacity = 1,
             };
@@ -590,6 +607,36 @@ int wz_init()
                 }
             }
             closedir(item_dir);
+
+            ctx.head2 = NULL;
+            ctx.skip = 0;
+
+            DIR *equip_dir = opendir("wz/Character.wz");
+
+            while ((entry = readdir(equip_dir)) != NULL) {
+                if (entry->d_type == DT_DIR && entry->d_name[0] != '.' && strcmp(entry->d_name, "Afterimage")) {
+                    int fd = openat(dirfd(equip_dir), entry->d_name, O_RDONLY | O_DIRECTORY);
+                    DIR *dir = fdopendir(fd);
+                    while ((entry = readdir(dir)) != NULL) {
+                        if (entry->d_name[0] == '.')
+                            continue;
+                        fd = openat(dirfd(dir), entry->d_name, O_RDONLY);
+                        off_t len = lseek(fd, 0, SEEK_END);
+                        lseek(fd, 0, SEEK_SET);
+                        char *data = malloc(len);
+                        read(fd, data, len);
+                        close(fd);
+
+                        XML_SetElementHandler(parser, on_equip_item_start, on_equip_item_end);
+                        XML_SetUserData(parser, &ctx);
+                        XML_Parse(parser, data, len, true);
+                        free(data);
+                        XML_ParserReset(parser, NULL);
+                    }
+                    closedir(dir);
+                }
+            }
+            closedir(equip_dir);
 
             cmph_io_adapter_t *adapter = cmph_io_struct_vector_adapter(ITEM_INFOS, sizeof(struct ItemInfo), offsetof(struct ItemInfo, id), sizeof(uint32_t), ITEM_INFO_COUNT);
             cmph_config_t *config = cmph_config_new(adapter);
@@ -670,7 +717,7 @@ int wz_init()
     return 0;
 }
 
-int wz_init_equipment()
+int wz_init_equipment(void)
 {
     XML_Parser parser = XML_ParserCreate(NULL);
 
@@ -765,7 +812,7 @@ static void foothold_tree_free(struct RTreeNode *node)
     free(node);
 }
 
-void wz_terminate()
+void wz_terminate(void)
 {
     cmph_destroy(CONSUMABLE_INFO_MPH);
     free(CONSUMABLE_INFOS);
@@ -818,7 +865,7 @@ void wz_terminate()
     //}
 }
 
-void wz_terminate_equipment()
+void wz_terminate_equipment(void)
 {
     cmph_destroy(EQUIP_INFO_MPH);
     free(EQUIP_INFOS);
@@ -2429,6 +2476,120 @@ static void on_item_end(void *user_data, const XML_Char *name)
     struct ItemParserStackNode *next = ctx->head->next;
     free(ctx->head);
     ctx->head = next;
+}
+
+static void on_equip_item_start(void *user_data, const XML_Char *name, const XML_Char **attrs)
+{
+    struct ItemParserContext *ctx = user_data;
+    if (ctx->skip > 0) {
+        ctx->skip++;
+        return;
+    }
+
+    if (ctx->head2 == NULL) {
+        if (ITEM_INFO_COUNT == ctx->itemCapacity) {
+            ITEM_INFOS = realloc(ITEM_INFOS, (ctx->itemCapacity * 2) * sizeof(struct ItemInfo));
+            ctx->itemCapacity *= 2;
+        }
+
+        ITEM_INFOS[ITEM_INFO_COUNT].id = strtol(attrs[1], NULL, 10);
+        ITEM_INFOS[ITEM_INFO_COUNT].slotMax = 100;
+        ITEM_INFOS[ITEM_INFO_COUNT].price = 0;
+        ITEM_INFOS[ITEM_INFO_COUNT].unitPrice = 0;
+        ITEM_INFOS[ITEM_INFO_COUNT].untradable = false;
+        ITEM_INFOS[ITEM_INFO_COUNT].oneOfAKind = false;
+        ITEM_INFOS[ITEM_INFO_COUNT].monsterBook = false;
+
+        ctx->head2 = malloc(sizeof(struct EquipItemParserStackNode));
+        ctx->head2->next = NULL;
+        ctx->head2->type = EQUIP_ITEM_ITEM_TYPE_TOP_LEVEL;
+        if (strcmp(name, "imgdir"))
+            assert(0); // ERROR
+    } else {
+        switch (ctx->head2->type) {
+        case EQUIP_ITEM_ITEM_TYPE_TOP_LEVEL:
+            if (!strcmp(attrs[1], "info")) {
+                struct EquipItemParserStackNode *new = malloc(sizeof(struct EquipItemParserStackNode));
+                new->next = ctx->head2;
+                new->type = EQUIP_ITEM_ITEM_TYPE_INFO;
+                ctx->head2 = new;
+            } else {
+                ctx->skip++;
+            }
+        break;
+
+        case EQUIP_ITEM_ITEM_TYPE_INFO: {
+            ctx->skip++;
+            if (!strcmp(name, "int")) {
+                const XML_Char *key = NULL;
+                const XML_Char *value;
+                for (size_t i = 0; attrs[i] != NULL; i += 2) {
+                    if (!strcmp(attrs[i], "name"))
+                        key = attrs[i+1];
+                    else if (!strcmp(attrs[i], "value"))
+                        value = attrs[i+1];
+                }
+
+                if (key == NULL)
+                    assert(0); // ERROR
+
+                if (!strcmp(key, "slotMax"))
+                    ITEM_INFOS[ITEM_INFO_COUNT].slotMax = strtol(value, NULL, 10);
+                else if (!strcmp(key, "price"))
+                    ITEM_INFOS[ITEM_INFO_COUNT].price = strtol(value, NULL, 10);
+                else if (!strcmp(key, "tradeBlock"))
+                    ITEM_INFOS[ITEM_INFO_COUNT].untradable = strtol(value, NULL, 10) > 0;
+                else if (!strcmp(key, "only"))
+                    ITEM_INFOS[ITEM_INFO_COUNT].oneOfAKind = strtol(value, NULL, 10) > 0;
+                else if (!strcmp(key, "monsterBook"))
+                    ITEM_INFOS[ITEM_INFO_COUNT].monsterBook = strtol(value, NULL, 10) > 0;
+            } else if (!strcmp(name, "double")) {
+                const XML_Char *key = NULL;
+                const XML_Char *value;
+                for (size_t i = 0; attrs[i] != NULL; i += 2) {
+                    if (!strcmp(attrs[i], "name"))
+                        key = attrs[i+1];
+                    else if (!strcmp(attrs[i], "value"))
+                        value = attrs[i+1];
+                }
+
+                if (key == NULL)
+                    assert(0); // ERROR
+
+                if (!strcmp(key, "unitPrice")) {
+                    XML_Char *dup = strdup(value);
+                    if (strchr(dup, ',') != NULL)
+                        *strchr(dup, ',') = '.';
+                    ITEM_INFOS[ITEM_INFO_COUNT].unitPrice = strtod(dup, NULL);
+                    free(dup);
+                }
+            }
+        }
+        break;
+        }
+    }
+}
+
+static void on_equip_item_end(void *user_data, const XML_Char *name)
+{
+    struct ItemParserContext *ctx = user_data;
+    if (ctx->skip > 0) {
+        ctx->skip--;
+        return;
+    }
+
+    if (ctx->head2->type == EQUIP_ITEM_ITEM_TYPE_INFO) {
+        free(ctx->head2->next);
+        free(ctx->head2);
+        ctx->head2 = NULL;
+        XML_StopParser(ctx->parser, false);
+        ITEM_INFO_COUNT++;
+        return;
+    }
+
+    struct EquipItemParserStackNode *next = ctx->head2->next;
+    free(ctx->head2);
+    ctx->head2 = next;
 }
 
 static void on_equip_start(void *user_data, const XML_Char *name, const XML_Char **attrs)

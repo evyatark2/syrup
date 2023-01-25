@@ -2931,8 +2931,6 @@ struct ClientResult client_sell(struct Client *client, uint16_t pos, uint32_t id
 
         if (!success || equip.item.itemId != id)
             return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
-
-        client_gain_meso(client, info->price, false, false);
     } else {
         bool success;
         struct InventoryItem item;
@@ -2941,13 +2939,13 @@ struct ClientResult client_sell(struct Client *client, uint16_t pos, uint32_t id
 
         if (!success || item.item.itemId != id)
             return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
-
-        client_gain_meso(client, info->price * quantity, false, false);
-
-        uint8_t packet[SHOP_ACTION_RESPONSE_PACKET_LENGTH];
-        shop_action_response(0x8, packet);
-        session_write(client->session, SHOP_ACTION_RESPONSE_PACKET_LENGTH, packet);
     }
+
+    client_gain_meso(client, info->price * quantity, false, false);
+
+    uint8_t packet[SHOP_ACTION_RESPONSE_PACKET_LENGTH];
+    shop_action_response(0x8, packet);
+    session_write(client->session, SHOP_ACTION_RESPONSE_PACKET_LENGTH, packet);
 
     return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
 }
