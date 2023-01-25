@@ -376,7 +376,15 @@ static int on_client_packet(struct SessionContainer *session, size_t size, uint8
             return -1;
 
         struct VerifyPicResult res = verify_pic_handler_handle(client->handler, 0);
-        session_set_event(session->session, res.status, res.fd, on_resume_client_packet);
+        if (res.status > 0)
+            session_set_event(session->session, res.status, res.fd, on_resume_client_packet);
+        else if (res.status < 0) {
+            verify_pic_handler_destroy(client->handler);
+            return -1;
+        } else {
+            session_write(session->session, res.size, res.packet);
+            verify_pic_handler_destroy(client->handler);
+        }
         return 0;
     }
     break;

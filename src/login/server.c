@@ -387,6 +387,14 @@ int assign_channel(uint32_t id, uint8_t world, uint8_t channel, uint32_t *token)
         .fd = fd
     };
 
+    mtx_lock(&CHANNELS[world][channel].mtx);
+
+    if (!CHANNELS[world][channel].connected) {
+        mtx_unlock(&CHANNELS[world][channel].mtx);
+        close(fd);
+        return -1;
+    }
+
     mtx_lock(&CHANNELS[world][channel].clientsMtx);
     do {
         pending.token = rand() % 32768 << 16 | rand() % 32768;
@@ -394,21 +402,12 @@ int assign_channel(uint32_t id, uint8_t world, uint8_t channel, uint32_t *token)
     } while (pending.token == 0 || hash_set_u32_get(CHANNELS[world][channel].clients, pending.token) != NULL);
     if (hash_set_u32_insert(CHANNELS[world][channel].clients, &pending) == -1) {
         mtx_unlock(&CHANNELS[world][channel].clientsMtx);
+        mtx_unlock(&CHANNELS[world][channel].mtx);
         close(fd);
         return -1;
     }
 
     mtx_unlock(&CHANNELS[world][channel].clientsMtx);
-
-    mtx_lock(&CHANNELS[world][channel].mtx);
-    if (!CHANNELS[world][channel].connected) {
-        mtx_unlock(&CHANNELS[world][channel].mtx);
-        mtx_lock(&CHANNELS[world][channel].clientsMtx);
-        hash_set_u32_remove(CHANNELS[world][channel].clients, pending.token);
-        mtx_unlock(&CHANNELS[world][channel].clientsMtx);
-        close(fd);
-        return -1;
-    }
 
     bufferevent_write(CHANNELS[world][channel].event, (uint32_t[]) { pending.token, pending.id }, 8);
     mtx_unlock(&CHANNELS[world][channel].mtx);

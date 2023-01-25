@@ -729,6 +729,10 @@ struct RegisterPicResult register_pic_handler_handle(struct RegisterPicHandler *
         if (ret.fd != -1) {
             handler->state++;
             return ret;
+        } else {
+            struct RegisterPicResult ret = { .status = 0, .size = LOGIN_ERROR_PACKET_LENGTH };
+            login_error_packet(10, ret.packet);
+            return ret;
         }
     }
 
@@ -795,6 +799,10 @@ struct VerifyPicResult verify_pic_handler_handle(struct VerifyPicHandler *handle
         ret.fd = assign_channel(handler->characterId, handler->client->world, handler->client->channel, &handler->token);
         if (ret.fd != -1) {
             handler->state++;
+            return ret;
+        } else {
+            struct VerifyPicResult ret = { .status = 0, .size = LOGIN_ERROR_PACKET_LENGTH };
+            login_error_packet(10, ret.packet);
             return ret;
         }
     }

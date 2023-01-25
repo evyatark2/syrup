@@ -1231,6 +1231,7 @@ static bool on_client_join(struct Session *session, void *thread_ctx)
         size_t len = add_player_to_map_packet(client_get_character(client), packet);
         session_broadcast_to_room(session, len, packet);
     }
+
     return true;
 }
 
