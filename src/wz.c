@@ -2382,18 +2382,32 @@ static void on_item_start(void *user_data, const XML_Char *name, const XML_Char 
                     ITEM_INFOS[ITEM_INFO_COUNT].slotMax = strtol(value, NULL, 10);
                 else if (!strcmp(key, "price"))
                     ITEM_INFOS[ITEM_INFO_COUNT].price = strtol(value, NULL, 10);
-                else if (!strcmp(key, "unitPrice")) {
-                    XML_Char *dup = strdup(value);
-                    if (strchr(dup, ',') != NULL)
-                        *strchr(dup, ',') = '.';
-                    ITEM_INFOS[ITEM_INFO_COUNT].price = strtod(dup, NULL);
-                    free(dup);
-                } else if (!strcmp(key, "tradeBlock"))
+                else if (!strcmp(key, "tradeBlock"))
                     ITEM_INFOS[ITEM_INFO_COUNT].untradable = strtol(value, NULL, 10) > 0;
                 else if (!strcmp(key, "only"))
                     ITEM_INFOS[ITEM_INFO_COUNT].oneOfAKind = strtol(value, NULL, 10) > 0;
                 else if (!strcmp(key, "monsterBook"))
                     ITEM_INFOS[ITEM_INFO_COUNT].monsterBook = strtol(value, NULL, 10) > 0;
+            } else if (!strcmp(name, "double")) {
+                const XML_Char *key = NULL;
+                const XML_Char *value;
+                for (size_t i = 0; attrs[i] != NULL; i += 2) {
+                    if (!strcmp(attrs[i], "name"))
+                        key = attrs[i+1];
+                    else if (!strcmp(attrs[i], "value"))
+                        value = attrs[i+1];
+                }
+
+                if (key == NULL)
+                    assert(0); // ERROR
+
+                if (!strcmp(key, "unitPrice")) {
+                    XML_Char *dup = strdup(value);
+                    if (strchr(dup, ',') != NULL)
+                        *strchr(dup, ',') = '.';
+                    ITEM_INFOS[ITEM_INFO_COUNT].unitPrice = strtod(dup, NULL);
+                    free(dup);
+                }
             }
         }
         break;

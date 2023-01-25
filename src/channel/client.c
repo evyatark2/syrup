@@ -1767,9 +1767,6 @@ bool client_remove_item(struct Client *client, uint8_t inv, uint8_t src, int16_t
         return false;
 
     *success = false;
-    if (client->shop != -1)
-        return true;
-
     if (chr->inventory[inv].items[src].isEmpty)
         return true;
 
@@ -2912,6 +2909,49 @@ struct ClientResult client_buy(struct Client *client, uint16_t pos, uint32_t id,
     return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
 }
 
+struct ClientResult client_sell(struct Client *client, uint16_t pos, uint32_t id, int16_t quantity)
+{
+    if (quantity <= 0)
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
+
+    // TODO: Check if item is sellable
+    const struct ItemInfo *info = wz_get_item_info(id);
+    if (info == NULL)
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
+
+    uint8_t inv = id / 1000000;
+    if (inv == 1) {
+        if (quantity > 1)
+            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
+
+        bool success;
+        struct Equipment equip;
+        if (!client_remove_equip(client, false, pos, &success, &equip))
+            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_ERROR };
+
+        if (!success || equip.item.itemId != id)
+            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
+
+        client_gain_meso(client, info->price, false, false);
+    } else {
+        bool success;
+        struct InventoryItem item;
+        if (!client_remove_item(client, inv, pos, quantity, &success, &item))
+            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_ERROR };
+
+        if (!success || item.item.itemId != id)
+            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
+
+        client_gain_meso(client, info->price * quantity, false, false);
+
+        uint8_t packet[SHOP_ACTION_RESPONSE_PACKET_LENGTH];
+        shop_action_response(0x8, packet);
+        session_write(client->session, SHOP_ACTION_RESPONSE_PACKET_LENGTH, packet);
+    }
+
+    return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
+}
+
 bool client_close_shop(struct Client *client)
 {
     if (client->shop == -1)
@@ -2919,6 +2959,11 @@ bool client_close_shop(struct Client *client)
 
     client->shop = -1;
     return true;
+}
+
+bool client_is_in_shop(struct Client *client)
+{
+    return client->shop != -1;
 }
 
 void client_send_ok(struct Client *client, size_t msg_len, const char *msg)

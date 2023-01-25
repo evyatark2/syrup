@@ -615,7 +615,20 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         }
         break;
 
-        case 1: // Sell
+        case 1: { // Sell
+            uint16_t position;
+            uint32_t id;
+            int16_t quantity;
+            int32_t price;
+            READ_OR_ERROR(reader_u16, &position);
+            READ_OR_ERROR(reader_u32, &id);
+            READ_OR_ERROR(reader_i16, &quantity);
+            struct ClientResult res = client_sell(client, position, id, quantity);
+            if (res.type < 0)
+                return (struct OnPacketResult) { .status = -1 };
+
+            return (struct OnPacketResult) { .status = 0, .room = -1 };
+        }
         break;
 
         case 2: // Recharge
@@ -635,6 +648,9 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
 
     case 0x0047: {
         struct Map *map = room_get_context(session_get_room(session));
+
+        if (client_is_in_shop(client))
+            return (struct OnPacketResult) { .status = 0, .room = -1 };
 
         uint8_t inventory;
         int16_t src;
