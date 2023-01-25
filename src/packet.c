@@ -431,7 +431,7 @@ void change_map_packet(struct Character *chr, uint32_t to, uint8_t portal, uint8
     writer_u64(&writer, (time.tv_sec * 1000L + time.tv_usec / 1000L) * 10000L + 116444736010800000L + now.tm_gmtoff * 1000L * 10000L); // Current time
 }
 
-size_t add_player_to_map_packet(struct Character *chr, uint8_t *packet)
+size_t add_player_to_map_packet(const struct Character *chr, uint8_t *packet)
 {
     struct Writer writer;
     writer_init(&writer, ADD_PLAYER_TO_MAP_PACKET_MAX_LENGTH, packet);
@@ -944,17 +944,12 @@ void drop_item_from_object_packet(uint32_t oid, uint32_t item_id, uint32_t owner
     writer_i16(&writer, from_y);
     writer_u16(&writer, 0); // fh?
 
-    struct timeval time;
-    gettimeofday(&time, NULL);
-    time.tv_sec += 300;
-    struct tm now;
-    localtime_r(&time.tv_sec, &now);
-    writer_u64(&writer, (time.tv_sec * 1000L + time.tv_usec / 1000L) * 10000L + 116444736010800000L + now.tm_gmtoff * 1000L * 10000L); // Current time
+    writer_u64(&writer, 150842304000000000L); // DEFAULT_TIME
 
     writer_bool(&writer, !player_drop);
 }
 
-void spawn_item_drop_packet(uint32_t oid, uint32_t item_id, uint32_t owner_id, int16_t to_x, int16_t to_y, uint32_t dropper_oid, uint8_t *packet)
+void spawn_item_drop_packet(uint32_t oid, uint32_t item_id, uint32_t owner_id, int16_t to_x, int16_t to_y, uint32_t dropper_oid, bool player_drop, uint8_t *packet)
 {
     struct Writer writer;
     writer_init(&writer, SPAWN_ITEM_DROP_PACKET_LENGTH, packet);
@@ -970,14 +965,9 @@ void spawn_item_drop_packet(uint32_t oid, uint32_t item_id, uint32_t owner_id, i
     writer_i16(&writer, to_y);
     writer_u32(&writer, dropper_oid);
 
-    struct timeval time;
-    gettimeofday(&time, NULL);
-    time.tv_sec += 300;
-    struct tm now;
-    localtime_r(&time.tv_sec, &now);
-    writer_u64(&writer, (time.tv_sec * 1000L + time.tv_usec / 1000L) * 10000L + 116444736010800000L + now.tm_gmtoff * 1000L * 10000L); // Current time
+    writer_u64(&writer, 150842304000000000L); // DEFAULT_TIME
 
-    writer_bool(&writer, true);
+    writer_bool(&writer, !player_drop);
 }
 
 void remove_drop_packet(uint32_t oid, uint8_t *packet)
@@ -1034,7 +1024,7 @@ void drop_meso_from_object_packet(uint32_t oid, int32_t meso, uint32_t owner_id,
     writer_bool(&writer, !player_drop);
 }
 
-void spawn_meso_drop_packet(uint32_t oid, int32_t meso, uint32_t owner_id, int16_t x, int16_t y, uint32_t dropper_oid, uint8_t *packet)
+void spawn_meso_drop_packet(uint32_t oid, int32_t meso, uint32_t owner_id, int16_t x, int16_t y, uint32_t dropper_oid, bool player_drop, uint8_t *packet)
 {
     struct Writer writer;
     writer_init(&writer, SPAWN_MESO_DROP_PACKET_LENGTH, packet);
@@ -1049,7 +1039,7 @@ void spawn_meso_drop_packet(uint32_t oid, int32_t meso, uint32_t owner_id, int16
     writer_i16(&writer, x);
     writer_i16(&writer, y);
     writer_u32(&writer, dropper_oid);
-    writer_bool(&writer, true);
+    writer_bool(&writer, !player_drop);
 }
 
 void meso_gain_packet(int32_t amount, uint8_t *packet)

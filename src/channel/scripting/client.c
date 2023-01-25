@@ -90,7 +90,7 @@ int luaopen_client(lua_State *L)
 static int l_client_active_npc(lua_State *L)
 {
     struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
-    lua_pushinteger(L, client->npc);
+    lua_pushinteger(L, client_get_active_npc(client));
     return 1;
 }
 
@@ -123,14 +123,14 @@ static int l_client_change_job(lua_State *L)
 static int l_client_max_hp(lua_State *L)
 {
     struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
-    lua_pushinteger(L, client->character.maxHp);
+    lua_pushinteger(L, client_get_character(client)->maxHp);
     return 1;
 }
 
 static int l_client_hp(lua_State *L)
 {
     struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
-    lua_pushinteger(L, client->character.hp);
+    lua_pushinteger(L, client_get_character(client)->hp);
     return 1;
 }
 
@@ -153,14 +153,14 @@ static int l_client_gain_hp(lua_State *L)
 static int l_client_max_mp(lua_State *L)
 {
     struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
-    lua_pushinteger(L, client->character.maxMp);
+    lua_pushinteger(L, client_get_character(client)->maxMp);
     return 1;
 }
 
 static int l_client_mp(lua_State *L)
 {
     struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
-    lua_pushinteger(L, client->character.mp);
+    lua_pushinteger(L, client_get_character(client)->mp);
     return 1;
 }
 
@@ -191,14 +191,14 @@ static int l_client_gain_mp(lua_State *L)
 static int l_client_job(lua_State *L)
 {
     struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
-    lua_pushinteger(L, client->character.job);
+    lua_pushinteger(L, client_get_character(client)->job);
     return 1;
 }
 
 static int l_client_gender(lua_State *L)
 {
     struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
-    lua_pushinteger(L, client->character.gender);
+    lua_pushinteger(L, client_get_character(client)->gender);
     return 1;
 }
 
@@ -280,14 +280,14 @@ static int l_client_is_quest_started(lua_State *L)
 static int l_client_level(lua_State *L)
 {
     struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
-    lua_pushinteger(L, client->character.level);
+    lua_pushinteger(L, client_get_character(client)->level);
     return 1;
 }
 
 static int l_client_meso(lua_State *L)
 {
     struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
-    lua_pushinteger(L, client->character.mesos);
+    lua_pushinteger(L, client_get_character(client)->mesos);
     return 1;
 }
 

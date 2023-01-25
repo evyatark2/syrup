@@ -18,7 +18,7 @@ struct MapHandle {
     struct ControllerHeapNode *node;
     size_t count;
     struct Monster **monsters;
-    struct Session *session;
+    struct Client *client;
 };
 
 struct Spawner {
@@ -304,8 +304,9 @@ void map_destroy(struct Map *map)
     free(map);
 }
 
-int map_join(struct Map *map, struct Session *session, struct MapHandleContainer *handle)
+int map_join(struct Map *map, struct Client *client, struct MapHandleContainer *handle)
 {
+    struct Session *session = client_get_session(client);
     if (map->handleCount == map->handleCapacity) {
         void *temp = realloc(map->handles, (map->handleCapacity * 2) * sizeof(struct MapHandle));
         if (temp == NULL)
@@ -352,7 +353,7 @@ int map_join(struct Map *map, struct Session *session, struct MapHandleContainer
         return -1;
     }
 
-    handle->handle->session = session;
+    handle->handle->client = client;
 
     for (size_t i = 0; i < map->monsterCount; i++) {
         struct Monster *monster = &map->monsters[i];
@@ -366,6 +367,20 @@ int map_join(struct Map *map, struct Session *session, struct MapHandleContainer
         uint8_t packet[SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH];
         spawn_monster_controller_packet(monster->oid, false, monster->id, monster->x, monster->y, monster->fh, false, packet);
         session_write(session, SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH, packet);
+    }
+
+    for (size_t i = map->dropBatchStart; i < map->dropBatchEnd; i++) {
+        for (size_t j = 0; j < map->dropBatches[i].count; j++) {
+            struct Drop *drop = &map->dropBatches[i].drops[j];
+            client_announce_spawn_drop(client, 0, 0, false, drop);
+        }
+    }
+
+    for (size_t i = 0; i < map->droppingBatchCount; i++) {
+        for (size_t j = 0; j < map->droppingBatches[i]->current; j++) {
+            struct Drop *drop = &map->droppingBatches[i]->drops[j];
+            client_announce_spawn_drop(client, 0, 0, false, drop);
+        }
     }
 
     handle->handle->container = handle;
@@ -391,7 +406,7 @@ void map_leave(struct Map *map, struct MapHandle *handle)
                 struct Monster *monster = next->controller->monsters[i];
                 uint8_t packet[SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH];
                 spawn_monster_controller_packet(monster->oid, false, monster->id, monster->x, monster->y, monster->fh, false, packet);
-                session_write(next->controller->session, SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH, packet);
+                session_write(client_get_session(next->controller->client), SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH, packet);
             }
             if (handle - map->handles != map->handleCount - 1) {
                 map->handles[handle - map->handles] = map->handles[map->handleCount - 1];
@@ -475,13 +490,13 @@ uint32_t map_damage_monster_by(struct Map *map, struct MapHandle *handle, uint32
             {
                 uint8_t packet[REMOVE_MONSTER_CONTROLLER_PACKET_LENGTH];
                 remove_monster_controller_packet(oid, packet);
-                session_write(old->session, REMOVE_MONSTER_CONTROLLER_PACKET_LENGTH, packet);
+                session_write(client_get_session(old->client), REMOVE_MONSTER_CONTROLLER_PACKET_LENGTH, packet);
             }
 
             {
                 uint8_t packet[SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH];
                 spawn_monster_controller_packet(oid, false, monster->id, monster->x, monster->y, monster->fh, false, packet);
-                session_write(handle->session, SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH, packet);
+                session_write(client_get_session(handle->client), SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH, packet);
             }
         }
 
@@ -494,7 +509,7 @@ uint32_t map_damage_monster_by(struct Map *map, struct MapHandle *handle, uint32
         {
             uint8_t packet[MONSTER_HP_PACKET_LENGTH];
             monster_hp_packet(monster->oid, monster->hp * 100 / wz_get_monster_stats(monster->id)->hp, packet);
-            session_write(handle->session, MONSTER_HP_PACKET_LENGTH, packet);
+            session_write(client_get_session(handle->client), MONSTER_HP_PACKET_LENGTH, packet);
         }
 
         if (monster->hp == 0) {
@@ -539,11 +554,15 @@ uint32_t map_damage_monster_by(struct Map *map, struct MapHandle *handle, uint32
                 }
 
                 for (size_t i = 0; i < drop_count; i++) {
-                    drops[i].pos.x = monster->x + (i - drop_count / 2) * 25;
-                    drops[i].pos.y = monster->y - 85;
-                    if (!map_calculate_drop_position(map, &drops[i].pos)) {
-                        drops->pos.x = monster->x;
-                        drops->pos.y = monster->y;
+                    drops[i].x = monster->x + (i - drop_count / 2) * 25;
+                    drops[i].y = monster->y - 85;
+                    struct Point pos = { drops[i].x, drops[i].y };
+                    if (!map_calculate_drop_position(map, &pos)) {
+                        drops[i].x = monster->x;
+                        drops[i].y = monster->y;
+                    } else {
+                        drops[i].x = pos.x;
+                        drops[i].y = pos.y;
                     }
                 }
 
@@ -616,7 +635,7 @@ uint32_t map_damage_monster_by(struct Map *map, struct MapHandle *handle, uint32
                     switch (drop->type) {
                     case DROP_TYPE_MESO: {
                         uint8_t packet[DROP_MESO_FROM_OBJECT_PACKET_LENGTH];
-                        drop_meso_from_object_packet(drop->oid, drop->meso, char_id, drop->pos.x, drop->pos.y, drop->pos.x, drop->pos.y, monster->oid, false, packet);
+                        drop_meso_from_object_packet(drop->oid, drop->meso, char_id, drop->x, drop->y, drop->x, drop->y, monster->oid, false, packet);
                         room_broadcast(map->room, DROP_MESO_FROM_OBJECT_PACKET_LENGTH, packet);
                     }
                         break;
@@ -633,7 +652,7 @@ uint32_t map_damage_monster_by(struct Map *map, struct MapHandle *handle, uint32
 
                     case DROP_TYPE_EQUIP: {
                         uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
-                        drop_item_from_object_packet(drop->oid, drop->equip.item.itemId, char_id, drop->pos.x, drop->pos.y, drop->pos.x, drop->pos.y, monster->oid, false, packet);
+                        drop_item_from_object_packet(drop->oid, drop->equip.item.itemId, char_id, drop->x, drop->y, drop->x, drop->y, monster->oid, false, packet);
                         room_broadcast(map->room, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet);
                     }
                     break;
@@ -679,7 +698,7 @@ bool map_move_monster(struct Map *map, struct MapHandle *controller, uint8_t act
     {
         uint8_t packet[MOVE_MOB_PACKET_MAX_LENGTH];
         size_t packet_len = move_monster_packet(oid, activity, len, raw_data, packet);
-        session_broadcast_to_room(monster->controller->session, packet_len, packet);
+        session_broadcast_to_room(client_get_session(monster->controller->client), packet_len, packet);
     }
 
     return true;
@@ -713,21 +732,21 @@ void map_add_player_drop(struct Map *map, uint32_t char_id, struct Drop *drop)
     switch (drop->type) {
     case DROP_TYPE_MESO: {
         uint8_t packet[DROP_MESO_FROM_OBJECT_PACKET_LENGTH];
-        drop_meso_from_object_packet(drop->oid, drop->meso, char_id, drop->pos.x, drop->pos.y, drop->pos.x, drop->pos.y, char_id, true, packet);
+        drop_meso_from_object_packet(drop->oid, drop->meso, char_id, drop->x, drop->y, drop->x, drop->y, char_id, true, packet);
         room_broadcast(map->room, DROP_MESO_FROM_OBJECT_PACKET_LENGTH, packet);
     }
     break;
 
     case DROP_TYPE_ITEM: {
         uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
-        drop_item_from_object_packet(drop->oid, drop->item.item.itemId, char_id, drop->pos.x, drop->pos.y, drop->pos.x, drop->pos.y, char_id, true, packet);
+        drop_item_from_object_packet(drop->oid, drop->item.item.itemId, char_id, drop->x, drop->y, drop->x, drop->y, char_id, true, packet);
         room_broadcast(map->room, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet);
     }
     break;
 
     case DROP_TYPE_EQUIP: {
         uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
-        drop_item_from_object_packet(drop->oid, drop->equip.item.itemId, char_id, drop->pos.x, drop->pos.y, drop->pos.x, drop->pos.y, char_id, true, packet);
+        drop_item_from_object_packet(drop->oid, drop->equip.item.itemId, char_id, drop->x, drop->y, drop->x, drop->y, char_id, true, packet);
         room_broadcast(map->room, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet);
     }
     break;
@@ -1009,7 +1028,7 @@ static void on_respawn(struct Room *room, struct TimerHandle *handle)
     for (size_t i = map->monsterCount - map->deadCount; i < map->monsterCount; i++) {
         uint8_t packet[SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH];
         spawn_monster_controller_packet(map->monsters[i].oid, false, map->monsters[i].id, map->monsters[i].x, map->monsters[i].y, map->monsters[i].fh, true, packet);
-        session_write(next->controller->session, SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH, packet);
+        session_write(client_get_session(next->controller->client), SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH, packet);
     }
 
     map->deadCount = 0;

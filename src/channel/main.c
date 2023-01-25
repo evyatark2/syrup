@@ -13,12 +13,11 @@
 #include "drops.h"
 #include "server.h"
 #include "shop.h"
-#include "handlers.h"
 #include "../constants.h"
 #include "../reader.h"
 #include "../hash-map.h"
 #include "map.h"
-#include "scripting/script-manager.h"
+#include "../packet.h"
 
 #define ACCOUNT_MAX_NAME_LENGTH 12
 #define ACCOUNT_MAX_PASSWORD_LENGTH 12
@@ -36,21 +35,17 @@ static void *create_context();
 static void destroy_context(void *ctx);
 static int on_client_connect(struct Session *session, void *global_ctx, void *thread_ctx, struct sockaddr *addr);
 static void on_client_disconnect(struct Session *session);
-static struct OnResumeResult on_resume_client_disconnect(struct Session *session, int fd, int status);
 static bool on_client_join(struct Session *session, void *thread_ctx);
 static struct OnPacketResult on_client_packet(struct Session *session, size_t size, uint8_t *packet);
 static struct OnPacketResult on_unassigned_client_packet(struct Session *session, size_t size, uint8_t *packet);
-static struct OnResumeResult on_resume_client_packet(struct Session *session, int fd, int status);
+static struct OnResumeResult on_client_resume(struct Session *session, int fd, int status);
 static int on_room_create(struct Room *room, void *thread_ctx);
 static void on_room_destroy(struct Room *room);
-
-static struct OnResumeResult on_database_lock_ready(struct Session *session, int fd, int status);
 
 static void on_sigint(int sig);
 
 static void notify_player_on_map(struct Session *src, struct Session *dst, void *ctx);
 static void notify_npc_on_map(struct Npc *npc, void *ctx);
-static void notify_drop_on_map(struct Drop *drop, void *ctx);
 
 struct ChannelServer *SERVER;
 
@@ -217,6 +212,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         return (struct OnPacketResult) { .status = -1 };
 
     struct Client *client = session_get_context(session);
+    const struct Character *chr = client_get_character(client);
     uint16_t opcode;
     memcpy(&opcode, packet, sizeof(uint16_t));
 
@@ -239,19 +235,19 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         READ_OR_ERROR(reader_sized_string, &len, portal);
         SKIP(1);
         READER_END();
-        if (client->character.hp > 0) {
+        if (chr->hp > 0) {
             portal[len] = '\0';
-            uint32_t target_map = wz_get_target_map(client->character.map, portal);
+            uint32_t target_map = wz_get_target_map(chr->map, portal);
             if (target_map == -1)
                 return (struct OnPacketResult) { .status = 0, .room = -1 };
-            uint8_t target_portal = wz_get_target_portal(client->character.map, portal);
+            uint8_t target_portal = wz_get_target_portal(chr->map, portal);
             if (target_portal == (uint8_t)-1)
                 return (struct OnPacketResult) { .status = 0, .room = -1 };
             client_warp(client, target_map, target_portal);
 
             return (struct OnPacketResult) { .status = 0, .room = target_map };
         } else {
-            uint32_t id = wz_get_map_nearest_town(client->character.map);
+            uint32_t id = wz_get_map_nearest_town(chr->map);
             const struct PortalInfo *portal = wz_get_portal_info_by_name(id, "sp");
 
             client_warp(client, id, portal->id);
@@ -264,7 +260,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
     break;
 
     case 0x0029: {
-        if (client->map.handle == NULL)
+        if (client_get_map(client)->handle == NULL)
             return (struct OnPacketResult) { .status = 0, .room = -1 };
 
         size_t len = 1;
@@ -279,15 +275,21 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             switch (command) {
             case 0:
             case 5:
-            case 17:
+            case 17: {
+                int16_t x;
+                int16_t y;
+                uint16_t fh;
+                uint8_t stance;
                 //SKIP(13);
-                READ_OR_ERROR(reader_i16, &client->character.x);
-                READ_OR_ERROR(reader_i16, &client->character.y);
+                READ_OR_ERROR(reader_i16, &x);
+                READ_OR_ERROR(reader_i16, &y);
                 SKIP(4); // x y wobble
-                READ_OR_ERROR(reader_u16, &client->character.fh);
-                READ_OR_ERROR(reader_u8, &client->character.stance);
+                READ_OR_ERROR(reader_u16, &fh);
+                READ_OR_ERROR(reader_u8, &stance);
                 SKIP(2); // duration
                 len += 13;
+                client_update_player_pos(client, x, y, fh, stance);
+            }
             break;
 
             case 1:
@@ -299,11 +301,14 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             case 18:
             case 19:
             case 20:
-            case 22:
+            case 22: {
+                uint8_t stance;
                 SKIP(4); // Relative movement
-                READ_OR_ERROR(reader_u8, &client->character.stance);
+                READ_OR_ERROR(reader_u8, &stance);
                 SKIP(2); // duration
+                client_update_player_pos(client, chr->x, chr->y, chr->fh, stance);
                 len += 7;
+            }
             break;
 
             case 3:
@@ -311,10 +316,13 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             case 7:
             case 8:
             case 9:
-            case 11:
+            case 11: {
+                uint8_t stance;
                 SKIP(8); // Relative movement, with wobble
-                READ_OR_ERROR(reader_u8, &client->character.stance);
+                READ_OR_ERROR(reader_u8, &stance);
+                client_update_player_pos(client, chr->x, chr->y, chr->fh, stance);
                 len += 9;
+            }
             break;
 
             case 10: // Change equip
@@ -327,11 +335,14 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
                 len += 9;
             break;
 
-            case 15:
+            case 15: {
+                uint8_t stance;
                 SKIP(12); // x, y, and wobbles, fh, origin fh
-                READ_OR_ERROR(reader_u8, &client->character.stance);
+                READ_OR_ERROR(reader_u8, &stance);
                 SKIP(2); // duration
+                client_update_player_pos(client, chr->x, chr->y, chr->fh, stance);
                 len += 15;
+            }
             break;
 
             //case 21:
@@ -342,8 +353,12 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         }
         SKIP(18);
         READER_END();
-        struct MovePlayerResult res = handle_move_player(client, len, packet + 9);
-        session_broadcast_to_room(session, res.size, res.packet);
+
+        {
+            uint8_t out[MOVE_PLAYER_PACKET_MAX_LENGTH];
+            size_t out_len = move_player_packet(chr->id, len, packet + 9, out);
+            session_broadcast_to_room(session, out_len, out);
+        }
     }
     break;
 
@@ -386,12 +401,12 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
 
         {
             uint8_t packet[CLOSE_RANGE_ATTACK_PACKET_MAX_LENGTH];
-            size_t len = close_range_attack_packet(client->character.id, skill, 0, monster_count, hit_count, oids, damage, display, direction, stance, speed, packet);
+            size_t len = close_range_attack_packet(chr->id, skill, 0, monster_count, hit_count, oids, damage, display, direction, stance, speed, packet);
             session_broadcast_to_room(session, len, packet);
         }
 
         for (uint8_t i = 0; i < monster_count; i++) {
-            uint32_t killed = map_damage_monster_by(map, client->map.handle, client->character.id, oids[i], hit_count, damage + i * hit_count);
+            uint32_t killed = map_damage_monster_by(map, client_get_map(client)->handle, chr->id, oids[i], hit_count, damage + i * hit_count);
             if (killed != -1)
                 client_kill_monster(client, killed);
         }
@@ -439,16 +454,16 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         READER_END();
 
         bool success;
-        client_remove_item(client, 2, client->character.activeProjectile + 1, 1, &success, NULL);
+        client_remove_item(client, 2, chr->activeProjectile + 1, 1, &success, NULL);
 
         {
             uint8_t packet[RANGED_ATTACK_PACKET_MAX_LENGTH];
-            size_t len = ranged_attack_packet(client->character.id, skill, 0, monster_count, hit_count, oids, damage, display, direction, stance, speed, client->character.inventory[0].items[client->character.activeProjectile].item.item.itemId, packet);
+            size_t len = ranged_attack_packet(chr->id, skill, 0, monster_count, hit_count, oids, damage, display, direction, stance, speed, chr->inventory[0].items[chr->activeProjectile].item.item.itemId, packet);
             session_broadcast_to_room(session, len, packet);
         }
 
         for (uint8_t i = 0; i < monster_count; i++) {
-            uint32_t killed = map_damage_monster_by(map, client->map.handle, client->character.id, oids[i], hit_count, damage + i * hit_count);
+            uint32_t killed = map_damage_monster_by(map, client_get_map(client)->handle, chr->id, oids[i], hit_count, damage + i * hit_count);
             if (killed != -1)
                 client_kill_monster(client, killed);
         }
@@ -479,7 +494,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             if (map_monster_is_alive(map, monster_id, oid)) {
                 client_adjust_hp(client, -damage);
                 uint8_t packet[DAMAGE_PLAYER_PACKET_MAX_LENGTH];
-                size_t len = damange_player_packet(skill, monster_id, client->character.id, damage, 0, direction, packet);
+                size_t len = damange_player_packet(skill, monster_id, chr->id, damage, 0, direction, packet);
                 session_broadcast_to_room(session, len, packet);
             }
         }
@@ -498,7 +513,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
 
         if (string[0] != '/') {
             uint8_t packet[CHAT_PACKET_MAX_LENGTH];
-            size_t len = chat_packet(client->character.id, false, str_len, string, show, packet);
+            size_t len = chat_packet(chr->id, false, str_len, string, show, packet);
             room_broadcast(session_get_room(session), len, packet);
         }
     }
@@ -513,8 +528,8 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         // TODO: Check emote legality
         {
             uint8_t packet[FACE_EXPRESSION_PACKET_LENGTH];
-            face_expression_packet(client->character.id, emote, packet);
-            session_broadcast_to_room(client->session, FACE_EXPRESSION_PACKET_LENGTH, packet);
+            face_expression_packet(chr->id, emote, packet);
+            session_broadcast_to_room(session, FACE_EXPRESSION_PACKET_LENGTH, packet);
         }
     }
     break;
@@ -550,7 +565,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         READER_BEGIN(size, packet);
         READ_OR_ERROR(reader_u8, &last);
         READ_OR_ERROR(reader_u8, &action);
-        if (client->scriptState == SCRIPT_STATE_SIMPLE) {
+        if (last == NPC_DIALOGUE_TYPE_SIMPLE) {
             if (READER_AVAILABLE() >= 4) {
                 READ_OR_ERROR(reader_u32, &selection);
             } else if (READER_AVAILABLE() > 0) {
@@ -561,20 +576,19 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         }
 
         READER_END();
-        if (client->script != NULL) {
-            uint32_t action_u32 = client->scriptState == SCRIPT_STATE_SIMPLE ?
-                selection :
-                (action == (uint8_t)-1 ? -1 : action);
-            struct ClientResult res = client_script_cont(client, action_u32);
-            switch (res.type) {
-            case CLIENT_RESULT_TYPE_BAN:
-            case CLIENT_RESULT_TYPE_ERROR:
-                return (struct OnPacketResult) { .status = -1 };
-            case CLIENT_RESULT_TYPE_SUCCESS:
-                return (struct OnPacketResult) { .status = 0, .room = -1 };
-            case CLIENT_RESULT_TYPE_WARP:
-                return (struct OnPacketResult) { .status = 0, .room = res.map };
-            }
+
+        uint32_t action_u32 = last == NPC_DIALOGUE_TYPE_SIMPLE ?
+            selection :
+            (action == (uint8_t)-1 ? -1 : action);
+        struct ClientResult res = client_script_cont(client, action_u32);
+        switch (res.type) {
+        case CLIENT_RESULT_TYPE_BAN:
+        case CLIENT_RESULT_TYPE_ERROR:
+            return (struct OnPacketResult) { .status = -1 };
+        case CLIENT_RESULT_TYPE_SUCCESS:
+            return (struct OnPacketResult) { .status = 0, .room = -1 };
+        case CLIENT_RESULT_TYPE_WARP:
+            return (struct OnPacketResult) { .status = 0, .room = res.map };
         }
     }
     break;
@@ -640,8 +654,8 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
 
             struct Drop drop;
 
-            drop.pos.x = client->character.x;
-            drop.pos.y = client->character.y;
+            drop.x = chr->x;
+            drop.y = chr->y;
             if (inventory != 1) {
                 drop.type = DROP_TYPE_ITEM;
                 bool success;
@@ -672,7 +686,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
                 }
             }
 
-            map_add_player_drop(map, client->character.id, &drop);
+            map_add_player_drop(map, chr->id, &drop);
         } else {
             if (quantity != -1)
                 return (struct OnPacketResult) { .status = -1 };
@@ -757,25 +771,22 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         if (amount < 10 || amount > 50000)
             return (struct OnPacketResult) { .status = -1 };
 
-        if (client->character.mesos < amount)
+        if (chr->mesos < amount)
             return (struct OnPacketResult) { .status = 0, .room = -1 };
 
         client_gain_meso(client, -amount, false, false);
 
         struct Drop drop = {
             .type = DROP_TYPE_MESO,
-            .pos.x = client->character.x,
-            .pos.y = client->character.y,
+            .x = chr->x,
+            .y = chr->y,
             .meso = amount
         };
-        map_add_player_drop(room_get_context(session_get_room(session)), client->character.id, &drop);
+        map_add_player_drop(room_get_context(session_get_room(session)), chr->id, &drop);
     }
     break;
 
     case 0x0064: {
-        if (client->script != NULL)
-            return (struct OnPacketResult) { .status = 0, .room = -1 };
-
         uint16_t len = 17;
         char str[17];
         READER_BEGIN(size, packet);
@@ -785,7 +796,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         READER_END();
 
         str[len] = '\0';
-        const struct PortalInfo *info = wz_get_portal_info_by_name(client->character.map, str);
+        const struct PortalInfo *info = wz_get_portal_info_by_name(chr->map, str);
         if (info == NULL)
             return (struct OnPacketResult) { .status = -1 };
         struct ClientResult res = client_portal_script(client, info->script);
@@ -909,7 +920,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
     break;
 
     case 0x00BC: {
-        if (client->map.handle == NULL)
+        if (client_get_map(client)->handle == NULL)
             return (struct OnPacketResult) { .status = 0, .room = -1 };
 
         struct Map *map = room_get_context(session_get_room(session));
@@ -989,7 +1000,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         }
         SKIP(9);
 
-        if (map_move_monster(map, client->map.handle, activity, oid, x, y, fh, stance, len, packet + 25)) {
+        if (map_move_monster(map, client_get_map(client)->handle, activity, oid, x, y, fh, stance, len, packet + 25)) {
             uint8_t send[MOVE_MOB_RESPONSE_PACKET_LENGTH];
             move_monster_response_packet(oid, moveid, send);
             session_write(session, MOVE_MOB_RESPONSE_PACKET_LENGTH, send);
@@ -1001,7 +1012,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
     break;
 
     case 0x00C5: {
-        if (client->map.handle == NULL)
+        if (client_get_map(client)->handle == NULL)
             return (struct OnPacketResult) { .status = 0, .room = -1 };
 
         READER_BEGIN(size, packet);
@@ -1050,14 +1061,14 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             switch (drop->type) {
             case DROP_TYPE_MESO:
                 client_gain_meso(client, drop->meso, true, false);
-                map_remove_drop(room_get_context(session_get_room(session)), client->character.id, oid);
+                map_remove_drop(room_get_context(session_get_room(session)), chr->id, oid);
                 return (struct OnPacketResult) { .status = 0, .room = -1 };
             break;
 
             case DROP_TYPE_ITEM:
                 if (drop->item.item.itemId / 1000000 == 2 && wz_get_consumable_info(drop->item.item.itemId)->consumeOnPickup) {
                     client_use_item_immediate(client, drop->item.item.itemId);
-                    map_remove_drop(room_get_context(session_get_room(session)), client->character.id, oid);
+                    map_remove_drop(room_get_context(session_get_room(session)), chr->id, oid);
                     return (struct OnPacketResult) { .status = 0, .room = -1 };
                 } else if (!client_gain_inventory_item(client, &drop->item, &success)) {
                     return (struct OnPacketResult) { .status = -1 };
@@ -1075,7 +1086,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             }
 
             if (success) {
-                map_remove_drop(room_get_context(session_get_room(session)), client->character.id, oid);
+                map_remove_drop(room_get_context(session_get_room(session)), chr->id, oid);
 
                 {
                     uint8_t packet[ITEM_GAIN_PACKET_LENGTH];
@@ -1112,26 +1123,24 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         session_enable_write(session);
 
         uint8_t packet[ADD_PLAYER_TO_MAP_PACKET_MAX_LENGTH];
-        size_t len = add_player_to_map_packet(&client->character, packet);
+        size_t len = add_player_to_map_packet(chr, packet);
         session_broadcast_to_room(session, len, packet);
 
-        map_join(map, session, &client->map);
+        map_join(map, client, client_get_map(client));
         session_foreach_in_room(session, notify_player_on_map, NULL);
         session_write(session, 2, (uint8_t[]) { 0x23, 0x00 }); // Force stat reset
         map_for_each_npc(map, notify_npc_on_map, session);
-        map_for_each_drop(map, notify_drop_on_map, session);
-        if (client->script != NULL) {
-            struct ClientResult res = client_script_cont(client, 0);
-            switch (res.type) {
-            case CLIENT_RESULT_TYPE_BAN:
-            case CLIENT_RESULT_TYPE_ERROR:
-                return (struct OnPacketResult) { .status = -1 };
-            case CLIENT_RESULT_TYPE_SUCCESS:
-                return (struct OnPacketResult) { .status = 0, .room = -1 };
-            case CLIENT_RESULT_TYPE_WARP:
-                return (struct OnPacketResult) { .status = 0, .room = res.map };
-            break;
-            }
+
+        struct ClientResult res = client_script_cont(client, 0);
+        switch (res.type) {
+        case CLIENT_RESULT_TYPE_BAN:
+        case CLIENT_RESULT_TYPE_ERROR:
+            return (struct OnPacketResult) { .status = -1 };
+        case CLIENT_RESULT_TYPE_SUCCESS:
+            return (struct OnPacketResult) { .status = 0, .room = -1 };
+        case CLIENT_RESULT_TYPE_WARP:
+            return (struct OnPacketResult) { .status = 0, .room = res.map };
+        break;
         }
     }
     break;
@@ -1151,6 +1160,7 @@ static struct OnPacketResult on_unassigned_client_packet(struct Session *session
         return (struct OnPacketResult) { .status = -1 };
 
     struct Client *client = session_get_context(session);
+    const struct Character *chr = client_get_character(client);
     uint16_t opcode;
     memcpy(&opcode, packet, sizeof(uint16_t));
 
@@ -1166,149 +1176,59 @@ static struct OnPacketResult on_unassigned_client_packet(struct Session *session
     if (!session_assign_token(session, token, &id))
         return (struct OnPacketResult) { .status = -1 };
 
-    client->handlerType = PACKET_TYPE_LOGIN;
-    client->handler = login_handler_create(client, id);
-    if (client->handler == NULL)
-        return (struct OnPacketResult) { .status = -1 };
+    client_login_start(client, id);
+    struct ClientContResult res = client_cont(client, 0);
 
-    int fd = database_connection_lock(client->conn);
-    if (fd == -2) {
-        struct LoginHandlerResult res = login_handler_handle(client->handler, 0);
-        if (res.status > 0) {
-            session_set_event(session, res.status, database_connection_get_fd(client->conn), on_resume_client_packet);
-            return (struct OnPacketResult) { .status = res.status };
-        } else {
-            database_connection_unlock(client->conn);
-            login_handler_destroy(client->handler);
-            if (res.status < 0)
-                return (struct OnPacketResult) { .status = -1 };
+    if (res.status > 0)
+        session_set_event(session, res.status, res.fd, on_client_resume);
 
-            return (struct OnPacketResult) { .status = 0, .room = client->character.map };
-        }
-    } else if (fd == -1) {
-        return (struct OnPacketResult) { .status = -1 };
-    } else {
-            session_set_event(session, POLLIN, fd, on_database_lock_ready);
-        return (struct OnPacketResult) { .status = POLLIN };
-    }
+    return (struct OnPacketResult) { .status = res.status, .room = chr->map };
 }
 
-static struct OnResumeResult on_resume_client_packet(struct Session *session, int fd, int status)
+static struct OnResumeResult on_client_resume(struct Session *session, int fd, int status)
 {
     struct Client *client = session_get_context(session);
-    switch (client->handlerType) {
-    case PACKET_TYPE_LOGIN: {
-        struct LoginHandlerResult res = login_handler_handle(client->handler, status);
-        if (res.status > 0) {
-            if (res.status != session_get_event_disposition(session)) {
-                session_set_event(session, res.status, -1, on_resume_client_packet);
-            }
-            return (struct OnResumeResult) { .status = res.status };
-        } else if (res.status < 0) {
-            database_connection_unlock(client->conn);
-            login_handler_destroy(client->handler);
-            return (struct OnResumeResult) { .status = res.status };
-        }
 
-        database_connection_unlock(client->conn);
-        login_handler_destroy(client->handler);
+    struct ClientContResult res = client_cont(client, status);
+    if (res.status > 0 && (res.fd != session_get_event_fd(session) || res.status != session_get_event_disposition(session)))
+        session_set_event(session, res.status, res.fd, on_client_resume);
 
-        return (struct OnResumeResult) { .status = 0, .room = client->character.map };
-    }
-    break;
-
-    default:
-        assert(0);
-    }
-
-    return (struct OnResumeResult) { .status = 0, .room = -1 };
+    return (struct OnResumeResult) { .status = res.status, .room = res.map };
 }
 
 static void on_client_disconnect(struct Session *session)
 {
     struct Client *client = session_get_context(session);
+    const struct Character *chr = client_get_character(client);
     if (session_get_room(session) != NULL) {
-        struct Map *map = room_get_context(session_get_room(session));
-        script_manager_free(client->script);
-
         uint8_t packet[REMOVE_PLAYER_FROM_MAP_PACKET_LENGTH];
-        remove_player_from_map_packet(client->character.id, packet);
+        remove_player_from_map_packet(chr->id, packet);
         session_broadcast_to_room(session, REMOVE_PLAYER_FROM_MAP_PACKET_LENGTH, packet);
-
-        map_leave(map, client->map.handle);
-
-        client->handlerType = PACKET_TYPE_LOGOUT;
-        client->handler = logout_handler_create(client);
-        if (client->handler == NULL) {
-            hash_set_u32_destroy(client->character.monsterBook);
-            hash_set_u32_destroy(client->character.skills);
-            hash_set_u16_destroy(client->character.quests);
-            hash_set_u32_destroy(client->character.monsterQuests);
-            hash_set_u16_destroy(client->character.completedQuests);
-            free(client);
-            return;
-        }
-
-        int fd = database_connection_lock(client->conn);
-        if (fd == -2) {
-            int status = logout_handler_handle(client->handler, 0);
-            if (status > 0) {
-                session_set_event(session, status, database_connection_get_fd(client->conn), on_resume_client_disconnect);
-                return;
-            } else {
-                database_connection_unlock(client->conn);
-                logout_handler_destroy(client->handler);
-            }
-        } else if (fd == -1) {
-            logout_handler_destroy(client->handler);
-        } else {
-            session_set_event(session, POLLIN, fd, on_database_lock_ready);
-            return;
-        }
     }
 
-    hash_set_u32_destroy(client->character.monsterBook);
-    hash_set_u32_destroy(client->character.skills);
-    hash_set_u16_destroy(client->character.quests);
-    hash_set_u32_destroy(client->character.monsterQuests);
-    hash_set_u16_destroy(client->character.completedQuests);
-    free(client);
-}
-
-static struct OnResumeResult on_resume_client_disconnect(struct Session *session, int fd, int status)
-{
-    struct Client *client = session_get_context(session);
-    status = logout_handler_handle(client->handler, status);
-    if (status > 0)
-        return (struct OnResumeResult) { .status = status };
-
-    database_connection_unlock(client->conn);
-    logout_handler_destroy(client->handler);
-    hash_set_u32_destroy(client->character.monsterBook);
-    hash_set_u32_destroy(client->character.skills);
-    hash_set_u16_destroy(client->character.quests);
-    hash_set_u32_destroy(client->character.monsterQuests);
-    hash_set_u16_destroy(client->character.completedQuests);
-    free(client);
-    return (struct OnResumeResult) { .status = 0 };
+    client_logout_start(client);
+    struct ClientContResult res = client_cont(client, 0);
+    if (res.status > 0) {
+        session_set_event(session, res.status, res.fd, on_client_resume);
+        return;
+    }
 }
 
 static bool on_client_join(struct Session *session, void *thread_ctx)
 {
     struct Client *client = session_get_context(session);
+    const struct Character *chr = client_get_character(client);
 
-    client->conn = thread_ctx;
+    client_update_conn(client, thread_ctx);
     //session_write(session, 3, (uint8_t[]) { 0xDE, 0x00, 0x00 }); // Disable UI
     //session_write(session, 3, (uint8_t[]) { 0xDD, 0x00, 0x00 }); // Lock UI
     //session_write(session, 2, (uint8_t[]) { 0x23, 0x00 }); // Force stat reset
-    const struct PortalInfo *info = wz_get_portal_info(client->character.map, client->character.spawnPoint);
-    client->character.x = info->x;
-    client->character.y = info->y;
-    client->character.stance = 6;
-    client->character.fh = 0;
+    const struct PortalInfo *info = wz_get_portal_info(chr->map, chr->spawnPoint);
+    client_update_player_pos(client, info->x, info->y, 0, 6);
+
     {
         uint8_t packet[ADD_PLAYER_TO_MAP_PACKET_MAX_LENGTH];
-        size_t len = add_player_to_map_packet(&client->character, packet);
+        size_t len = add_player_to_map_packet(client_get_character(client), packet);
         session_broadcast_to_room(session, len, packet);
     }
     return true;
@@ -1330,46 +1250,6 @@ static void on_room_destroy(struct Room *room)
     map_destroy(room_get_context(room));
 }
 
-static struct OnResumeResult on_database_lock_ready(struct Session *session, int fd, int status)
-{
-    struct Client *client = session_get_context(session);
-    close(fd);
-    switch (client->handlerType) {
-    case PACKET_TYPE_LOGIN: {
-        struct LoginHandlerResult res = login_handler_handle(client->handler, 0);
-        if (res.status > 0) {
-            session_set_event(session, res.status, database_connection_get_fd(client->conn), on_resume_client_packet);
-            return (struct OnResumeResult) { .status = res.status };
-        }
-
-        database_connection_unlock(client->conn);
-        login_handler_destroy(client->handler);
-
-        return (struct OnResumeResult) { .status = res.status, .room = client->character.map };
-    }
-    break;
-
-    case PACKET_TYPE_LOGOUT: {
-        int status = logout_handler_handle(client->handler, 0);
-        if (status > 0) {
-            session_set_event(session, status, database_connection_get_fd(client->conn), on_resume_client_disconnect);
-            return (struct OnResumeResult) { .status = status };
-        }
-
-        database_connection_unlock(client->conn);
-        logout_handler_destroy(client->handler);
-        hash_set_u32_destroy(client->character.monsterBook);
-        hash_set_u32_destroy(client->character.skills);
-        hash_set_u16_destroy(client->character.quests);
-        hash_set_u32_destroy(client->character.monsterQuests);
-        hash_set_u16_destroy(client->character.completedQuests);
-        free(client);
-        return (struct OnResumeResult) { .status = status };
-    }
-    break;
-    }
-}
-
 static void on_sigint(int sig)
 {
     channel_server_stop(SERVER);
@@ -1380,7 +1260,7 @@ static void notify_player_on_map(struct Session *src, struct Session *dst, void 
 {
     struct Client *c = session_get_context(dst);
     uint8_t packet[ADD_PLAYER_TO_MAP_PACKET_MAX_LENGTH];
-    size_t len = add_player_to_map_packet(&c->character, packet);
+    size_t len = add_player_to_map_packet(client_get_character(c), packet);
     session_write(src, len, packet);
 }
 
@@ -1395,30 +1275,6 @@ static void notify_npc_on_map(struct Npc *npc, void *ctx)
         uint8_t packet[SPAWN_NPC_CONTROLLER_PACKET_LENGTH];
         spawn_npc_controller_packet(npc->oid, npc->id, npc->x, npc->cy, npc->f == 1, npc->fh, npc->rx0, npc->rx1, packet);
         session_write(ctx, SPAWN_NPC_CONTROLLER_PACKET_LENGTH, packet);
-    }
-}
-
-static void notify_drop_on_map(struct Drop *drop, void *ctx)
-{
-    switch (drop->type) {
-    case DROP_TYPE_MESO: {
-        uint8_t packet[SPAWN_MESO_DROP_PACKET_LENGTH];
-        spawn_meso_drop_packet(drop->oid, drop->meso, 0, drop->pos.x, drop->pos.y, 0, packet);
-        session_write(ctx, SPAWN_MESO_DROP_PACKET_LENGTH, packet);
-    }
-    break;
-    case DROP_TYPE_ITEM: {
-        uint8_t packet[SPAWN_ITEM_DROP_PACKET_LENGTH];
-        spawn_item_drop_packet(drop->oid, drop->item.item.itemId, 0, drop->pos.x, drop->pos.y, 0, packet);
-        session_write(ctx, SPAWN_ITEM_DROP_PACKET_LENGTH, packet);
-    }
-    break;
-    case DROP_TYPE_EQUIP: {
-        uint8_t packet[SPAWN_ITEM_DROP_PACKET_LENGTH];
-        spawn_item_drop_packet(drop->oid, drop->equip.item.itemId, 0, drop->pos.x, drop->pos.y, 0, packet);
-        session_write(ctx, SPAWN_ITEM_DROP_PACKET_LENGTH, packet);
-    }
-    break;
     }
 }
 

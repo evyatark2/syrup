@@ -634,6 +634,11 @@ int session_get_event_disposition(struct Session *session)
     return libevent_to_poll(event_get_events(session->userEvent));
 }
 
+int session_get_event_fd(struct Session *session)
+{
+    return event_get_fd(session->userEvent);
+}
+
 int session_set_event(struct Session *session, int status, int fd, OnResume *on_resume)
 {
     struct Worker *worker = session->supervisor;
@@ -1377,24 +1382,25 @@ static void on_session_read(struct bufferevent *event, void *ctx)
         uint8_t data[len];
         evbuffer_remove(input, data, len);
         struct OnPacketResult res = manager->worker.onClientPacket(session, len, data);
-        if (res.status > 0) {
-        } else if (res.status < 0) {
-            kick_session(session, true);
-            break;
-        } else if (res.room != -1) {
-            session->targetRoom = res.room;
-            if (evbuffer_get_length(bufferevent_get_output(session->event)) != 0) {
-                bufferevent_setcb(session->event, NULL, on_session_write, on_session_event, session);
-            } else {
-                void *temp = bufferevent_get_underlying(session->event);
-                bufferevent_free(session->event);
-                session->event = temp;
-                if (evbuffer_get_length(bufferevent_get_output(session->event)) != 0)
+        if (res.status <= 0) {
+            if (res.status < 0) {
+                kick_session(session, true);
+                break;
+            } else if (res.room != -1) {
+                session->targetRoom = res.room;
+                if (evbuffer_get_length(bufferevent_get_output(session->event)) != 0) {
                     bufferevent_setcb(session->event, NULL, on_session_write, on_session_event, session);
-                else
-                    do_transfer(session);
+                } else {
+                    void *temp = bufferevent_get_underlying(session->event);
+                    bufferevent_free(session->event);
+                    session->event = temp;
+                    if (evbuffer_get_length(bufferevent_get_output(session->event)) != 0)
+                        bufferevent_setcb(session->event, NULL, on_session_write, on_session_event, session);
+                    else
+                        do_transfer(session);
+                }
+                break;
             }
-            break;
         }
     }
 }
@@ -1411,21 +1417,22 @@ static void on_pending_session_read(struct bufferevent *event, void *ctx)
     uint8_t data[len];
     evbuffer_remove(input, data, len);
     struct OnPacketResult res = server->worker.onClientPacket(session, len, data);
-    if (res.status > 0) {
-    } else if (res.status < 0) {
-        kick_pending_session(session, false);
-    } else if (res.room != -1) {
-        session->targetRoom = res.room;
-        if (evbuffer_get_length(bufferevent_get_output(session->event)) != 0) {
-            bufferevent_setcb(session->event, NULL, on_pending_session_write, on_pending_session_event, session);
-        } else {
-            void *temp = bufferevent_get_underlying(session->event);
-            bufferevent_free(session->event);
-            session->event = temp;
-            if (evbuffer_get_length(bufferevent_get_output(session->event)) != 0)
-                bufferevent_setcb(session->event, NULL, on_session_write, on_session_event, session);
-            else
-                do_pending_assign(session);
+    if (res.status <= 0) {
+        if (res.status < 0) {
+            kick_pending_session(session, false);
+        } else if (res.room != -1) {
+            session->targetRoom = res.room;
+            if (evbuffer_get_length(bufferevent_get_output(session->event)) != 0) {
+                bufferevent_setcb(session->event, NULL, on_pending_session_write, on_pending_session_event, session);
+            } else {
+                void *temp = bufferevent_get_underlying(session->event);
+                bufferevent_free(session->event);
+                session->event = temp;
+                if (evbuffer_get_length(bufferevent_get_output(session->event)) != 0)
+                    bufferevent_setcb(session->event, NULL, on_session_write, on_session_event, session);
+                else
+                    do_pending_assign(session);
+            }
         }
     }
 }

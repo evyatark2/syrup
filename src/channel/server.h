@@ -77,6 +77,7 @@ int session_write(struct Session *session, size_t len, uint8_t *packet);
 void session_set_context(struct Session *session, void *ctx);
 void *session_get_context(struct Session *session);
 int session_get_event_disposition(struct Session *session);
+int session_get_event_fd(struct Session *session);
 int session_set_event(struct Session *session, int status, int fd, OnResume *on_resume);
 struct Room *session_get_room(struct Session *session);
 void session_broadcast_to_room(struct Session *session, size_t len, uint8_t *packet);

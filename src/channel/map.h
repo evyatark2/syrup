@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 
+#include "client.h"
 #include "server.h" // This is temporary for map_join, I should find a better way to do this
 #include "../item.h"
 #include "../wz.h"
@@ -22,26 +23,6 @@ struct Npc {
 struct MapHandle;
 struct MapHandleContainer {
     struct MapHandle *handle;
-};
-
-enum DropType {
-    DROP_TYPE_MESO,
-    DROP_TYPE_ITEM,
-    DROP_TYPE_EQUIP
-};
-
-struct Drop {
-    uint32_t oid;
-    enum DropType type;
-    struct Point pos;
-    union {
-        int32_t meso;
-        struct {
-            uint16_t qid;
-            struct InventoryItem item;
-        };
-        struct Equipment equip;
-    };
 };
 
 struct DropBatch;
@@ -68,12 +49,12 @@ void map_destroy(struct Map *map);
  * Insert a new player to a map
  *
  * \param map The map to insert into
- * \param session The player to be inserted
+ * \param client The player to be inserted
  * \param[out] handle A handle that respresents the player in the map
  *
  * \return 0 if successful; -1 if an error occurred
  */
-int map_join(struct Map *map, struct Session *session, struct MapHandleContainer *handle);
+int map_join(struct Map *map, struct Client *client, struct MapHandleContainer *handle);
 
 /**
  * Remove a player from a map

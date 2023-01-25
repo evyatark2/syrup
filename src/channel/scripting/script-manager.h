@@ -1,3 +1,6 @@
+#ifndef SCRIPT_MANAGER_H
+#define SCRIPT_MANAGER_H
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -43,4 +46,6 @@ void script_manager_destroy(struct ScriptManager *manager);
 struct ScriptHandle *script_manager_alloc(struct ScriptManager *manager, const char *name, size_t entry);
 struct ScriptResult script_manager_run(struct ScriptHandle *handle, ...);
 void script_manager_free(struct ScriptHandle *handle);
+
+#endif
 

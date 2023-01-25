@@ -94,7 +94,7 @@ void set_gender_packet(bool gender, uint8_t *packet);
 void change_map_packet(struct Character *chr, uint32_t to, uint8_t portal, uint8_t *packet);
 
 #define ADD_PLAYER_TO_MAP_PACKET_MAX_LENGTH 554
-size_t add_player_to_map_packet(struct Character *chr, uint8_t *packet);
+size_t add_player_to_map_packet(const struct Character *chr, uint8_t *packet);
 
 #define MOVE_PLAYER_PACKET_MAX_LENGTH 3863
 size_t move_player_packet(uint32_t id, size_t len, uint8_t *data, uint8_t *packet);
@@ -201,7 +201,7 @@ void show_foreign_effect_packet(uint32_t id, uint8_t effect, uint8_t *packet);
 void drop_item_from_object_packet(uint32_t oid, uint32_t item_id, uint32_t owner_id, int16_t from_x, int16_t from_y, int16_t to_x, int16_t to_y, uint32_t dropper_oid, bool player_drop, uint8_t *packet);
 
 #define SPAWN_ITEM_DROP_PACKET_LENGTH 34
-void spawn_item_drop_packet(uint32_t oid, uint32_t item_id, uint32_t owner_id, int16_t to_x, int16_t to_y, uint32_t dropper_oid, uint8_t *packet);
+void spawn_item_drop_packet(uint32_t oid, uint32_t item_id, uint32_t owner_id, int16_t to_x, int16_t to_y, uint32_t dropper_oid, bool player_drop, uint8_t *packet);
 
 #define REMOVE_DROP_PACKET_LENGTH 7
 void remove_drop_packet(uint32_t oid, uint8_t *packet);
@@ -216,7 +216,7 @@ void pet_pickup_drop_packet(uint32_t oid, bool is_exploding, uint32_t char_id, u
 void drop_meso_from_object_packet(uint32_t oid, int32_t meso, uint32_t owner_id, int16_t from_x, int16_t from_y, int16_t to_x, int16_t to_y, uint32_t dropper_oid, bool player_drop, uint8_t *packet);
 
 #define SPAWN_MESO_DROP_PACKET_LENGTH 26
-void spawn_meso_drop_packet(uint32_t oid, int32_t meso, uint32_t owner_id, int16_t x, int16_t y, uint32_t dropper_oid, uint8_t *packet);
+void spawn_meso_drop_packet(uint32_t oid, int32_t meso, uint32_t owner_id, int16_t x, int16_t y, uint32_t dropper_oid, bool player_drop, uint8_t *packet);
 
 #define MESO_GAIN_PACKET_LENGTH 11
 void meso_gain_packet(int32_t amount, uint8_t *packet);

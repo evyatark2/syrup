@@ -6,10 +6,12 @@
 #include <lua.h>
 
 #include "server.h"
-#include "../packet.h"
-#include "map.h"
-#include "../character.h"
-//#include "../database.h"
+#include "drop.h"
+//#include "../character.h"
+#include "../database.h"
+#include "scripting/script-manager.h"
+
+struct Client;
 
 enum PacketType {
     PACKET_TYPE_LOGIN,
@@ -25,29 +27,6 @@ enum ScriptState {
     SCRIPT_STATE_PREV,
     SCRIPT_STATE_ACCEPT_DECILNE,
     SCRIPT_STATE_WARP,
-};
-
-struct Client {
-    struct Session *session;
-    struct MapHandleContainer map;
-    //struct Map *map;
-    struct DatabaseConnection *conn;
-    struct {
-        struct ScriptManager *quest;
-        struct ScriptManager *npc;
-        struct ScriptManager *portal;
-    } managers;
-    struct LockQueue *lockQueue;
-    enum PacketType handlerType;
-    // TODO: Make this a handler queue
-    void *handler;
-    struct Character character;
-    struct ScriptHandle *script;
-    enum ScriptState scriptState;
-    uint16_t qid;
-    uint32_t npc;
-    uint32_t shop;
-    struct HashSetU32 *visibleMapObjects;
 };
 
 enum ClientResultType {
@@ -68,8 +47,26 @@ struct ClientResult {
     };
 };
 
+struct ClientContResult {
+    int status;
+    int fd;
+    uint32_t map;
+};
+
 struct Client *client_create(struct Session *session, struct DatabaseConnection *conn, struct ScriptManager *quest_manager, struct ScriptManager *portal_mananger, struct ScriptManager *npc_manager);
+void client_destroy(struct Client *client);
+struct Session *client_get_session(struct Client *client);
+void client_login_start(struct Client *client, uint32_t id);
+void client_logout_start(struct Client *client);
+struct ClientContResult client_cont(struct Client *client, int status);
+void client_update_conn(struct Client *client, struct DatabaseConnection *conn);
+const struct Character *client_get_character(struct Client *client);
+uint32_t client_get_active_npc(struct Client *client);
+struct MapHandleContainer *client_get_map(struct Client *client);
+bool client_announce_monster(struct Client *client);
 bool client_announce_drop(struct Client *client, uint32_t owner_id, uint32_t dropper_oid, bool player_drop, const struct Drop *drop);
+bool client_announce_spawn_drop(struct Client *client, uint32_t owner_id, uint32_t dropper_oid, bool player_drop, const struct Drop *drop);
+void client_update_player_pos(struct Client *client, int16_t x, int16_t y, uint16_t fh, uint8_t stance);
 void client_set_hp(struct Client *client, int16_t hp);
 void client_adjust_hp(struct Client *client, int32_t hp);
 void client_set_mp(struct Client *client, int16_t mp);
