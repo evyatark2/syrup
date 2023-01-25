@@ -2338,6 +2338,7 @@ static void on_item_start(void *user_data, const XML_Char *name, const XML_Char 
             ITEM_INFOS[ITEM_INFO_COUNT].id = strtol(attrs[1], NULL, 10);
             ITEM_INFOS[ITEM_INFO_COUNT].slotMax = 100;
             ITEM_INFOS[ITEM_INFO_COUNT].price = 0;
+            ITEM_INFOS[ITEM_INFO_COUNT].unitPrice = 0;
             ITEM_INFOS[ITEM_INFO_COUNT].untradable = false;
             ITEM_INFOS[ITEM_INFO_COUNT].oneOfAKind = false;
             ITEM_INFOS[ITEM_INFO_COUNT].monsterBook = false;
@@ -2381,7 +2382,13 @@ static void on_item_start(void *user_data, const XML_Char *name, const XML_Char 
                     ITEM_INFOS[ITEM_INFO_COUNT].slotMax = strtol(value, NULL, 10);
                 else if (!strcmp(key, "price"))
                     ITEM_INFOS[ITEM_INFO_COUNT].price = strtol(value, NULL, 10);
-                else if (!strcmp(key, "tradeBlock"))
+                else if (!strcmp(key, "unitPrice")) {
+                    XML_Char *dup = strdup(value);
+                    if (strchr(dup, ',') != NULL)
+                        *strchr(dup, ',') = '.';
+                    ITEM_INFOS[ITEM_INFO_COUNT].price = strtod(dup, NULL);
+                    free(dup);
+                } else if (!strcmp(key, "tradeBlock"))
                     ITEM_INFOS[ITEM_INFO_COUNT].untradable = strtol(value, NULL, 10) > 0;
                 else if (!strcmp(key, "only"))
                     ITEM_INFOS[ITEM_INFO_COUNT].oneOfAKind = strtol(value, NULL, 10) > 0;

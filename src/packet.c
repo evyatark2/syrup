@@ -786,8 +786,17 @@ size_t open_shop_packet(uint32_t id, uint16_t item_count, struct ShopItem *items
         writer_u32(&writer, 0);
         writer_u32(&writer, 0);
         writer_u32(&writer, 0);
-        writer_u16(&writer, 1); // Stack size
-        writer_u16(&writer, 1); // Buyable
+        if (items[i].id / 10000 != 207 && items[i].id / 10000 != 233) {
+            writer_u16(&writer, 1); // Stack size
+            writer_u16(&writer, 1); // Buyable
+        } else {
+            writer_u16(&writer, 0);
+            writer_u32(&writer, 0);
+            const struct ItemInfo *info = wz_get_item_info(items[i].id);
+            const uint64_t *rep = &info->unitPrice; // Assuming a IEEE-754 representation
+            writer_u16(&writer, *rep >> 48);
+            writer_u16(&writer, info->slotMax); // TODO: Should also take into account the player's extra slots
+        }
     }
 
     return writer.pos;

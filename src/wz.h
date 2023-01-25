@@ -230,6 +230,7 @@ struct ItemInfo {
     uint32_t id;
     int16_t slotMax;
     int32_t price;
+    double unitPrice;
     bool untradable;
     bool oneOfAKind;
     bool monsterBook;
