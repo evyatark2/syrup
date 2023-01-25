@@ -787,8 +787,8 @@ size_t open_shop_packet(uint32_t id, uint16_t item_count, struct ShopItem *items
         writer_u32(&writer, 0);
         writer_u32(&writer, 0);
         if (items[i].id / 10000 != 207 && items[i].id / 10000 != 233) {
-            writer_u16(&writer, 1); // Stack size
-            writer_u16(&writer, 1); // Buyable
+            writer_u16(&writer, 1);
+            writer_u16(&writer, 1000); // Max buyable stack size
         } else {
             writer_u16(&writer, 0);
             writer_u32(&writer, 0);
