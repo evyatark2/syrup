@@ -1268,8 +1268,8 @@ size_t modify_items_packet(uint8_t mod_count, struct InventoryModify *mods, uint
                 writer_i16(&writer, mods[i].equip.hands);
                 writer_i16(&writer, mods[i].equip.speed);
                 writer_i16(&writer, mods[i].equip.jump);
-                writer_sized_string(&writer, mods[i].item.item.ownerLength, mods[i].item.item.owner);
-                writer_u16(&writer, mods[i].item.item.flags);
+                writer_sized_string(&writer, mods[i].equip.item.ownerLength, mods[i].equip.item.owner);
+                writer_u16(&writer, mods[i].equip.item.flags);
                 if (mods[i].equip.cash) {
                     writer_array(&writer, 10, (uint8_t[]) { 0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x40 });
                 } else {
