@@ -282,6 +282,7 @@ struct ClientContResult client_cont(struct Client *client, int status)
                 equip->hands = 0; //equip->hands = res->getCharacter.equippedEquipment[i].hands;
                 equip->speed = res->getCharacter.equippedEquipment[i].speed;
                 equip->jump = res->getCharacter.equippedEquipment[i].jump;
+                equip->cash = wz_get_equip_info(equip->item.itemId)->cash;
             }
 
             for (uint8_t j = 0; j < chr->equipmentInventory.slotCount; j++)
@@ -319,6 +320,7 @@ struct ClientContResult client_cont(struct Client *client, int status)
                 equip->hands = 0; //equip->hands = res->getCharacter.equippedEquipment[i].hands;
                 equip->speed = res->getCharacter.equipmentInventory[i].equip.speed;
                 equip->jump = res->getCharacter.equipmentInventory[i].equip.jump;
+                equip->cash = wz_get_equip_info(equip->item.itemId)->cash;
             }
 
             for (uint8_t i = 0; i < 4; i++) {
@@ -1431,6 +1433,7 @@ bool client_gain_items(struct Client *client, size_t len, const uint32_t *ids, c
         }
     }
 
+    // Now try adding items
     for (size_t i = 0; i < len; i++) {
         if (amounts[i] > 0) {
             uint8_t inv = ids[i] / 1000000;
