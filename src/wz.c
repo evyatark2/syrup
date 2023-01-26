@@ -68,6 +68,10 @@ cmph_t *CONSUMABLE_INFO_MPH;
 static size_t CONSUMABLE_INFO_COUNT;
 static struct ConsumableInfo *CONSUMABLE_INFOS;
 
+cmph_t *REACTOR_INFO_MPH;
+static size_t REACTOR_INFO_COUNT;
+static struct ReactorInfo *REACTOR_INFOS;
+
 enum MapItemType {
     MAP_ITEM_TYPE_TOP_LEVEL,
     MAP_ITEM_TYPE_INFO,
@@ -90,6 +94,7 @@ struct MapParserContext {
     uint32_t currentMap;
     uint32_t currentLife;
     uint32_t currentPortal;
+    uint32_t reactorCapacity;
     uint32_t skip;
     uint8_t footholdLevel;
     struct Foothold currentFoothold;
@@ -233,6 +238,30 @@ struct ConsumableParserContext {
     uint32_t skip;
 };
 
+enum ReactorItemType {
+    REACTOR_ITEM_TYPE_TOP_LEVEL,
+    REACTOR_ITEM_TYPE_INFO,
+    REACTOR_ITEM_TYPE_STATE,
+    REACTOR_ITEM_TYPE_EVENTS,
+    REACTOR_ITEM_TYPE_EVENT,
+    REACTOR_ITEM_TYPE_SKILLS,
+};
+
+struct ReactorParserStackNode {
+    struct ReactorParserStackNode *next;
+    enum ReactorItemType type;
+};
+
+struct ReactorParserContext {
+    XML_Parser parser;
+    struct ReactorParserStackNode *head;
+    size_t stateCapacity;
+    size_t eventCapacity;
+    size_t skillCapacity;
+    uint32_t skip;
+    bool isLink;
+};
+
 static void on_map_start(void *user_data, const XML_Char *name, const XML_Char **attrs);
 static void on_map_end(void *user_data, const XML_Char *name);
 static void on_mob_start(void *user_data, const XML_Char *name, const XML_Char **attrs);
@@ -249,6 +278,10 @@ static void on_equip_start(void *user_data, const XML_Char *name, const XML_Char
 static void on_equip_end(void *user_data, const XML_Char *name);
 static void on_consumable_start(void *user_data, const XML_Char *name, const XML_Char **attrs);
 static void on_consumable_end(void *user_data, const XML_Char *name);
+static void on_reactor_start(void *user_data, const XML_Char *name, const XML_Char **attrs);
+static void on_reactor_end(void *user_data, const XML_Char *name);
+static void on_reactor_second_pass_start(void *user_data, const XML_Char *name, const XML_Char **attrs);
+static void on_reactor_second_pass_end(void *user_data, const XML_Char *name);
 
 int wz_init(void)
 {
@@ -280,6 +313,104 @@ int wz_init(void)
     WRITER = true;
     if (WRITER) {
         XML_Parser parser = XML_ParserCreate(NULL);
+
+        {
+            struct ReactorParserContext ctx = {
+                .parser = parser,
+                .head = NULL,
+            };
+            DIR *reactor_dir = opendir("wz/Reactor.wz");
+            struct dirent *entry;
+            size_t count = 0;
+            while ((entry = readdir(reactor_dir)) != NULL) {
+                if (entry->d_name[0] != '.' && entry->d_type == DT_REG)
+                    count++;
+            }
+
+            REACTOR_INFOS = malloc(count * sizeof(struct ReactorInfo));
+            rewinddir(reactor_dir);
+
+            // First pass - unlinked reactors
+            while ((entry = readdir(reactor_dir)) != NULL) {
+                if (entry->d_name[0] == '.' || entry->d_type != DT_REG)
+                    continue;
+                int fd = openat(dirfd(reactor_dir), entry->d_name, O_RDONLY);
+                off_t len = lseek(fd, 0, SEEK_END);
+                lseek(fd, 0, SEEK_SET);
+                char *data = malloc(len);
+                read(fd, data, len);
+                close(fd);
+
+                XML_SetElementHandler(parser, on_reactor_start, on_reactor_end);
+                XML_SetUserData(parser, &ctx);
+                XML_Parse(parser, data, len, true);
+                free(data);
+                XML_ParserReset(parser, NULL);
+            }
+            //closedir(reactor_dir);
+
+            cmph_io_adapter_t *adapter = cmph_io_struct_vector_adapter(REACTOR_INFOS, sizeof(struct ReactorInfo), offsetof(struct ReactorInfo, id), sizeof(uint32_t), REACTOR_INFO_COUNT);
+            cmph_config_t *config = cmph_config_new(adapter);
+            cmph_config_set_algo(config, CMPH_BDZ);
+            REACTOR_INFO_MPH = cmph_new(config);
+            cmph_config_destroy(config);
+            cmph_io_struct_vector_adapter_destroy(adapter);
+            size_t i = 0;
+            while (i < REACTOR_INFO_COUNT) {
+                uint32_t j = cmph_search(REACTOR_INFO_MPH, (void *)&REACTOR_INFOS[i].id, sizeof(uint32_t));
+                if (i != j) {
+                    struct ReactorInfo temp = REACTOR_INFOS[j];
+                    REACTOR_INFOS[j] = REACTOR_INFOS[i];
+                    REACTOR_INFOS[i] = temp;
+                } else {
+                    i++;
+                }
+            }
+
+            rewinddir(reactor_dir);
+
+            // Second pass - linked reactors
+            while ((entry = readdir(reactor_dir)) != NULL) {
+                if (entry->d_name[0] == '.' || entry->d_type != DT_REG)
+                    continue;
+                int fd = openat(dirfd(reactor_dir), entry->d_name, O_RDONLY);
+                off_t len = lseek(fd, 0, SEEK_END);
+                lseek(fd, 0, SEEK_SET);
+                char *data = malloc(len);
+                read(fd, data, len);
+                close(fd);
+
+                XML_SetElementHandler(parser, on_reactor_second_pass_start, on_reactor_second_pass_end);
+                XML_SetUserData(parser, &ctx);
+                XML_Parse(parser, data, len, true);
+                free(data);
+                if (REACTOR_INFO_COUNT == count)
+                    break;
+                XML_ParserReset(parser, NULL);
+            }
+            closedir(reactor_dir);
+            cmph_destroy(REACTOR_INFO_MPH);
+
+            adapter = cmph_io_struct_vector_adapter(REACTOR_INFOS, sizeof(struct ReactorInfo), offsetof(struct ReactorInfo, id), sizeof(uint32_t), REACTOR_INFO_COUNT);
+            config = cmph_config_new(adapter);
+            cmph_config_set_algo(config, CMPH_BDZ);
+            REACTOR_INFO_MPH = cmph_new(config);
+            cmph_config_destroy(config);
+            cmph_io_struct_vector_adapter_destroy(adapter);
+            i = 0;
+            while (i < REACTOR_INFO_COUNT) {
+                uint32_t j = cmph_search(REACTOR_INFO_MPH, (void *)&REACTOR_INFOS[i].id, sizeof(uint32_t));
+                if (i != j) {
+                    struct ReactorInfo temp = REACTOR_INFOS[j];
+                    REACTOR_INFOS[j] = REACTOR_INFOS[i];
+                    REACTOR_INFOS[i] = temp;
+                } else {
+                    i++;
+                }
+            }
+
+            fprintf(stderr, "Loaded reactors\n");
+        }
 
         {
             struct EquipParserContext ctx = {
@@ -534,6 +665,10 @@ int wz_init(void)
                         ctx.currentPortal = 1;
                         MAP_INFOS[ctx.currentMap].portalCount = 0;
                         MAP_INFOS[ctx.currentMap].portals = malloc(sizeof(struct PortalInfo));
+
+                        ctx.reactorCapacity = 1;
+                        MAP_INFOS[ctx.currentMap].reactorCount = 0;
+                        MAP_INFOS[ctx.currentMap].reactors = malloc(sizeof(struct ReactorInfo));
 
                         XML_SetElementHandler(parser, on_map_start, on_map_end);
                         XML_SetUserData(parser, &ctx);
@@ -814,6 +949,20 @@ static void foothold_tree_free(struct RTreeNode *node)
 
 void wz_terminate(void)
 {
+    cmph_destroy(REACTOR_INFO_MPH);
+    for (size_t i = 0; i < REACTOR_INFO_COUNT; i++) {
+        struct ReactorInfo *reactor = &REACTOR_INFOS[i];
+        for (size_t i = 0; i < reactor->stateCount; i++) {
+            for (size_t j = 0; j < reactor->states[i].eventCount; j++) {
+                if (reactor->states[i].events[j].type == REACTOR_EVENT_TYPE_SKILL)
+                    free(reactor->states[i].events[j].skills);
+            }
+            free(reactor->states[i].events);
+        }
+        free(reactor->states);
+    }
+    free(REACTOR_INFOS);
+
     cmph_destroy(CONSUMABLE_INFO_MPH);
     free(CONSUMABLE_INFOS);
     cmph_destroy(EQUIP_INFO_MPH);
@@ -982,60 +1131,11 @@ const struct LifeInfo *wz_get_life_for_map(uint32_t id, size_t *count)
     return MAP_INFOS[i].lives;
 }
 
-const struct LifeInfo *wz_get_npcs_for_map(uint32_t id, size_t *count)
+const struct MapReactorInfo *wz_get_reactors_for_map(uint32_t id, size_t *count)
 {
     size_t i = cmph_search(MAP_INFO_MPH, (void *)&id, sizeof(uint32_t));
-
-    size_t cnt = 0;
-    for (size_t j = 0; j < MAP_INFOS[i].lifeCount; j++) {
-        if (MAP_INFOS[i].lives[j].type == LIFE_TYPE_NPC) {
-            cnt++;
-        }
-    }
-
-    struct LifeInfo *npcs = malloc(cnt * sizeof(struct LifeInfo));
-    if (npcs == NULL)
-        return NULL;
-
-    cnt = 0;
-    for (size_t j = 0; j < MAP_INFOS[i].lifeCount; j++) {
-        if (MAP_INFOS[i].lives[j].type == LIFE_TYPE_NPC) {
-            npcs[cnt] = MAP_INFOS[i].lives[j];
-            cnt++;
-        }
-    }
-
-    *count = cnt;
-
-    return npcs;
-}
-
-const struct LifeInfo *wz_get_mobs_for_map(uint32_t id, size_t *count)
-{
-    size_t i = cmph_search(MAP_INFO_MPH, (void *)&id, sizeof(uint32_t));
-
-    size_t cnt = 0;
-    for (size_t j = 0; j < MAP_INFOS[i].lifeCount; j++) {
-        if (MAP_INFOS[i].lives[j].type == LIFE_TYPE_NPC) {
-            cnt++;
-        }
-    }
-
-    struct LifeInfo *mobs = malloc(cnt * sizeof(struct LifeInfo));
-    if (mobs == NULL)
-        return NULL;
-
-    cnt = 0;
-    for (size_t j = 0; j < MAP_INFOS[i].lifeCount; j++) {
-        if (MAP_INFOS[i].lives[j].type == LIFE_TYPE_MOB) {
-            mobs[cnt] = MAP_INFOS[i].lives[j];
-            cnt++;
-        }
-    }
-
-    *count = cnt;
-
-    return mobs;
+    *count = MAP_INFOS[i].reactorCount;
+    return MAP_INFOS[i].reactors;
 }
 
 const struct PortalInfo *wz_get_portal_info_by_name(uint32_t id, const char *name)
@@ -1117,8 +1217,7 @@ static void on_map_start(void *user_data, const XML_Char *name, const XML_Char *
         ctx->head = malloc(sizeof(struct MapParserStackNode));
         ctx->head->next = NULL;
         ctx->head->type = MAP_ITEM_TYPE_TOP_LEVEL;
-        if (strcmp(name, "imgdir"))
-            assert(0); // ERROR
+        assert(!strcmp(name, "imgdir"));
 
         const char *id = NULL;
         for (size_t i = 0; attrs[i] != NULL; i += 2) {
@@ -1126,22 +1225,19 @@ static void on_map_start(void *user_data, const XML_Char *name, const XML_Char *
                 id = attrs[i+1];
         }
 
-        if (id == NULL)
-            assert(0); // ERROR
+        assert(id != NULL);
 
         MAP_INFOS[ctx->currentMap].id = strtol(id, NULL, 10);
     } else {
         switch (ctx->head->type) {
         case MAP_ITEM_TYPE_TOP_LEVEL:
-            if (strcmp(name, "imgdir"))
-                assert(0); // ERROR
+            assert(!strcmp(name, "imgdir"));
 
             size_t i = 0;
             while (attrs[i] != NULL && strcmp(attrs[i], "name"))
                 i += 2;
 
-            if (attrs[i] == NULL)
-                assert(0); // ERROR
+            assert(attrs[i] != NULL);
 
             i++;
             if (!strcmp(attrs[i], "info")) {
@@ -1184,8 +1280,7 @@ static void on_map_start(void *user_data, const XML_Char *name, const XML_Char *
                     value = attrs[i+1];
             }
 
-            if (key == NULL)
-                assert(0); // ERROR
+            assert(key != NULL);
 
             ctx->skip++;
             if (!strcmp(name, "int")) {
@@ -1223,8 +1318,7 @@ static void on_map_start(void *user_data, const XML_Char *name, const XML_Char *
                         value = attrs[i+1];
                 }
 
-                if (key == NULL)
-                    assert(0); // ERROR
+                assert(key != NULL);
 
                 ctx->skip++;
                 if (!strcmp(key, "x1")) {
@@ -1248,8 +1342,7 @@ static void on_map_start(void *user_data, const XML_Char *name, const XML_Char *
                 ctx->currentLife *= 2;
             }
 
-            MAP_INFOS[ctx->currentMap].lifeCount++;
-            MAP_INFOS[ctx->currentMap].lives[MAP_INFOS[ctx->currentMap].lifeCount - 1].f = false;
+            MAP_INFOS[ctx->currentMap].lives[MAP_INFOS[ctx->currentMap].lifeCount].f = false;
 
             struct MapParserStackNode *new = malloc(sizeof(struct MapParserStackNode));
             new->next = ctx->head;
@@ -1268,37 +1361,36 @@ static void on_map_start(void *user_data, const XML_Char *name, const XML_Char *
                     value = attrs[i+1];
             }
 
-            if (key == NULL)
-                assert(0); // ERROR
+            assert(key != NULL);
 
             ctx->skip++;
             if (!strcmp(name, "int")) {
                 if (!strcmp(key, "x")) {
-                    MAP_INFOS[ctx->currentMap].lives[MAP_INFOS[ctx->currentMap].lifeCount - 1].spawnPoint.x = strtol(value, NULL, 10);
+                    MAP_INFOS[ctx->currentMap].lives[MAP_INFOS[ctx->currentMap].lifeCount].spawnPoint.x = strtol(value, NULL, 10);
                 } else if (!strcmp(key, "y")) {
-                    MAP_INFOS[ctx->currentMap].lives[MAP_INFOS[ctx->currentMap].lifeCount - 1].spawnPoint.y = strtol(value, NULL, 10);
+                    MAP_INFOS[ctx->currentMap].lives[MAP_INFOS[ctx->currentMap].lifeCount].spawnPoint.y = strtol(value, NULL, 10);
                 } else if (!strcmp(key, "fh")) {
-                    MAP_INFOS[ctx->currentMap].lives[MAP_INFOS[ctx->currentMap].lifeCount - 1].fh = strtol(value, NULL, 10);
+                    MAP_INFOS[ctx->currentMap].lives[MAP_INFOS[ctx->currentMap].lifeCount].fh = strtol(value, NULL, 10);
                 } else if (!strcmp(key, "cy")) {
-                    MAP_INFOS[ctx->currentMap].lives[MAP_INFOS[ctx->currentMap].lifeCount - 1].cy = strtol(value, NULL, 10);
+                    MAP_INFOS[ctx->currentMap].lives[MAP_INFOS[ctx->currentMap].lifeCount].cy = strtol(value, NULL, 10);
                 } else if (!strcmp(key, "rx0")) {
-                    MAP_INFOS[ctx->currentMap].lives[MAP_INFOS[ctx->currentMap].lifeCount - 1].rx0 = strtol(value, NULL, 10);
+                    MAP_INFOS[ctx->currentMap].lives[MAP_INFOS[ctx->currentMap].lifeCount].rx0 = strtol(value, NULL, 10);
                 } else if (!strcmp(key, "rx1")) {
-                    MAP_INFOS[ctx->currentMap].lives[MAP_INFOS[ctx->currentMap].lifeCount - 1].rx1 = strtol(value, NULL, 10);
+                    MAP_INFOS[ctx->currentMap].lives[MAP_INFOS[ctx->currentMap].lifeCount].rx1 = strtol(value, NULL, 10);
                 } else if (!strcmp(key, "f")) {
-                    MAP_INFOS[ctx->currentMap].lives[MAP_INFOS[ctx->currentMap].lifeCount - 1].f = strtol(value, NULL, 10);
+                    MAP_INFOS[ctx->currentMap].lives[MAP_INFOS[ctx->currentMap].lifeCount].f = strtol(value, NULL, 10);
                 }
             } else if (!strcmp(name, "string")) {
                 if (!strcmp(key, "type")) {
                     if (!strcmp(value, "n")) {
-                        MAP_INFOS[ctx->currentMap].lives[MAP_INFOS[ctx->currentMap].lifeCount - 1].type = LIFE_TYPE_NPC;
+                        MAP_INFOS[ctx->currentMap].lives[MAP_INFOS[ctx->currentMap].lifeCount].type = LIFE_TYPE_NPC;
                     } else if (!strcmp(value, "m")) {
-                        MAP_INFOS[ctx->currentMap].lives[MAP_INFOS[ctx->currentMap].lifeCount - 1].type = LIFE_TYPE_MOB;
+                        MAP_INFOS[ctx->currentMap].lives[MAP_INFOS[ctx->currentMap].lifeCount].type = LIFE_TYPE_MOB;
                     } else {
-                        MAP_INFOS[ctx->currentMap].lives[MAP_INFOS[ctx->currentMap].lifeCount - 1].type = LIFE_TYPE_UNKNOWN;
+                        MAP_INFOS[ctx->currentMap].lives[MAP_INFOS[ctx->currentMap].lifeCount].type = LIFE_TYPE_UNKNOWN;
                     }
                 } else if (!strcmp(key, "id")) {
-                    MAP_INFOS[ctx->currentMap].lives[MAP_INFOS[ctx->currentMap].lifeCount - 1].id = strtol(value, NULL, 10);
+                    MAP_INFOS[ctx->currentMap].lives[MAP_INFOS[ctx->currentMap].lifeCount].id = strtol(value, NULL, 10);
                 }
             } else {
                 assert(0); // ERROR
@@ -1311,8 +1403,8 @@ static void on_map_start(void *user_data, const XML_Char *name, const XML_Char *
                 MAP_INFOS[ctx->currentMap].portals = realloc(MAP_INFOS[ctx->currentMap].portals, (ctx->currentPortal * 2) * sizeof(struct PortalInfo));
                 ctx->currentPortal *= 2;
             }
+
             MAP_INFOS[ctx->currentMap].portals[MAP_INFOS[ctx->currentMap].portalCount].id = MAP_INFOS[ctx->currentMap].portalCount;
-            MAP_INFOS[ctx->currentMap].portalCount++;
 
             struct MapParserStackNode *new = malloc(sizeof(struct MapParserStackNode));
             new->next = ctx->head;
@@ -1331,30 +1423,81 @@ static void on_map_start(void *user_data, const XML_Char *name, const XML_Char *
                     value = attrs[i+1];
             }
 
-            if (key == NULL)
-                assert(0); // ERROR
+            assert(key != NULL);
 
             ctx->skip++;
             if (!strcmp(name, "int")) {
                 if (!strcmp(key, "pt")) {
-                    MAP_INFOS[ctx->currentMap].portals[MAP_INFOS[ctx->currentMap].portalCount - 1].type = PORTAL_TYPE_REGULAR;
+                    MAP_INFOS[ctx->currentMap].portals[MAP_INFOS[ctx->currentMap].portalCount].type = PORTAL_TYPE_REGULAR;
                 } else if (!strcmp(key, "x")) {
-                    MAP_INFOS[ctx->currentMap].portals[MAP_INFOS[ctx->currentMap].portalCount - 1].x = strtol(value, NULL, 10);
+                    MAP_INFOS[ctx->currentMap].portals[MAP_INFOS[ctx->currentMap].portalCount].x = strtol(value, NULL, 10);
                 } else if (!strcmp(key, "y")) {
-                    MAP_INFOS[ctx->currentMap].portals[MAP_INFOS[ctx->currentMap].portalCount - 1].y = strtol(value, NULL, 10);
+                    MAP_INFOS[ctx->currentMap].portals[MAP_INFOS[ctx->currentMap].portalCount].y = strtol(value, NULL, 10);
                 } else if (!strcmp(key, "tm")) {
-                    MAP_INFOS[ctx->currentMap].portals[MAP_INFOS[ctx->currentMap].portalCount - 1].targetMap = strtol(value, NULL, 10);
+                    MAP_INFOS[ctx->currentMap].portals[MAP_INFOS[ctx->currentMap].portalCount].targetMap = strtol(value, NULL, 10);
                 } else {
                     //assert(0);
                 }
             } else if (!strcmp(name, "string")) {
                 if (!strcmp(key, "pn")) {
-                    strcpy(MAP_INFOS[ctx->currentMap].portals[MAP_INFOS[ctx->currentMap].portalCount - 1].name, value);
+                    strcpy(MAP_INFOS[ctx->currentMap].portals[MAP_INFOS[ctx->currentMap].portalCount].name, value);
                 } else if (!strcmp(key, "tn")) {
-                    strcpy(MAP_INFOS[ctx->currentMap].portals[MAP_INFOS[ctx->currentMap].portalCount - 1].targetName, value);
+                    strcpy(MAP_INFOS[ctx->currentMap].portals[MAP_INFOS[ctx->currentMap].portalCount].targetName, value);
                 } else if (!strcmp(key, "script")) {
-                    strcpy(MAP_INFOS[ctx->currentMap].portals[MAP_INFOS[ctx->currentMap].portalCount - 1].script, value);
+                    strcpy(MAP_INFOS[ctx->currentMap].portals[MAP_INFOS[ctx->currentMap].portalCount].script, value);
                 }
+            } else {
+                assert(0);
+            }
+        }
+        break;
+
+        case MAP_ITEM_TYPE_REACTORS: {
+            if (ctx->reactorCapacity == MAP_INFOS[ctx->currentMap].reactorCount) {
+                MAP_INFOS[ctx->currentMap].reactors = realloc(MAP_INFOS[ctx->currentMap].reactors, (ctx->reactorCapacity * 2) * sizeof(struct ReactorInfo));
+                ctx->reactorCapacity *= 2;
+            }
+            MAP_INFOS[ctx->currentMap].reactors[MAP_INFOS[ctx->currentMap].reactorCount].id = MAP_INFOS[ctx->currentMap].reactorCount;
+
+            struct MapParserStackNode *new = malloc(sizeof(struct MapParserStackNode));
+            new->next = ctx->head;
+            new->type = MAP_ITEM_TYPE_REACTOR;
+            ctx->head = new;
+        }
+        break;
+
+        case MAP_ITEM_TYPE_REACTOR: {
+            const XML_Char *key = NULL;
+            const XML_Char *value;
+            for (size_t i = 0; attrs[i] != NULL; i += 2) {
+                if (!strcmp(attrs[i], "name"))
+                    key = attrs[i+1];
+                else if (!strcmp(attrs[i], "value"))
+                    value = attrs[i+1];
+            }
+
+            assert(key != NULL);
+
+            ctx->skip++;
+            if (!strcmp(name, "int")) {
+                if (!strcmp(key, "x")) {
+                    MAP_INFOS[ctx->currentMap].reactors[MAP_INFOS[ctx->currentMap].reactorCount].pos.x = strtol(value, NULL, 10);
+                } else if (!strcmp(key, "y")) {
+                    MAP_INFOS[ctx->currentMap].reactors[MAP_INFOS[ctx->currentMap].reactorCount].pos.y = strtol(value, NULL, 10);
+                } else if (!strcmp(key, "reactorTime")) {
+                    MAP_INFOS[ctx->currentMap].reactors[MAP_INFOS[ctx->currentMap].reactorCount].reactorTime = strtol(value, NULL, 10) == 1;
+                } else if (!strcmp(key, "f")) {
+                    MAP_INFOS[ctx->currentMap].reactors[MAP_INFOS[ctx->currentMap].reactorCount].f = strtol(value, NULL, 10) == 1;
+                } else {
+                    //assert(0);
+                }
+            } else if (!strcmp(name, "string")) {
+                if (!strcmp(key, "id")) {
+                    MAP_INFOS[ctx->currentMap].reactors[MAP_INFOS[ctx->currentMap].reactorCount].id = strtol(value, NULL, 10);
+                }
+                // else if (!strcmp(key, "name")) {
+                //     strcpy(MAP_INFOS[ctx->currentMap].reactors[MAP_INFOS[ctx->currentMap].reactorCount - 1].name, value);
+                // }
             } else {
                 assert(0);
             }
@@ -1381,6 +1524,27 @@ static void on_map_end(void *user_data, const XML_Char *name)
 
         ctx->footholdLevel--;
         return;
+    } else if (ctx->head->type == MAP_ITEM_TYPE_LIFE) {
+        MAP_INFOS[ctx->currentMap].lifeCount++;
+    } else if (ctx->head->type == MAP_ITEM_TYPE_LIVES) {
+        if (MAP_INFOS[ctx->currentMap].lifeCount == 0) {
+            free(MAP_INFOS[ctx->currentMap].lives);
+            MAP_INFOS[ctx->currentMap].lives = NULL;
+        }
+    } else if (ctx->head->type == MAP_ITEM_TYPE_PORTAL) {
+        MAP_INFOS[ctx->currentMap].portalCount++;
+    } else if (ctx->head->type == MAP_ITEM_TYPE_PORTALS) {
+        if (MAP_INFOS[ctx->currentMap].portalCount == 0) {
+            free(MAP_INFOS[ctx->currentMap].portals);
+            MAP_INFOS[ctx->currentMap].portals = NULL;
+        }
+    } else if (ctx->head->type == MAP_ITEM_TYPE_REACTOR) {
+        MAP_INFOS[ctx->currentMap].reactorCount++;
+    } else if (ctx->head->type == MAP_ITEM_TYPE_REACTORS) {
+        if (MAP_INFOS[ctx->currentMap].reactorCount == 0) {
+            free(MAP_INFOS[ctx->currentMap].reactors);
+            MAP_INFOS[ctx->currentMap].reactors = NULL;
+        }
     }
 
     struct MapParserStackNode *next = ctx->head->next;
@@ -1400,8 +1564,7 @@ static void on_mob_start(void *user_data, const XML_Char *name, const XML_Char *
         ctx->head = malloc(sizeof(struct MobParserStackNode));
         ctx->head->next = NULL;
         ctx->head->type = MOB_ITEM_TYPE_TOP_LEVEL;
-        if (strcmp(name, "imgdir"))
-            assert(0); // ERROR
+        assert(!strcmp(name, "imgdir"));
 
         const char *id = NULL;
         for (size_t i = 0; attrs[i] != NULL; i += 2) {
@@ -1409,8 +1572,7 @@ static void on_mob_start(void *user_data, const XML_Char *name, const XML_Char *
                 id = attrs[i+1];
         }
 
-        if (id == NULL)
-            assert(0); // ERROR
+        assert(id != NULL);
 
         MOB_INFOS[MOB_INFO_COUNT].id = strtol(id, NULL, 10);
         MOB_INFOS[MOB_INFO_COUNT].bodyAttack = false;
@@ -1420,15 +1582,13 @@ static void on_mob_start(void *user_data, const XML_Char *name, const XML_Char *
     } else {
         switch (ctx->head->type) {
         case MOB_ITEM_TYPE_TOP_LEVEL:
-            if (strcmp(name, "imgdir"))
-                assert(0); // ERROR
+            assert(!strcmp(name, "imgdir"));
 
             size_t i = 0;
             while (attrs[i] != NULL && strcmp(attrs[i], "name"))
                 i += 2;
 
-            if (attrs[i] == NULL)
-                assert(0); // ERROR
+            assert(attrs[i] != NULL);
 
             i++;
             if (!strcmp(attrs[i], "info")) {
@@ -1451,8 +1611,7 @@ static void on_mob_start(void *user_data, const XML_Char *name, const XML_Char *
                     value = attrs[i+1];
             }
 
-            if (key == NULL)
-                assert(0); // ERROR
+            assert(key != NULL);
 
             ctx->skip++;
             if (!strcmp(name, "int")) {
@@ -1530,13 +1689,11 @@ static void on_quest_check_start(void *user_data, const XML_Char *name, const XM
         ctx->head = malloc(sizeof(struct QuestCheckParserStackNode));
         ctx->head->next = NULL;
         ctx->head->type = QUEST_CHECK_ITEM_TYPE_TOP_LEVEL;
-        if (strcmp(name, "imgdir"))
-            assert(0); // ERROR
+        assert(!strcmp(name, "imgdir"));
     } else {
         switch (ctx->head->type) {
         case QUEST_CHECK_ITEM_TYPE_TOP_LEVEL:
-            if (strcmp(name, "imgdir"))
-                assert(0); // ERROR
+            assert(!strcmp(name, "imgdir"));
 
             if (ctx->questCapacity == QUEST_INFO_COUNT) {
                 QUEST_INFOS = realloc(QUEST_INFOS, (ctx->questCapacity * 2) * sizeof(struct QuestInfo));
@@ -1559,11 +1716,8 @@ static void on_quest_check_start(void *user_data, const XML_Char *name, const XM
 
         case QUEST_CHECK_ITEM_TYPE_QUEST: {
             struct QuestInfo *quest = &QUEST_INFOS[QUEST_INFO_COUNT];
-            if (strcmp(name, "imgdir"))
-                assert(0);
-
-            if (strcmp(attrs[0], "name"))
-                assert(0);
+            assert(!strcmp(name, "imgdir"));
+            assert(!strcmp(attrs[0], "name"));
 
             struct QuestCheckParserStackNode *new = malloc(sizeof(struct QuestCheckParserStackNode));
             new->next = ctx->head;
@@ -2601,8 +2755,7 @@ static void on_equip_start(void *user_data, const XML_Char *name, const XML_Char
     }
 
     if (ctx->head == NULL) {
-        if (strcmp(name, "imgdir"))
-            assert(0); // ERROR
+        assert(!strcmp(name, "imgdir"));
 
         EQUIP_INFOS[ctx->currentEquip].id = strtol(attrs[1], NULL, 10);
         EQUIP_INFOS[ctx->currentEquip].reqJob = 0;
@@ -2659,8 +2812,7 @@ static void on_equip_start(void *user_data, const XML_Char *name, const XML_Char
                         value = attrs[i+1];
                 }
 
-                if (key == NULL)
-                    assert(0); // ERROR
+                assert(key != NULL);
 
                 if (!strcmp(key, "reqJob"))
                     EQUIP_INFOS[ctx->currentEquip].reqJob = strtol(value, NULL, 10);
@@ -2749,13 +2901,11 @@ static void on_consumable_start(void *user_data, const XML_Char *name, const XML
         ctx->head = malloc(sizeof(struct ConsumableParserStackNode));
         ctx->head->next = NULL;
         ctx->head->type = CONSUMABLE_ITEM_TYPE_TOP_LEVEL;
-        if (strcmp(name, "imgdir"))
-            assert(0); // ERROR
+        assert(!strcmp(name, "imgdir"));
     } else {
         switch (ctx->head->type) {
         case CONSUMABLE_ITEM_TYPE_TOP_LEVEL:
-            if (strcmp(name, "imgdir"))
-                assert(0); // ERROR
+            assert(!strcmp(name, "imgdir"));
 
             if (CONSUMABLE_INFO_COUNT == ctx->itemCapacity) {
                 CONSUMABLE_INFOS = realloc(CONSUMABLE_INFOS, (ctx->itemCapacity * 2) * sizeof(struct ConsumableInfo));
@@ -2810,8 +2960,7 @@ static void on_consumable_start(void *user_data, const XML_Char *name, const XML
                         value = attrs[i+1];
                 }
 
-                if (key == NULL)
-                    assert(0); // ERROR
+                assert(key != NULL);
 
                 if (!strcmp(key, "hp"))
                     CONSUMABLE_INFOS[CONSUMABLE_INFO_COUNT].hp = strtol(value, NULL, 10);
@@ -2862,6 +3011,356 @@ static void on_consumable_end(void *user_data, const XML_Char *name)
     struct ConsumableParserStackNode *next = ctx->head->next;
     free(ctx->head);
     ctx->head = next;
+}
+
+static void on_reactor_start(void *user_data, const XML_Char *name, const XML_Char **attrs)
+{
+    struct ReactorParserContext *ctx = user_data;
+    if (ctx->skip > 0) {
+        ctx->skip++;
+        return;
+    }
+
+    if (ctx->head == NULL) {
+        assert(!strcmp(name, "imgdir"));
+
+        ctx->stateCapacity = 1;
+        REACTOR_INFOS[REACTOR_INFO_COUNT].id = strtol(attrs[1], NULL, 10);
+        REACTOR_INFOS[REACTOR_INFO_COUNT].stateCount = 0;
+        REACTOR_INFOS[REACTOR_INFO_COUNT].states = malloc(sizeof(struct ReactorStateInfo));
+
+        ctx->head = malloc(sizeof(struct ReactorParserStackNode));
+        ctx->head->next = NULL;
+        ctx->head->type = REACTOR_ITEM_TYPE_TOP_LEVEL;
+    } else {
+        switch (ctx->head->type) {
+        case REACTOR_ITEM_TYPE_TOP_LEVEL:
+            if (!strcmp(name, "string")) {
+                assert(!strcmp(attrs[0], "name"));
+                assert(!strcmp(attrs[1], "action"));
+                assert(!strcmp(attrs[2], "value"));
+                ctx->skip++;
+                strcpy(REACTOR_INFOS[REACTOR_INFO_COUNT].action, attrs[3]);
+            } else if (!strcmp(name, "imgdir")) {
+                if (!strcmp(attrs[1], "info")) {
+                    struct ReactorParserStackNode *new = malloc(sizeof(struct ReactorParserStackNode));
+                    new->next = ctx->head;
+                    new->type = REACTOR_ITEM_TYPE_INFO;
+                    ctx->head = new;
+                } else {
+                    if (REACTOR_INFOS[REACTOR_INFO_COUNT].stateCount == ctx->stateCapacity) {
+                        REACTOR_INFOS[REACTOR_INFO_COUNT].states = realloc(REACTOR_INFOS[REACTOR_INFO_COUNT].states, (ctx->stateCapacity * 2) * sizeof(struct ReactorStateInfo));
+                        ctx->stateCapacity *= 2;
+                    }
+
+                    REACTOR_INFOS[REACTOR_INFO_COUNT].states[REACTOR_INFOS[REACTOR_INFO_COUNT].stateCount].eventCount = 0;
+
+                    struct ReactorParserStackNode *new = malloc(sizeof(struct ReactorParserStackNode));
+                    new->next = ctx->head;
+                    new->type = REACTOR_ITEM_TYPE_STATE;
+                    ctx->head = new;
+                }
+            } else {
+                ctx->skip++; // TODO: <int name="quest">
+            }
+        break;
+
+        case REACTOR_ITEM_TYPE_INFO:
+            if (!strcmp(name, "string")) {
+                const XML_Char *key = NULL;
+                for (size_t i = 0; attrs[i] != NULL; i += 2) {
+                    if (!strcmp(attrs[i], "name"))
+                        key = attrs[i+1];
+                }
+
+                ctx->skip++;
+                if (!strcmp(key, "link")) {
+                    struct ReactorInfo *reactor = &REACTOR_INFOS[REACTOR_INFO_COUNT];
+                    for (size_t i = 0; i < reactor->stateCount; i++) {
+                        for (size_t j = 0; j < reactor->states[i].eventCount; j++) {
+                            if (reactor->states[i].events[j].type == REACTOR_EVENT_TYPE_SKILL)
+                                free(reactor->states[i].events[j].skills);
+                        }
+                        free(reactor->states[i].events);
+                    }
+                    free(reactor->states);
+                    free(ctx->head->next);
+                    free(ctx->head);
+                    ctx->head = NULL;
+                    XML_StopParser(ctx->parser, false);
+                }
+            } else {
+                ctx->skip++;
+            }
+
+        break;
+
+        case REACTOR_ITEM_TYPE_STATE:
+            if (!strcmp(name, "imgdir")) {
+                const XML_Char *key = NULL;
+                for (size_t i = 0; attrs[i] != NULL; i += 2) {
+                    if (!strcmp(attrs[i], "name")) {
+                        key = attrs[i+1];
+                        break;
+                    }
+                }
+
+                assert(key != NULL);
+
+                if (!strcmp(key, "event")) {
+                    struct ReactorStateInfo *state = &REACTOR_INFOS[REACTOR_INFO_COUNT].states[REACTOR_INFOS[REACTOR_INFO_COUNT].stateCount];
+
+                    ctx->eventCapacity = 1;
+                    state->events = malloc(sizeof(struct ReactorEventInfo));
+
+                    struct ReactorParserStackNode *new = malloc(sizeof(struct ReactorParserStackNode));
+                    new->next = ctx->head;
+                    new->type = REACTOR_ITEM_TYPE_EVENTS;
+                    ctx->head = new;
+                } else {
+                    ctx->skip++;
+                }
+            } else {
+                ctx->skip++;
+            }
+        break;
+
+        case REACTOR_ITEM_TYPE_EVENTS: {
+            if (!strcmp(name, "imgdir")) {
+                struct ReactorStateInfo *state = &REACTOR_INFOS[REACTOR_INFO_COUNT].states[REACTOR_INFOS[REACTOR_INFO_COUNT].stateCount];
+
+                if (state->eventCount == ctx->eventCapacity) {
+                    state->events = realloc(state->events, (ctx->eventCapacity * 2) * sizeof(struct ReactorEventInfo));
+                    ctx->eventCapacity *= 2;
+                }
+
+                struct ReactorParserStackNode *new = malloc(sizeof(struct ReactorParserStackNode));
+                new->next = ctx->head;
+                new->type = REACTOR_ITEM_TYPE_EVENT;
+                ctx->head = new;
+            } else {
+                // TODO: Parse timeOut
+                ctx->skip++;
+            }
+        }
+        break;
+
+        case REACTOR_ITEM_TYPE_EVENT: {
+            struct ReactorStateInfo *state = &REACTOR_INFOS[REACTOR_INFO_COUNT].states[REACTOR_INFOS[REACTOR_INFO_COUNT].stateCount];
+            struct ReactorEventInfo *event = &state->events[state->eventCount];
+
+            if (!strcmp(name, "int")) {
+                const XML_Char *key = NULL;
+                const XML_Char *value;
+                for (size_t i = 0; attrs[i] != NULL; i += 2) {
+                    if (!strcmp(attrs[i], "name"))
+                        key = attrs[i+1];
+                    else if (!strcmp(attrs[i], "value"))
+                        value = attrs[i+1];
+                }
+
+                assert(key != NULL);
+
+                ctx->skip++;
+                if (!strcmp(key, "type")) {
+                    event->type = strtol(value, NULL, 10);
+                } else if (!strcmp(key, "state")) {
+                    event->next = strtol(value, NULL, 10);
+                } else if (!strcmp(key, "0")) {
+                    event->item = strtol(value, NULL, 10);
+                } else if (!strcmp(key, "1")) {
+                    event->count = strtol(value, NULL, 10);
+                }
+            } else if (!strcmp(name, "imgdir")) {
+                const XML_Char *key = NULL;
+                for (size_t i = 0; attrs[i] != NULL; i += 2) {
+                    if (!strcmp(attrs[i], "name"))
+                        key = attrs[i+1];
+                }
+
+                assert(key != NULL);
+
+                if (!strcmp(key, "activeSkillID")) {
+                    ctx->skillCapacity = 1;
+                    event->skills = malloc(sizeof(uint32_t));
+                    event->skillCount = 0;
+
+                    struct ReactorParserStackNode *new = malloc(sizeof(struct ReactorParserStackNode));
+                    new->next = ctx->head;
+                    new->type = REACTOR_ITEM_TYPE_SKILLS;
+                    ctx->head = new;
+                } else {
+                    ctx->skip++;
+                }
+            } else {
+                ctx->skip++;
+            }
+        }
+        break;
+
+        case REACTOR_ITEM_TYPE_SKILLS: {
+            struct ReactorInfo *reactor = &REACTOR_INFOS[REACTOR_INFO_COUNT];
+            struct ReactorStateInfo *state = &reactor->states[reactor->stateCount];
+            struct ReactorEventInfo *event = &state->events[state->eventCount];
+
+            if (event->skillCount == ctx->skillCapacity) {
+                event->skills = realloc(event->skills, (ctx->skillCapacity * 2) * sizeof(uint32_t));
+                ctx->skillCapacity *= 2;
+            }
+
+            if (!strcmp(name, "int")) {
+                const XML_Char *key = NULL;
+                const XML_Char *value;
+                for (size_t i = 0; attrs[i] != NULL; i += 2) {
+                    if (!strcmp(attrs[i], "name"))
+                        key = attrs[i+1];
+                    else if (!strcmp(attrs[i], "value"))
+                        value = attrs[i+1];
+                }
+
+                assert(key != NULL);
+
+                ctx->skip++;
+                event->skills[event->skillCount] = strtol(value, NULL, 10);
+                event->skillCount++;
+            } else {
+                assert(0);
+            }
+        }
+        break;
+        }
+    }
+}
+
+static void on_reactor_end(void *user_data, const XML_Char *name)
+{
+    struct ReactorParserContext *ctx = user_data;
+    if (ctx->skip > 0) {
+        ctx->skip--;
+        return;
+    }
+
+    if (ctx->head->type == REACTOR_ITEM_TYPE_EVENT) {
+        REACTOR_INFOS[REACTOR_INFO_COUNT].states[REACTOR_INFOS[REACTOR_INFO_COUNT].stateCount].eventCount++;
+    } else if (ctx->head->type == REACTOR_ITEM_TYPE_STATE) {
+        REACTOR_INFOS[REACTOR_INFO_COUNT].stateCount++;
+    } else if (ctx->head->type == REACTOR_ITEM_TYPE_TOP_LEVEL) {
+        REACTOR_INFO_COUNT++;
+    }
+
+    struct ReactorParserStackNode *next = ctx->head->next;
+    free(ctx->head);
+    ctx->head = next;
+}
+
+static void on_reactor_second_pass_start(void *user_data, const XML_Char *name, const XML_Char **attrs)
+{
+    struct ReactorParserContext *ctx = user_data;
+    if (ctx->skip > 0) {
+        ctx->skip++;
+        return;
+    }
+
+    if (ctx->head == NULL) {
+        assert(!strcmp(name, "imgdir"));
+
+        ctx->isLink = false;
+        REACTOR_INFOS[REACTOR_INFO_COUNT].id = strtol(attrs[1], NULL, 10);
+
+        ctx->head = malloc(sizeof(struct ReactorParserStackNode));
+        ctx->head->next = NULL;
+        ctx->head->type = REACTOR_ITEM_TYPE_TOP_LEVEL;
+    } else {
+        switch (ctx->head->type) {
+        case REACTOR_ITEM_TYPE_TOP_LEVEL:
+            if (!strcmp(name, "string")) {
+                assert(!strcmp(attrs[0], "name"));
+                assert(!strcmp(attrs[1], "action"));
+                assert(!strcmp(attrs[2], "value"));
+                ctx->skip++;
+                strcpy(REACTOR_INFOS[REACTOR_INFO_COUNT].action, attrs[3]);
+            } else if (!strcmp(name, "imgdir")) {
+                if (!strcmp(attrs[1], "info")) {
+                    struct ReactorParserStackNode *new = malloc(sizeof(struct ReactorParserStackNode));
+                    new->next = ctx->head;
+                    new->type = REACTOR_ITEM_TYPE_INFO;
+                    ctx->head = new;
+                } else {
+                    ctx->skip++;
+                }
+            } else {
+                ctx->skip++;
+            }
+        break;
+
+        case REACTOR_ITEM_TYPE_INFO:
+            if (!strcmp(name, "string")) {
+                const XML_Char *key = NULL;
+                const XML_Char *value = NULL;
+                for (size_t i = 0; attrs[i] != NULL; i += 2) {
+                    if (!strcmp(attrs[i], "name"))
+                        key = attrs[i+1];
+
+                    if (!strcmp(attrs[i], "value"))
+                        value = attrs[i+1];
+                }
+
+                ctx->skip++;
+                if (!strcmp(key, "link")) {
+                    ctx->isLink = true;
+                    struct ReactorInfo *reactor = &REACTOR_INFOS[REACTOR_INFO_COUNT];
+                    uint32_t link = strtol(value, NULL, 10);
+                    struct ReactorInfo *other = &REACTOR_INFOS[cmph_search(REACTOR_INFO_MPH, (void *)&link, sizeof(uint32_t))];
+                    reactor->stateCount = other->stateCount;
+                    reactor->states = malloc(other->stateCount * sizeof(struct ReactorStateInfo));
+                    for (size_t i = 0; i < other->stateCount; i++) {
+                        reactor->states[i].eventCount = other->states[i].eventCount;
+                        reactor->states[i].events = malloc(other->states[i].eventCount * sizeof(struct ReactorEventInfo));
+                        for (size_t j = 0; j < other->states[i].eventCount; j++) {
+                            reactor->states[i].events[j] = other->states[i].events[j];
+                            if (other->states[i].events[j].type == REACTOR_EVENT_TYPE_SKILL) {
+                                reactor->states[i].events[j].skills = malloc(other->states[i].events[j].skillCount * sizeof(uint32_t));
+                                for (size_t k = 0; k < other->states[i].events[j].skillCount; k++)
+                                    reactor->states[i].events[j].skills[k] = other->states[i].events[j].skills[k];
+                            }
+                        }
+                    }
+                }
+            } else {
+                ctx->skip++;
+            }
+        break;
+
+        default:
+            ctx->skip++;
+        }
+    }
+
+}
+
+static void on_reactor_second_pass_end(void *user_data, const XML_Char *name)
+{
+    struct ReactorParserContext *ctx = user_data;
+    if (ctx->skip > 0) {
+        ctx->skip--;
+        return;
+    }
+
+    if (ctx->head->type == REACTOR_ITEM_TYPE_INFO && !ctx->isLink) {
+        // If we completed traversing the info section and haven't found a link then quit immediatly
+        free(ctx->head->next);
+        free(ctx->head);
+        ctx->head = NULL;
+        XML_StopParser(ctx->parser, false);
+        return;
+    } else if (ctx->head->type == REACTOR_ITEM_TYPE_TOP_LEVEL && ctx->isLink) {
+        REACTOR_INFO_COUNT++;
+    }
+
+    struct ReactorParserStackNode *next = ctx->head->next;
+    free(ctx->head);
+    ctx->head = next;
+
 }
 
 static struct Rectangle foothold_mbr(struct Foothold *fh)

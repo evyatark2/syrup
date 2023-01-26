@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define SCRIPT_NAME_MAX_LENGTH 16
+#define SCRIPT_NAME_MAX_LENGTH 32
 
 struct FootholdRTree;
 
@@ -41,12 +41,13 @@ struct LifeInfo {
 
 #define REACTOR_INFO_NAME_MAX_LENGTH 16
 
-struct ReactorInfo {
+struct MapReactorInfo {
     uint32_t id;
     struct Point spawnPoint;
     int16_t reactorTime;
+    struct Point pos;
     bool f;
-    char name[REACTOR_INFO_NAME_MAX_LENGTH+1];
+    // char name[REACTOR_INFO_NAME_MAX_LENGTH+1]; // Do I even need this?
 };
 
 #define PORTAL_INFO_NAME_MAX_LENGTH 16
@@ -78,7 +79,7 @@ struct MapInfo {
     size_t lifeCount;
     struct LifeInfo *lives;
     size_t reactorCount;
-    struct ReactorInfo *reactors;
+    struct MapReactorInfo *reactors;
     size_t portalCount;
     struct PortalInfo *portals;
 };
@@ -283,17 +284,54 @@ struct ConsumableInfo {
     // And more to come!
 };
 
-int wz_init();
-int wz_init_equipment();
-void wz_terminate();
-void wz_terminate_equipment();
+enum ReactorEventType {
+    REACTOR_EVENT_TYPE_HIT = 0,
+    REACTOR_EVENT_TYPE_HIT_FROM_LEFT = 1, // Probably, not sure
+    REACTOR_EVENT_TYPE_HIT_FROM_RIGHT = 2, // Like the flowers in kerning's swamp
+    REACTOR_EVENT_TYPE_SKILL = 5,
+    REACTOR_EVENT_TYPE_TOUCH = 6,
+    REACTOR_EVENT_TYPE_UNTOUCH = 7,
+    REACTOR_EVENT_TYPE_ITEM = 100,
+};
+
+struct ReactorEventInfo {
+    enum ReactorEventType type;
+    uint8_t next;
+    union {
+        struct {
+            uint32_t item;
+            int16_t count;
+            struct Point lt;
+            struct Point rb;
+        };
+        struct {
+            size_t skillCount;
+            uint32_t *skills;
+        };
+    };
+};
+struct ReactorStateInfo {
+    size_t eventCount;
+    struct ReactorEventInfo *events;
+};
+
+struct ReactorInfo {
+    uint32_t id;
+    size_t stateCount;
+    struct ReactorStateInfo *states;
+    char action[SCRIPT_NAME_MAX_LENGTH];
+};
+
+int wz_init(void);
+int wz_init_equipment(void);
+void wz_terminate(void);
+void wz_terminate_equipment(void);
 uint32_t wz_get_map_nearest_town(uint32_t id);
 uint32_t wz_get_target_map(uint32_t id, char *target);
 uint8_t wz_get_target_portal(uint32_t id, char *target);
 const struct FootholdRTree *wz_get_foothold_tree_for_map(uint32_t id);
 const struct LifeInfo *wz_get_life_for_map(uint32_t id, size_t *count);
-const struct LifeInfo *wz_get_npcs_for_map(uint32_t id, size_t *count);
-const struct LifeInfo *wz_get_mobs_for_map(uint32_t id, size_t *count);
+const struct MapReactorInfo *wz_get_reactors_for_map(uint32_t id, size_t *count);
 const struct PortalInfo *wz_get_portal_info(uint32_t id, uint8_t pid);
 const struct PortalInfo *wz_get_portal_info_by_name(uint32_t id, const char *name);
 const struct EquipInfo *wz_get_equip_info(uint32_t id);
@@ -301,6 +339,7 @@ const struct ConsumableInfo *wz_get_consumable_info(uint32_t id);
 const struct MobInfo *wz_get_monster_stats(uint32_t id);
 const struct QuestInfo *wz_get_quest_info(uint16_t id);
 const struct ItemInfo *wz_get_item_info(uint32_t id);
+const struct ReactorInfo *wz_get_reactor_info(uint32_t id, uint8_t state);
 
 #endif
 
