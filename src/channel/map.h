@@ -36,7 +36,7 @@ struct Map;
  *
  * \return The newly created map or NULL if an error occurred
  */
-struct Map *map_create(struct Room *room);
+struct Map *map_create(struct Room *room, struct ScriptManager *reactor_manager);
 
 /**
  * Destroys a map
@@ -44,6 +44,8 @@ struct Map *map_create(struct Room *room);
  * \param map The map to destroy
  */
 void map_destroy(struct Map *map);
+
+uint32_t map_get_id(struct Map *map);
 
 /**
  * Insert a new player to a map
@@ -108,6 +110,10 @@ bool map_monster_is_alive(struct Map *map, uint32_t id, uint32_t oid);
  */
 uint32_t map_damage_monster_by(struct Map *map, struct MapHandle *controller, uint32_t char_id, uint32_t oid, size_t hit_count, int32_t *damage);
 
+struct ClientResult map_hit_reactor(struct Map *map, struct MapHandle *handle, uint32_t oid, uint8_t stance);
+
+struct ClientResult map_cont_script(struct Map *map, struct MapHandle *client);
+
 /**
  * Gets an NPC in the map
  *
@@ -141,6 +147,8 @@ const struct Npc *map_get_npc(struct Map *map, uint32_t oid);
  * \return true if the movement was successful; false if an error occurred.
  */
 bool map_move_monster(struct Map *map, struct MapHandle *controller, uint8_t activity, uint32_t oid, int16_t x, int16_t y, uint16_t fh, uint8_t stance, size_t len, uint8_t *raw_data);
+
+int map_drop_batch_from_map_object(struct Map *map, uint32_t owner_id, uint32_t dropper_oid, size_t count, struct Drop *drops);
 
 /**
  * Add a drop to a map

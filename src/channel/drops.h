@@ -21,8 +21,9 @@ struct MonsterDropInfo {
 };
 
 int drops_load_from_db(struct DatabaseConnection *conn);
-void drops_unload();
+void drops_unload(void);
 const struct MonsterDropInfo *drop_info_find(uint32_t id);
+const struct MonsterDropInfo *reactor_drop_info_find(uint32_t id);
 
 #endif
 

@@ -1,4 +1,4 @@
-SANITIZE=-fsanitize=address -fsanitize=undefined -fsanitize=leak
+SANITIZE=#-fsanitize=address -fsanitize=undefined -fsanitize=leak
 CFLAGS=-g -Wall -pedantic -I/home/evyatar/.local/include `pkg-config --cflags mariadb libevent_pthreads libargon2 expat lua json-c` $(SANITIZE)
 LDFLAGS=-L/home/evyatar/.local/lib -Wl,-rpath /home/evyatar/.local/lib $(SANITIZE)
 LDLIBS=`pkg-config --libs mariadb libevent_pthreads libargon2 expat lua json-c` -lcmph
@@ -9,7 +9,7 @@ DEPDIR := .deps
 DEPFLAGS=-MT $@ -MMD -MP -MF 
 COMMON_SRCS=writer.c reader.c database.c crypt.c packet.c account.c wz.c character.c constants.c hash-map.c
 
-CHANNEL_SRCS=$(COMMON_SRCS) channel/server.c channel/main.c channel/client.c channel/map.c channel/drops.c channel/config.c channel/scripting/client.c channel/scripting/job.c channel/scripting/script-manager.c channel/shop.c
+CHANNEL_SRCS=$(COMMON_SRCS) channel/server.c channel/main.c channel/client.c channel/map.c channel/drops.c channel/config.c channel/scripting/client.c channel/scripting/job.c channel/scripting/reactor-manager.c channel/scripting/script-manager.c channel/shop.c
 CHANNEL_OBJS=$(CHANNEL_SRCS:%.c=$(OBJDIR)/%.o)
 
 LOGIN_SRCS=$(COMMON_SRCS) login/server.c login/main.c login/handlers.c login/config.c

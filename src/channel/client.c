@@ -27,7 +27,7 @@ struct Client {
     // TODO: Make this a handler queue
     void *handler;
     struct Character character;
-    struct ScriptHandle *script;
+    struct ScriptInstance *script;
     enum ScriptState scriptState;
     uint16_t qid;
     uint32_t npc;

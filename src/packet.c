@@ -648,6 +648,48 @@ void remove_monster_controller_packet(uint32_t oid, uint8_t *packet)
     writer_u32(&writer, oid);
 }
 
+void spawn_reactor_packet(uint32_t oid, uint32_t id, int16_t x, int16_t y, uint8_t state, uint8_t *packet)
+{
+    struct Writer writer;
+    writer_init(&writer, SPAWN_REACTOR_PACKET_LENGTH, packet);
+
+    writer_u16(&writer, 0x0117);
+    writer_u32(&writer, oid);
+    writer_u32(&writer, id);
+    writer_u8(&writer, state);
+    writer_i16(&writer, x);
+    writer_i16(&writer, y);
+    writer_u8(&writer, 0);
+    writer_u16(&writer, 0);
+}
+
+void change_reactor_state_packet(uint32_t oid, uint8_t state, int16_t x, int16_t y, uint8_t stance, uint8_t *packet)
+{
+    struct Writer writer;
+    writer_init(&writer, CHANGE_REACTOR_STATE_PACKET_LENGTH, packet);
+
+    writer_u16(&writer, 0x0115);
+    writer_u32(&writer, oid);
+    writer_u8(&writer, state);
+    writer_i16(&writer, x);
+    writer_i16(&writer, y);
+    writer_u8(&writer, stance);
+    writer_u16(&writer, 0);
+    writer_u8(&writer, 5);
+}
+
+void destroy_reactor_packet(uint32_t oid, uint8_t state, int16_t x, int16_t y, uint8_t *packet)
+{
+    struct Writer writer;
+    writer_init(&writer, DESTROY_REACTOR_PACKET_LENGTH, packet);
+
+    writer_u16(&writer, 0x0118);
+    writer_u32(&writer, oid);
+    writer_u8(&writer, state);
+    writer_i16(&writer, x);
+    writer_i16(&writer, y);
+}
+
 void npc_action_packet(size_t size, uint8_t *data, uint8_t *packet)
 {
     struct Writer writer;

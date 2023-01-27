@@ -20,7 +20,12 @@ struct ScriptEntryPoint {
 };
 
 struct ScriptManager;
-struct ScriptHandle;
+struct ScriptInstance;
+
+struct NpcScriptManager;
+struct PortalScriptManager;
+struct QuestScriptManager;
+struct ReactorScriptManager;
 
 enum ScriptResultValue {
     SCRIPT_RESULT_VALUE_KICK = -2,
@@ -43,9 +48,9 @@ struct ScriptResult {
 
 struct ScriptManager *script_manager_create(const char *dir_name, const char *def, size_t entry_point_count, struct ScriptEntryPoint *entry_points);
 void script_manager_destroy(struct ScriptManager *manager);
-struct ScriptHandle *script_manager_alloc(struct ScriptManager *manager, const char *name, size_t entry);
-struct ScriptResult script_manager_run(struct ScriptHandle *handle, ...);
-void script_manager_free(struct ScriptHandle *handle);
+struct ScriptInstance *script_manager_alloc(struct ScriptManager *manager, const char *name, size_t entry);
+struct ScriptResult script_manager_run(struct ScriptInstance *handle, ...);
+void script_manager_free(struct ScriptInstance *handle);
 
 #endif
 

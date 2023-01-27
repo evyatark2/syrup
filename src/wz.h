@@ -43,7 +43,6 @@ struct LifeInfo {
 
 struct MapReactorInfo {
     uint32_t id;
-    struct Point spawnPoint;
     int16_t reactorTime;
     struct Point pos;
     bool f;
@@ -339,7 +338,7 @@ const struct ConsumableInfo *wz_get_consumable_info(uint32_t id);
 const struct MobInfo *wz_get_monster_stats(uint32_t id);
 const struct QuestInfo *wz_get_quest_info(uint16_t id);
 const struct ItemInfo *wz_get_item_info(uint32_t id);
-const struct ReactorInfo *wz_get_reactor_info(uint32_t id, uint8_t state);
+const struct ReactorInfo *wz_get_reactor_info(uint32_t id);
 
 #endif
 

@@ -384,8 +384,10 @@ int wz_init(void)
                 XML_SetUserData(parser, &ctx);
                 XML_Parse(parser, data, len, true);
                 free(data);
-                if (REACTOR_INFO_COUNT == count)
+                if (REACTOR_INFO_COUNT == count) {
+                    XML_ParserReset(parser, NULL);
                     break;
+                }
                 XML_ParserReset(parser, NULL);
             }
             closedir(reactor_dir);
@@ -416,6 +418,7 @@ int wz_init(void)
             struct EquipParserContext ctx = {
                 .parser = parser,
                 .head = NULL,
+                .currentEquip = 0,
             };
             DIR *equip_dir = opendir("wz/Character.wz");
             struct dirent *entry;
@@ -1133,6 +1136,10 @@ const struct LifeInfo *wz_get_life_for_map(uint32_t id, size_t *count)
 
 const struct MapReactorInfo *wz_get_reactors_for_map(uint32_t id, size_t *count)
 {
+    size_t count_;
+    if (count == NULL)
+        count = &count_;
+
     size_t i = cmph_search(MAP_INFO_MPH, (void *)&id, sizeof(uint32_t));
     *count = MAP_INFOS[i].reactorCount;
     return MAP_INFOS[i].reactors;
@@ -1203,6 +1210,14 @@ const struct ItemInfo *wz_get_item_info(uint32_t id)
         return NULL;
     return info;
 
+}
+
+const struct ReactorInfo *wz_get_reactor_info(uint32_t id)
+{
+    struct ReactorInfo *info = &REACTOR_INFOS[cmph_search(REACTOR_INFO_MPH, (void *)&id, sizeof(uint32_t))];
+    if (info->id != id)
+        return NULL;
+    return info;
 }
 
 static void on_map_start(void *user_data, const XML_Char *name, const XML_Char **attrs)
@@ -2779,6 +2794,7 @@ static void on_equip_start(void *user_data, const XML_Char *name, const XML_Char
         EQUIP_INFOS[ctx->currentEquip].speed = 0;
         EQUIP_INFOS[ctx->currentEquip].jump = 0;
         EQUIP_INFOS[ctx->currentEquip].slots = 0;
+        EQUIP_INFOS[ctx->currentEquip].cash = false;
 
         ctx->head = malloc(sizeof(struct EquipParserStackNode));
         ctx->head->next = NULL;
@@ -2861,7 +2877,7 @@ static void on_equip_start(void *user_data, const XML_Char *name, const XML_Char
                 else if (!strcmp(key, "attackSpeed"))
                     EQUIP_INFOS[ctx->currentEquip].attackSpeed = strtol(value, NULL, 10);
                 else if (!strcmp(key, "cash"))
-                    EQUIP_INFOS[ctx->currentEquip].cash = strtol(value, NULL, 10);
+                    EQUIP_INFOS[ctx->currentEquip].cash = strtol(value, NULL, 10) > 0;
             }
         break;
         }
@@ -3054,6 +3070,7 @@ static void on_reactor_start(void *user_data, const XML_Char *name, const XML_Ch
                     }
 
                     REACTOR_INFOS[REACTOR_INFO_COUNT].states[REACTOR_INFOS[REACTOR_INFO_COUNT].stateCount].eventCount = 0;
+                    REACTOR_INFOS[REACTOR_INFO_COUNT].states[REACTOR_INFOS[REACTOR_INFO_COUNT].stateCount].events = NULL;
 
                     struct ReactorParserStackNode *new = malloc(sizeof(struct ReactorParserStackNode));
                     new->next = ctx->head;

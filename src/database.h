@@ -25,6 +25,7 @@ enum DatabaseRequestType {
     DATABASE_REQUEST_TYPE_TRY_CREATE_CHARACTER,
     DATABASE_REQUEST_TYPE_GET_CHARACTER,
     DATABASE_REQUEST_TYPE_GET_MONSTER_DROPS,
+    DATABASE_REQUEST_TYPE_GET_REACTOR_DROPS,
     DATABASE_REQUEST_TYPE_GET_SHOPS,
     DATABASE_REQUEST_TYPE_UPDATE_CHARACTER
 };
@@ -249,6 +250,13 @@ struct MonsterDrops {
     struct MonsterMultiItemDrops multiItemDrops;
 };
 
+struct ReactorDrops {
+    uint32_t id;
+    struct MonsterItemDrops itemDrops;
+    struct MonsterQuestItemDrops questItemDrops;
+    struct MesoDrop mesoDrop;
+};
+
 struct DatabaseShopItem {
     uint32_t id;
     int32_t price;
@@ -371,6 +379,10 @@ union DatabaseResult {
         size_t count;
         struct MonsterDrops *monsters;
     } getMonsterDrops;
+    struct {
+        size_t count;
+        struct ReactorDrops *reactors;
+    } getReactorDrops;
     struct {
         size_t count;
         struct Shop *shops;

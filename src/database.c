@@ -175,6 +175,9 @@ struct DatabaseRequest *database_request_create(struct DatabaseConnection *conn,
     if (req->params.type == DATABASE_REQUEST_TYPE_GET_MONSTER_DROPS) {
         req->res.getMonsterDrops.count = 0;
         req->res.getMonsterDrops.monsters = NULL;
+    } else if (req->params.type == DATABASE_REQUEST_TYPE_GET_REACTOR_DROPS) {
+        req->res.getReactorDrops.count = 0;
+        req->res.getReactorDrops.reactors = NULL;
     } else if (req->params.type == DATABASE_REQUEST_TYPE_GET_SHOPS) {
         req->res.getShops.count = 0;
         req->res.getShops.shops = NULL;
@@ -499,6 +502,7 @@ static int do_get_characters_exists(struct DatabaseRequest *req, int status);
 static int do_try_create_character(struct DatabaseRequest *req, int status);
 static int do_get_character(struct DatabaseRequest *req, int status);
 static int do_get_monster_drops(struct DatabaseRequest *req, int status);
+static int do_get_reactor_drops(struct DatabaseRequest *req, int status);
 static int do_get_shops(struct DatabaseRequest *req, int status);
 static int do_update_character(struct DatabaseRequest *req, int status);
 
@@ -534,6 +538,9 @@ int database_request_execute(struct DatabaseRequest *req, int status)
 
         case DATABASE_REQUEST_TYPE_GET_MONSTER_DROPS:
             return do_get_monster_drops(req, status);
+
+        case DATABASE_REQUEST_TYPE_GET_REACTOR_DROPS:
+            return do_get_reactor_drops(req, status);
 
         case DATABASE_REQUEST_TYPE_GET_SHOPS:
             return do_get_shops(req, status);
@@ -2074,7 +2081,7 @@ static int do_get_monster_drops(struct DatabaseRequest *req, int status)
         assert(mysql_stmt_execute(req->stmt) == 0);
         assert(mysql_stmt_store_result(req->stmt) == 0);
 
-        monster->itemDrops.drops = malloc(mysql_stmt_num_rows(req->stmt) * sizeof(struct MonsterItemDrops));
+        monster->itemDrops.drops = malloc(mysql_stmt_num_rows(req->stmt) * sizeof(struct ItemDrop));
 
         monster->itemDrops.count = 0;
         ret = mysql_stmt_fetch(req->stmt);
@@ -2106,7 +2113,7 @@ static int do_get_monster_drops(struct DatabaseRequest *req, int status)
         assert(mysql_stmt_execute(req->stmt) == 0);
         assert(mysql_stmt_store_result(req->stmt) == 0);
 
-        monster->questItemDrops.drops = malloc(mysql_stmt_num_rows(req->stmt) * sizeof(struct MonsterItemDrops));
+        monster->questItemDrops.drops = malloc(mysql_stmt_num_rows(req->stmt) * sizeof(struct QuestItemDrop));
 
         monster->questItemDrops.count = 0;
         ret = mysql_stmt_fetch(req->stmt);
@@ -2179,6 +2186,130 @@ static int do_get_monster_drops(struct DatabaseRequest *req, int status)
 
             ret = mysql_stmt_fetch(req->stmt);
             assert(ret == 0 || ret == MYSQL_NO_DATA);
+        }
+    }
+
+    return 0;
+}
+
+static int do_get_reactor_drops(struct DatabaseRequest *req, int status)
+{
+    int ret;
+    const char *query = "SELECT DISTINCT reactor_id FROM ReactorDrops UNION SELECT DISTINCT reactor_id FROM ReactorQuestDrops UNION SELECT DISTINCT reactor_id FROM ReactorMesoDrops";
+    assert(mysql_stmt_prepare(req->stmt, query, strlen(query)) == 0);
+
+    uint32_t id;
+    OUTPUT_BINDER_INIT(1);
+    OUTPUT_BINDER_u32(&id);
+    OUTPUT_BINDER_FINALIZE(req->stmt);
+
+    assert(mysql_stmt_execute(req->stmt) == 0);
+    assert(mysql_stmt_store_result(req->stmt) == 0);
+
+    req->res.getReactorDrops.reactors = malloc(mysql_stmt_num_rows(req->stmt) * sizeof(struct ReactorDrops));
+    if (req->res.getReactorDrops.reactors == NULL)
+        return -1;
+
+    ret = mysql_stmt_fetch(req->stmt);
+    assert(ret == 0 || ret == MYSQL_NO_DATA);
+    while (ret != MYSQL_NO_DATA) {
+        req->res.getReactorDrops.reactors[req->res.getReactorDrops.count].id = id;
+        req->res.getReactorDrops.count++;
+
+        ret = mysql_stmt_fetch(req->stmt);
+        assert(ret == 0 || ret == MYSQL_NO_DATA);
+    }
+
+    for (size_t i = 0; i < req->res.getReactorDrops.count; i++) {
+        struct ReactorDrops *reactor = &req->res.getReactorDrops.reactors[i];
+        assert(mysql_stmt_reset(req->stmt) == 0);
+
+        query = "SELECT item_id, chance FROM ReactorDrops WHERE reactor_id = ?";
+        mysql_stmt_prepare(req->stmt, query, strlen(query));
+
+        INPUT_BINDER_INIT(1);
+        INPUT_BINDER_u32(&reactor->id);
+        INPUT_BINDER_FINALIZE(req->stmt);
+
+        OUTPUT_BINDER_INIT(2);
+        OUTPUT_BINDER_u32(&req->temp.drop.itemId);
+        OUTPUT_BINDER_i32(&req->temp.drop.chance);
+        OUTPUT_BINDER_FINALIZE(req->stmt);
+
+        assert(mysql_stmt_execute(req->stmt) == 0);
+        assert(mysql_stmt_store_result(req->stmt) == 0);
+
+        reactor->itemDrops.drops = malloc(mysql_stmt_num_rows(req->stmt) * sizeof(struct ItemDrop));
+
+        reactor->itemDrops.count = 0;
+        ret = mysql_stmt_fetch(req->stmt);
+        assert(ret == 0 || ret == MYSQL_NO_DATA);
+        while (ret != MYSQL_NO_DATA) {
+            reactor->itemDrops.drops[reactor->itemDrops.count].itemId = req->temp.drop.itemId;
+            reactor->itemDrops.drops[reactor->itemDrops.count].chance = req->temp.drop.chance;
+            reactor->itemDrops.count++;
+
+            ret = mysql_stmt_fetch(req->stmt);
+            assert(ret == 0 || ret == MYSQL_NO_DATA);
+        }
+
+        assert(mysql_stmt_reset(req->stmt) == 0);
+
+        query = "SELECT item_id, quest_id, chance FROM ReactorQuestDrops WHERE reactor_id = ?";
+        assert(mysql_stmt_prepare(req->stmt, query, strlen(query)) == 0);
+
+        INPUT_BINDER_INIT(1);
+        INPUT_BINDER_u32(&reactor->id);
+        INPUT_BINDER_FINALIZE(req->stmt);
+
+        OUTPUT_BINDER_INIT(3);
+        OUTPUT_BINDER_u32(&req->temp.drop.itemId);
+        OUTPUT_BINDER_u16(&req->temp.drop.questId);
+        OUTPUT_BINDER_i32(&req->temp.drop.chance);
+        OUTPUT_BINDER_FINALIZE(req->stmt);
+
+        assert(mysql_stmt_execute(req->stmt) == 0);
+        assert(mysql_stmt_store_result(req->stmt) == 0);
+
+        reactor->questItemDrops.drops = malloc(mysql_stmt_num_rows(req->stmt) * sizeof(struct QuestItemDrop));
+
+        reactor->questItemDrops.count = 0;
+        ret = mysql_stmt_fetch(req->stmt);
+        assert(ret == 0 || ret == MYSQL_NO_DATA);
+        while (ret != MYSQL_NO_DATA) {
+            reactor->questItemDrops.drops[reactor->questItemDrops.count].itemId = req->temp.drop.itemId;
+            reactor->questItemDrops.drops[reactor->questItemDrops.count].questId = req->temp.drop.questId;
+            reactor->questItemDrops.drops[reactor->questItemDrops.count].chance = req->temp.drop.chance;
+            reactor->questItemDrops.count++;
+
+            ret = mysql_stmt_fetch(req->stmt);
+            assert(ret == 0 || ret == MYSQL_NO_DATA);
+        }
+
+        assert(mysql_stmt_reset(req->stmt) == 0);
+
+        query = "SELECT min, max, chance FROM ReactorMesoDrops WHERE reactor_id = ?";
+        assert(mysql_stmt_prepare(req->stmt, query, strlen(query)) == 0);
+
+        INPUT_BINDER_INIT(1);
+        INPUT_BINDER_u32(&reactor->id);
+        INPUT_BINDER_FINALIZE(req->stmt);
+
+        OUTPUT_BINDER_INIT(3);
+        OUTPUT_BINDER_i32(&req->temp.drop.min);
+        OUTPUT_BINDER_i32(&req->temp.drop.max);
+        OUTPUT_BINDER_i32(&req->temp.drop.chance);
+        OUTPUT_BINDER_FINALIZE(req->stmt);
+
+        assert(mysql_stmt_execute(req->stmt) == 0);
+        ret = mysql_stmt_fetch(req->stmt);
+        assert(ret == 0 || ret == MYSQL_NO_DATA);
+        if (ret != MYSQL_NO_DATA) {
+            reactor->mesoDrop.min = req->temp.drop.min;
+            reactor->mesoDrop.max = req->temp.drop.max;
+            reactor->mesoDrop.chance = req->temp.drop.chance;
+        } else {
+            reactor->mesoDrop.max = 0;
         }
     }
 

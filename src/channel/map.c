@@ -6,6 +6,7 @@
 #define XXH_INLINE_ALL
 #include <xxhash.h>
 
+#include "scripting/reactor-manager.h"
 #include "client.h"
 #include "server.h"
 #include "drops.h"
@@ -18,6 +19,8 @@ struct MapHandle {
     struct ControllerHeapNode *node;
     size_t count;
     struct Monster **monsters;
+    struct ReactorManager *rm;
+    struct ScriptInstance *script;
     struct Client *client;
 };
 
@@ -41,11 +44,21 @@ struct Monster {
     int32_t hp;
 };
 
+struct Reactor {
+    uint32_t id;
+    uint32_t oid;
+    int16_t x;
+    int16_t y;
+    uint8_t state;
+    bool keepAlive;
+};
+
 enum MapObjectType {
     MAP_OBJECT_NONE,
     MAP_OBJECT_DELETED,
     MAP_OBJECT_MONSTER,
     MAP_OBJECT_NPC,
+    MAP_OBJECT_REACTOR,
     MAP_OBJECT_DROP,
     MAP_OBJECT_DROPPING
 };
@@ -96,8 +109,8 @@ struct DroppingBatch {
     size_t current;
     //struct Drop *drops;
     struct TimerHandle *timer;
-    uint32_t char_id;
-    uint32_t monster_oid;
+    uint32_t owner_id;
+    uint32_t dropper_oid;
     struct Drop drops[];
 };
 
@@ -125,6 +138,9 @@ struct Map {
     size_t deadCount;
     size_t *dead;
     struct ControllerHeap heap;
+    size_t reactorCount;
+    struct Reactor *reactors;
+    struct ScriptManager *reactorManager;
     size_t droppingBatchCapacity;
     size_t droppingBatchCount;
     struct DroppingBatch **droppingBatches;
@@ -136,10 +152,12 @@ struct Map {
 
 static void map_kill_monster(struct Map *map, uint32_t oid);
 static bool map_calculate_drop_position(struct Map *map, struct Point *p);
+static void map_destroy_reactor(struct Map *map, uint32_t oid);
 
 static void on_next_drop(struct Room *room, struct TimerHandle *handle);
 static void on_drop_time_expired(struct Room *room, struct TimerHandle *handle);
 static void on_respawn(struct Room *room, struct TimerHandle *handle);
+static void on_respawn_reactor(struct Room *room, struct TimerHandle *handle);
 
 struct AnnounceItemDropContext {
     uint32_t charId;
@@ -149,22 +167,22 @@ struct AnnounceItemDropContext {
 
 static void do_announce_item_drop(struct Session *src, struct Session *dst, void *ctx_);
 
-struct Map *map_create(struct Room *room)
+struct Map *map_create(struct Room *room, struct ScriptManager *reactor_manager)
 {
     struct Map *map = malloc(sizeof(struct Map));
     if (map == NULL)
         return NULL;
 
-    object_list_init(&map->objectList);
-
-    map->footholdTree = wz_get_foothold_tree_for_map(room_get_id(room));
-
-    size_t life_count;
-    const struct LifeInfo *infos = wz_get_life_for_map(room_get_id(room), &life_count);
-    if (infos == NULL) {
+    if (object_list_init(&map->objectList) == -1) {
         free(map);
         return NULL;
     }
+
+    map->footholdTree = wz_get_foothold_tree_for_map(room_get_id(room));
+
+    // The map ID must exist in this point so infos can't be NULL
+    size_t life_count;
+    const struct LifeInfo *infos = wz_get_life_for_map(room_get_id(room), &life_count);
 
     map->npcCount = 0;
     map->spawnerCount = 0;
@@ -182,6 +200,7 @@ struct Map *map_create(struct Room *room)
 
     map->npcs = malloc(map->npcCount * sizeof(struct Npc));
     if (map->npcs == NULL) {
+        object_list_destroy(&map->objectList);
         free(map);
         return NULL;
     }
@@ -189,6 +208,7 @@ struct Map *map_create(struct Room *room)
     map->spawners = malloc(map->spawnerCount * sizeof(struct Spawner));
     if (map->spawners == NULL) {
         free(map->npcs);
+        object_list_destroy(&map->objectList);
         free(map);
         return NULL;
     }
@@ -197,19 +217,71 @@ struct Map *map_create(struct Room *room)
     if (map->dead == NULL) {
         free(map->spawners);
         free(map->npcs);
+        object_list_destroy(&map->objectList);
+        free(map);
+        return NULL;
+    }
+
+    map->droppingBatches = malloc(sizeof(struct DroppingBatch *));
+    if (map->droppingBatches == NULL) {
+        free(map->dead);
+        free(map->spawners);
+        free(map->npcs);
+        object_list_destroy(&map->objectList);
+        free(map);
+        return NULL;
+    }
+
+    map->dropBatches = malloc(sizeof(struct DropBatch));
+    if (map->dropBatches == NULL) {
+        free(map->droppingBatches);
+        free(map->dead);
+        free(map->spawners);
+        free(map->npcs);
+        object_list_destroy(&map->objectList);
+        free(map);
+        return NULL;
+    }
+
+    const struct MapReactorInfo *reactors_info = wz_get_reactors_for_map(room_get_id(room), &map->reactorCount);
+
+    map->reactors = malloc(map->reactorCount * sizeof(struct Reactor));
+    if (map->reactors == NULL) {
+        free(map->dropBatches);
+        free(map->droppingBatches);
+        free(map->dead);
+        free(map->spawners);
+        free(map->npcs);
+        object_list_destroy(&map->objectList);
+        free(map);
+        return NULL;
+    }
+
+    map->handles = malloc(sizeof(struct MapHandle));
+    if (map->handles == NULL) {
+        free(map->reactors);
+        free(map->dropBatches);
+        free(map->droppingBatches);
+        free(map->dead);
+        free(map->spawners);
+        free(map->npcs);
+        object_list_destroy(&map->objectList);
         free(map);
         return NULL;
     }
 
     if (heap_init(&map->heap) == -1) {
+        free(map->handles);
+        free(map->reactors);
+        free(map->dropBatches);
+        free(map->droppingBatches);
         free(map->dead);
         free(map->spawners);
         free(map->npcs);
+        object_list_destroy(&map->objectList);
         free(map);
         return NULL;
     }
-
-    map->deadCount = 0;
 
     map->npcCount = 0;
     map->spawnerCount = 0;
@@ -244,6 +316,21 @@ struct Map *map_create(struct Room *room)
     }
 
     map->monsters = malloc(map->spawnerCount * sizeof(struct Monster));
+    if (map->monsters == NULL) {
+        heap_destroy(&map->heap);
+        free(map->handles);
+        free(map->reactors);
+        free(map->dropBatches);
+        free(map->droppingBatches);
+        free(map->dead);
+        free(map->spawners);
+        free(map->npcs);
+        object_list_destroy(&map->objectList);
+        free(map);
+        return NULL;
+        return NULL;
+    }
+
     for (size_t i = 0; i < map->spawnerCount; i++) {
         uint32_t oid = object_list_allocate(&map->objectList);
         struct MapObject *obj = object_list_get(&map->objectList, oid);
@@ -261,26 +348,42 @@ struct Map *map_create(struct Room *room)
     map->monsterCapacity = map->spawnerCount;
     map->monsterCount = map->spawnerCount;
 
-    map->handles = malloc(sizeof(struct MapHandle));
-    map->handleCapacity = 1;
-    map->handleCount = 0;
+    for (size_t i = 0; i < map->reactorCount; i++) {
+        uint32_t oid = object_list_allocate(&map->objectList);
+        struct MapObject *obj = object_list_get(&map->objectList, oid);
+        obj->type = MAP_OBJECT_REACTOR;
+        obj->index = i;
+        map->reactors[i].id = reactors_info[i].id;
+        map->reactors[i].oid = oid;
+        map->reactors[i].x = reactors_info[i].pos.x;
+        map->reactors[i].y = reactors_info[i].pos.y;
+        map->reactors[i].state = 0;
+        map->reactors[i].keepAlive = false;
+    }
 
-    map->droppingBatches = malloc(sizeof(struct DroppingBatch *));
+    map->deadCount = 0;
+
     map->droppingBatchCapacity = 1;
     map->droppingBatchCount = 0;
 
-    map->dropBatches = malloc(sizeof(struct DropBatch));
     map->dropBatchCapacity = 1;
     map->dropBatchStart = 0;
     map->dropBatchEnd = 0;
 
+    map->handleCapacity = 1;
+    map->handleCount = 0;
+
     map->room = room;
+
+    map->reactorManager = reactor_manager;
 
     return map;
 }
 
 void map_destroy(struct Map *map)
 {
+    free(map->reactors);
+
     for (size_t i = map->dropBatchStart; i < map->dropBatchEnd; i++) {
         if (map->dropBatches[i].count != 0)
             free(map->dropBatches[i].drops);
@@ -302,6 +405,11 @@ void map_destroy(struct Map *map)
     free(map->npcs);
     free(map->handles);
     free(map);
+}
+
+uint32_t map_get_id(struct Map *map)
+{
+    return room_get_id(map->room);
 }
 
 int map_join(struct Map *map, struct Client *client, struct MapHandleContainer *handle)
@@ -369,6 +477,16 @@ int map_join(struct Map *map, struct Client *client, struct MapHandleContainer *
         session_write(session, SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH, packet);
     }
 
+    const struct MapReactorInfo *reactors_info = wz_get_reactors_for_map(room_get_id(map->room), NULL);
+    for (size_t i = 0; i < map->reactorCount; i++) {
+        const struct ReactorInfo *info = wz_get_reactor_info(reactors_info[i].id);
+        if (info->states[map->reactors[i].state].eventCount != 0) {
+            uint8_t packet[SPAWN_REACTOR_PACKET_LENGTH];
+            spawn_reactor_packet(map->reactors[i].oid, reactors_info[i].id, reactors_info[i].pos.x, reactors_info[i].pos.y, map->reactors[i].state, packet);
+            session_write(session, SPAWN_REACTOR_PACKET_LENGTH, packet);
+        }
+    }
+
     for (size_t i = map->dropBatchStart; i < map->dropBatchEnd; i++) {
         for (size_t j = 0; j < map->dropBatches[i].count; j++) {
             struct Drop *drop = &map->dropBatches[i].drops[j];
@@ -384,6 +502,7 @@ int map_join(struct Map *map, struct Client *client, struct MapHandleContainer *
     }
 
     handle->handle->container = handle;
+    handle->handle->script = NULL;
     map->handleCount++;
 
     return 0;
@@ -553,114 +672,10 @@ uint32_t map_damage_monster_by(struct Map *map, struct MapHandle *handle, uint32
                     }
                 }
 
-                for (size_t i = 0; i < drop_count; i++) {
-                    drops[i].x = monster->x + (i - drop_count / 2) * 25;
-                    drops[i].y = monster->y - 85;
-                    struct Point pos = { drops[i].x, drops[i].y };
-                    if (!map_calculate_drop_position(map, &pos)) {
-                        drops[i].x = monster->x;
-                        drops[i].y = monster->y;
-                    } else {
-                        drops[i].x = pos.x;
-                        drops[i].y = pos.y;
-                    }
-                }
+                map_drop_batch_from_map_object(map, char_id, monster->oid, drop_count, drops);
 
-                if (drop_count > 1) {
-                    if (map->droppingBatchCount == map->droppingBatchCapacity) {
-                        void *temp = realloc(map->droppingBatches, (map->droppingBatchCapacity * 2) * sizeof(struct DroppingBatch *));
-                        if (temp == NULL)
-                            return -1;
-
-                        map->droppingBatches = temp;
-                        map->droppingBatchCapacity *= 2;
-                    }
-
-                    struct DroppingBatch *batch = malloc(sizeof(struct DroppingBatch) + drop_count * sizeof(struct Drop));
-                    if (batch == NULL)
-                        return -1;
-
-                    batch->timer = room_add_timer(map->room, 300, on_next_drop, batch, true);
-
-                    // Drop the first one immediatly
-                    // Also can't be player drop as they come in 1's
-                    struct Drop *drop = &drops[0];
-                    drop->oid = object_list_allocate(&map->objectList);
-                    struct MapObject *object = object_list_get(&map->objectList, drop->oid);
-                    object->type = MAP_OBJECT_DROPPING;
-                    object->index = map->droppingBatchCount;
-                    object->index2 = 0;
-
-                    struct AnnounceItemDropContext ctx = {
-                        .charId = char_id,
-                        .dropperOid = monster->oid,
-                        .drop = drop
-                    };
-                    room_foreach(map->room, do_announce_item_drop, &ctx);
-
-                    for (size_t i = 0; i < drop_count; i++)
-                        batch->drops[i] = drops[i];
-
-                    map->droppingBatches[map->droppingBatchCount] = batch;
-                    batch->index = map->droppingBatchCount;
-                    batch->count = drop_count;
-                    batch->current = 1;
-                    batch->char_id = char_id;
-                    batch->monster_oid = monster->oid;
-                    map->droppingBatchCount++;
-                } else if (drop_count == 1) {
-                    if (map->dropBatchEnd == map->dropBatchCapacity) {
-                        void *temp = realloc(map->dropBatches, (map->dropBatchCapacity * 2) * sizeof(struct DropBatch));
-                        if (temp == NULL)
-                            return -1; // TODO: Delete the drops
-
-                        map->dropBatches = temp;
-                        map->dropBatchCapacity *= 2;
-                    }
-
-                    struct DropBatch *batch = &map->dropBatches[map->dropBatchEnd];
-                    batch->timer = room_add_timer(map->room, 15 * 1000, on_drop_time_expired, NULL, true);
-
-                    batch->drops = malloc(sizeof(struct Drop));
-                    *batch->drops = *drops;
-                    struct Drop *drop = &batch->drops[0];
-                    drop->oid = object_list_allocate(&map->objectList);
-                    struct MapObject *object = object_list_get(&map->objectList, drop->oid);
-                    object->type = MAP_OBJECT_DROP;
-                    object->index = map->dropBatchEnd;
-                    object->index2 = 0;
-                    batch->count = 1;
-                    map->dropBatchEnd++;
-
-                    switch (drop->type) {
-                    case DROP_TYPE_MESO: {
-                        uint8_t packet[DROP_MESO_FROM_OBJECT_PACKET_LENGTH];
-                        drop_meso_from_object_packet(drop->oid, drop->meso, char_id, drop->x, drop->y, drop->x, drop->y, monster->oid, false, packet);
-                        room_broadcast(map->room, DROP_MESO_FROM_OBJECT_PACKET_LENGTH, packet);
-                    }
-                        break;
-
-                    case DROP_TYPE_ITEM: {
-                        struct AnnounceItemDropContext ctx = {
-                            .charId = char_id,
-                            .dropperOid = monster->oid,
-                            .drop = drop
-                        };
-                        room_foreach(map->room, do_announce_item_drop, &ctx);
-                    }
-                    break;
-
-                    case DROP_TYPE_EQUIP: {
-                        uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
-                        drop_item_from_object_packet(drop->oid, drop->equip.item.itemId, char_id, drop->x, drop->y, drop->x, drop->y, monster->oid, false, packet);
-                        room_broadcast(map->room, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet);
-                    }
-                    break;
-                    }
-
+                if (drop_count == 1)
                     map_kill_monster(map, monster->oid);
-                }
-
             } else {
                 map_kill_monster(map, monster->oid);
             }
@@ -670,6 +685,89 @@ uint32_t map_damage_monster_by(struct Map *map, struct MapHandle *handle, uint32
     }
 
     return -1;
+}
+
+struct ClientResult map_hit_reactor(struct Map *map, struct MapHandle *handle, uint32_t oid, uint8_t stance)
+{
+    struct MapObject *object = object_list_get(&map->objectList, oid);
+    if (object == NULL || object->type != MAP_OBJECT_REACTOR)
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
+
+    struct Reactor *reactor = &map->reactors[object->index];
+    if (wz_get_reactor_info(reactor->id)->states[reactor->state].eventCount == 0)
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
+
+    bool found = false;
+    for (size_t i = 0; i < wz_get_reactor_info(reactor->id)->states[reactor->state].eventCount; i++) {
+        if (wz_get_reactor_info(reactor->id)->states[reactor->state].events[i].type == REACTOR_EVENT_TYPE_HIT) {
+            reactor->state = wz_get_reactor_info(reactor->id)->states[reactor->state].events[i].next;
+            found = true;
+            break;
+        }
+    }
+
+    if (!found)
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
+
+    if (wz_get_reactor_info(reactor->id)->states[reactor->state].eventCount == 0) {
+        // Reactor broken
+        char script_name[37];
+        strcpy(script_name, wz_get_reactor_info(reactor->id)->action);
+        strcat(script_name, ".lua");
+        handle->script = script_manager_alloc(map->reactorManager, script_name, 0);
+        if (handle->script == NULL) {
+            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_ERROR };
+        }
+
+        handle->rm = reactor_manager_create(map, handle->client, object->index, oid);
+
+        struct ScriptResult res = script_manager_run(handle->script, SCRIPT_REACTOR_MANAGER_TYPE, handle->rm);
+
+        switch (res.result) {
+        case SCRIPT_RESULT_VALUE_KICK:
+            reactor_manager_destroy(handle->rm);
+            script_manager_free(handle->script);
+            handle->script = NULL;
+            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
+        break;
+
+        case SCRIPT_RESULT_VALUE_FAILURE:
+            reactor_manager_destroy(handle->rm);
+            script_manager_free(handle->script);
+            handle->script = NULL;
+            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_ERROR };
+        break;
+
+        case SCRIPT_RESULT_VALUE_SUCCESS:
+            if (!reactor->keepAlive)
+                map_destroy_reactor(map, reactor->oid);
+
+            reactor_manager_destroy(handle->rm);
+            script_manager_free(handle->script);
+            handle->script = NULL;
+        /* FALLTHROUGH */
+        case SCRIPT_RESULT_VALUE_NEXT:
+            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
+        break;
+
+        case SCRIPT_RESULT_VALUE_WARP:
+            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_WARP, .map = res.value.i, .portal = res.value2.i };
+        break;
+        }
+    } else {
+        // Reactor got hit
+        uint8_t packet[CHANGE_REACTOR_STATE_PACKET_LENGTH];
+        change_reactor_state_packet(reactor->oid, reactor->state, reactor->x, reactor->y, stance, packet);
+        room_broadcast(map->room, CHANGE_REACTOR_STATE_PACKET_LENGTH, packet);
+    }
+
+    return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
+}
+
+struct ClientResult map_cont_script(struct Map *map, struct MapHandle *handle)
+{
+    script_manager_run(handle->script, SCRIPT_REACTOR_MANAGER_TYPE, handle->rm);
+    return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
 }
 
 const struct Npc *map_get_npc(struct Map *map, uint32_t oid)
@@ -702,6 +800,139 @@ bool map_move_monster(struct Map *map, struct MapHandle *controller, uint8_t act
     }
 
     return true;
+}
+
+int map_drop_batch_from_map_object(struct Map *map, uint32_t owner_id, uint32_t dropper_oid, size_t count, struct Drop *drops)
+{
+    struct MapObject *object = object_list_get(&map->objectList, dropper_oid);
+    struct Point pos;
+    if (object->type == MAP_OBJECT_MONSTER) {
+        pos.x = map->monsters[object->index].x;
+        pos.y = map->monsters[object->index].y;
+    } else if (object->type == MAP_OBJECT_REACTOR) {
+        pos = wz_get_reactors_for_map(room_get_id(map->room), NULL)[object->index].pos;
+    } else if (object->type == MAP_OBJECT_DROP) {
+        pos.x = map->dropBatches[object->index].drops[object->index2].x;
+        pos.y = map->dropBatches[object->index].drops[object->index2].y;
+    } else if (object->type == MAP_OBJECT_DROPPING) {
+        pos.x = map->droppingBatches[object->index]->drops[object->index2].x;
+        pos.y = map->droppingBatches[object->index]->drops[object->index2].y;
+    } else if (object->type == MAP_OBJECT_NPC) {
+        pos.x = map->npcs[object->index].x;
+        pos.y = map->npcs[object->index].y;
+    }
+
+    for (size_t i = 0; i < count; i++) {
+        drops[i].x = pos.x + (i - count / 2) * 25;
+        drops[i].y = pos.y - 85;
+        struct Point pos = { drops[i].x, drops[i].y };
+        map_calculate_drop_position(map, &pos);
+        drops[i].x = pos.x;
+        drops[i].y = pos.y;
+    }
+
+    if (count > 1) {
+        if (map->droppingBatchCount == map->droppingBatchCapacity) {
+            void *temp = realloc(map->droppingBatches, (map->droppingBatchCapacity * 2) * sizeof(struct DroppingBatch *));
+            if (temp == NULL)
+                return -1;
+
+            map->droppingBatches = temp;
+            map->droppingBatchCapacity *= 2;
+        }
+
+        struct DroppingBatch *batch = malloc(sizeof(struct DroppingBatch) + count * sizeof(struct Drop));
+        if (batch == NULL)
+            return -1;
+
+        batch->timer = room_add_timer(map->room, 300, on_next_drop, batch, true);
+
+        // Drop the first one immediatly
+        // Also can't be player drop as they come in 1's
+        struct Drop *drop = &drops[0];
+        drop->oid = object_list_allocate(&map->objectList);
+        struct MapObject *object = object_list_get(&map->objectList, drop->oid);
+        object->type = MAP_OBJECT_DROPPING;
+        object->index = map->droppingBatchCount;
+        object->index2 = 0;
+
+        struct AnnounceItemDropContext ctx = {
+            .charId = owner_id,
+            .dropperOid = dropper_oid,
+            .drop = drop
+        };
+        room_foreach(map->room, do_announce_item_drop, &ctx);
+
+        for (size_t i = 0; i < count; i++)
+            batch->drops[i] = drops[i];
+
+        map->droppingBatches[map->droppingBatchCount] = batch;
+        batch->index = map->droppingBatchCount;
+        batch->count = count;
+        batch->current = 1;
+        batch->owner_id = owner_id;
+        batch->dropper_oid = dropper_oid;
+        map->droppingBatchCount++;
+
+        // If the dropper is a reactor then it was triggered
+        // during the reactor's script which should destroy the
+        // reactor after the script if finished.
+        // This prevents this from happening until all drops have been dropped
+        struct MapObject *obj = object_list_get(&map->objectList, dropper_oid);
+        if (obj->type == MAP_OBJECT_REACTOR)
+            map->reactors[obj->index].keepAlive = true;
+    } else if (count == 1) {
+        if (map->dropBatchEnd == map->dropBatchCapacity) {
+            void *temp = realloc(map->dropBatches, (map->dropBatchCapacity * 2) * sizeof(struct DropBatch));
+            if (temp == NULL)
+                return -1; // TODO: Delete the drops
+
+            map->dropBatches = temp;
+            map->dropBatchCapacity *= 2;
+        }
+
+        struct DropBatch *batch = &map->dropBatches[map->dropBatchEnd];
+        batch->timer = room_add_timer(map->room, 15 * 1000, on_drop_time_expired, NULL, true);
+
+        batch->drops = malloc(sizeof(struct Drop));
+        *batch->drops = *drops;
+        struct Drop *drop = &batch->drops[0];
+        drop->oid = object_list_allocate(&map->objectList);
+        struct MapObject *object = object_list_get(&map->objectList, drop->oid);
+        object->type = MAP_OBJECT_DROP;
+        object->index = map->dropBatchEnd;
+        object->index2 = 0;
+        batch->count = 1;
+        map->dropBatchEnd++;
+
+        switch (drop->type) {
+        case DROP_TYPE_MESO: {
+            uint8_t packet[DROP_MESO_FROM_OBJECT_PACKET_LENGTH];
+            drop_meso_from_object_packet(drop->oid, drop->meso, owner_id, drop->x, drop->y, drop->x, drop->y, dropper_oid, false, packet);
+            room_broadcast(map->room, DROP_MESO_FROM_OBJECT_PACKET_LENGTH, packet);
+        }
+            break;
+
+        case DROP_TYPE_ITEM: {
+            struct AnnounceItemDropContext ctx = {
+                .charId = owner_id,
+                .dropperOid = dropper_oid,
+                .drop = drop
+            };
+            room_foreach(map->room, do_announce_item_drop, &ctx);
+        }
+        break;
+
+        case DROP_TYPE_EQUIP: {
+            uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
+            drop_item_from_object_packet(drop->oid, drop->equip.item.itemId, owner_id, drop->x, drop->y, drop->x, drop->y, dropper_oid, false, packet);
+            room_broadcast(map->room, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet);
+        }
+        break;
+        }
+    }
+
+    return 0;
 }
 
 void map_add_player_drop(struct Map *map, uint32_t char_id, struct Drop *drop)
@@ -856,6 +1087,18 @@ static void map_kill_monster(struct Map *map, uint32_t oid)
     room_broadcast(map->room, KILL_MONSTER_PACKET_LENGTH, packet);
 }
 
+static void map_destroy_reactor(struct Map *map, uint32_t oid)
+{
+    struct MapObject *object = object_list_get(&map->objectList, oid);
+    struct Reactor *reactor = &map->reactors[object->index];
+
+    uint8_t packet[DESTROY_REACTOR_PACKET_LENGTH];
+    destroy_reactor_packet(oid, reactor->state, wz_get_reactors_for_map(room_get_id(map->room), NULL)[object->index].pos.x, wz_get_reactors_for_map(room_get_id(map->room), NULL)[object->index].pos.y, packet);
+    room_broadcast(map->room, DESTROY_REACTOR_PACKET_LENGTH, packet);
+
+    room_add_timer(map->room, 3000, on_respawn_reactor, reactor, true);
+}
+
 static bool map_calculate_drop_position(struct Map *map, struct Point *p)
 {
     const struct Foothold *fh = foothold_tree_find_below(map->footholdTree, p);
@@ -882,8 +1125,8 @@ static void on_next_drop(struct Room *room, struct TimerHandle *handle)
     object->index2 = batch->current;
 
     struct AnnounceItemDropContext ctx = {
-        .charId = batch->char_id,
-        .dropperOid = batch->monster_oid,
+        .charId = batch->owner_id,
+        .dropperOid = batch->dropper_oid,
         .drop = drop
     };
     room_foreach(map->room, do_announce_item_drop, &ctx);
@@ -928,8 +1171,12 @@ static void on_next_drop(struct Room *room, struct TimerHandle *handle)
         new->count = batch->count;
         map->dropBatchEnd++;
 
-        if (batch->monster_oid != -1)
-            map_kill_monster(map, batch->monster_oid);
+        object = object_list_get(&map->objectList, batch->dropper_oid);
+        if (object->type == MAP_OBJECT_MONSTER) {
+            map_kill_monster(map, batch->dropper_oid);
+        } else {
+            map_destroy_reactor(map, batch->dropper_oid);
+        }
 
         free(batch);
     }
@@ -1034,6 +1281,17 @@ static void on_respawn(struct Room *room, struct TimerHandle *handle)
     map->deadCount = 0;
 
     map->respawnHandle = room_add_timer(map->room, 10 * 1000, on_respawn, NULL, false);
+}
+
+static void on_respawn_reactor(struct Room *room, struct TimerHandle *handle)
+{
+    struct Reactor *reactor = timer_get_data(handle);
+    reactor->state = 0;
+    reactor->keepAlive = false;
+
+    uint8_t packet[SPAWN_REACTOR_PACKET_LENGTH];
+    spawn_reactor_packet(reactor->oid, reactor->id, reactor->x, reactor->y, reactor->state, packet);
+    room_broadcast(room, SPAWN_REACTOR_PACKET_LENGTH, packet);
 }
 
 static void do_announce_item_drop(struct Session *n_, struct Session *dst, void *ctx_)

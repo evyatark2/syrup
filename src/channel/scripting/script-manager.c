@@ -20,6 +20,7 @@
 
 #include "client.h"
 #include "job.h"
+#include "reactor-manager.h"
 
 struct Script {
     char *name;
@@ -35,7 +36,7 @@ struct ScriptManager {
     struct ScriptEntryPoint *entryPoints;
 };
 
-struct ScriptHandle {
+struct ScriptInstance {
     lua_State *L;
     struct Script *script;
     struct ScriptEntryPoint *entry;
@@ -109,6 +110,7 @@ struct ScriptManager *script_manager_create(const char *dir_name, const char *de
         strcpy(script->name, ent->d_name);
         luaL_openlibs(script->L);
         luaopen_client(script->L);
+        luaopen_reactor_manager(script->L);
         luaopen_job(script->L);
         lua_setglobal(script->L, "Job");
         if (luaL_loadbuffer(script->L, buf, size, ent->d_name) != LUA_OK || lua_pcall(script->L, 0, 0, 0))
@@ -145,9 +147,9 @@ void script_manager_destroy(struct ScriptManager *sm)
     free(sm);
 }
 
-struct ScriptHandle *script_manager_alloc(struct ScriptManager *sm, const char *name, size_t entry)
+struct ScriptInstance *script_manager_alloc(struct ScriptManager *sm, const char *name, size_t entry)
 {
-    struct ScriptHandle *handle = malloc(sizeof(struct ScriptHandle));
+    struct ScriptInstance *handle = malloc(sizeof(struct ScriptInstance));
     handle->L = NULL;
     for (size_t i = 0; i < sm->scriptCount; i++) {
         if (strcmp(sm->scripts[i].name, name) == 0) {
@@ -184,7 +186,7 @@ struct ScriptHandle *script_manager_alloc(struct ScriptManager *sm, const char *
     return handle;
 }
 
-struct ScriptResult script_manager_run(struct ScriptHandle *handle, ...)
+struct ScriptResult script_manager_run(struct ScriptInstance *handle, ...)
 {
     va_list list;
     va_start(list, handle);
@@ -196,9 +198,11 @@ struct ScriptResult script_manager_run(struct ScriptHandle *handle, ...)
             case SCRIPT_VALUE_TYPE_BOOLEAN:
                 lua_pushboolean(handle->L, va_arg(list, int));
             break;
+
             case SCRIPT_VALUE_TYPE_INTEGER:
                 lua_pushinteger(handle->L, va_arg(list, int));
             break;
+
             case SCRIPT_VALUE_TYPE_USERDATA: {
                 char *type = va_arg(list, char *);
                 void **data = lua_newuserdata(handle->L, sizeof(void *));
@@ -218,6 +222,7 @@ struct ScriptResult script_manager_run(struct ScriptHandle *handle, ...)
             case SCRIPT_VALUE_TYPE_BOOLEAN:
                 value.b = lua_toboolean(handle->L, -1);
             break;
+
             case SCRIPT_VALUE_TYPE_INTEGER:
                 value.i = lua_tointeger(handle->L, -1);
             break;
@@ -256,6 +261,7 @@ struct ScriptResult script_manager_run(struct ScriptHandle *handle, ...)
             case SCRIPT_VALUE_TYPE_BOOLEAN:
                 value.b = lua_toboolean(handle->L, -1);
             break;
+
             case SCRIPT_VALUE_TYPE_INTEGER:
                 value.i = lua_tointeger(handle->L, -1);
             break;
@@ -285,7 +291,7 @@ struct ScriptResult script_manager_run(struct ScriptHandle *handle, ...)
     }
 }
 
-void script_manager_free(struct ScriptHandle *handle)
+void script_manager_free(struct ScriptInstance *handle)
 {
     if (handle != NULL) {
         lua_State *L = handle->script->L;

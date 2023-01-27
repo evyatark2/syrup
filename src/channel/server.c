@@ -205,6 +205,7 @@ struct RoomManager {
     struct HashSetU32 *rooms; // Uses `RoomId`
     struct event *timer;
     struct TimerEventHeap heap;
+    void *userData;
 };
 
 static int start_worker(void *ctx_);
@@ -478,6 +479,7 @@ struct ChannelServer *channel_server_create(uint16_t port, OnLog *on_log, const 
         manager->onClientJoin = on_client_join;
         manager->onRoomCreate = on_room_create;
         manager->onRoomDestroy = on_room_destroy;
+        manager->userData = global_ctx;
         if (thrd_create(server->threads + server->threadCount, start_worker, manager) != thrd_success) {
             event_heap_destroy(&manager->heap);
             event_free(manager->timer);
@@ -1158,7 +1160,7 @@ static void on_session_join(int fd, short what, void *ctx_)
                 };
                 if (hash_set_u32_insert(manager->rooms, &new) == -1)
                     ; // TODO
-                if (manager->onRoomCreate(session->room, manager->worker.userData) != 0)
+                if (manager->onRoomCreate(session->room, manager->userData) != 0)
                     ; // TODO
             } else {
                 session->room = ((struct RoomId *)hash_set_u32_get(manager->rooms, session->targetRoom))->room;

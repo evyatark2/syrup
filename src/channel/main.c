@@ -27,6 +27,7 @@ struct GlobalContext {
     struct ScriptManager *questManager;
     struct ScriptManager *portalManager;
     struct ScriptManager *npcManager;
+    struct ScriptManager *reactorManager;
 };
 
 static void on_log(enum LogType type, const char *fmt, ...);
@@ -133,6 +134,16 @@ int main()
         return -1;
     }
 
+    eps->name = "act";
+    ctx.reactorManager = script_manager_create("script/reactor", "def.lua", 1, eps);
+    if (ctx.reactorManager == NULL) {
+        script_manager_destroy(ctx.npcManager);
+        script_manager_destroy(ctx.portalManager);
+        script_manager_destroy(ctx.questManager);
+        wz_terminate();
+        return -1;
+    }
+
     SERVER = channel_server_create(7575, on_log, CHANNEL_CONFIG.listen, create_context, destroy_context, on_client_connect, on_client_disconnect, on_client_join, on_unassigned_client_packet, on_client_packet, on_room_create, on_room_destroy, &ctx);
     if (SERVER == NULL)
         return -1;
@@ -140,6 +151,7 @@ int main()
     signal(SIGINT, on_sigint);
     channel_server_start(SERVER);
     channel_server_destroy(SERVER);
+    script_manager_destroy(ctx.reactorManager);
     script_manager_destroy(ctx.npcManager);
     script_manager_destroy(ctx.portalManager);
     script_manager_destroy(ctx.questManager);
@@ -1132,6 +1144,32 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
     }
     break;
 
+    case 0x00CD: {
+        uint32_t oid;
+        uint8_t stance;
+        READER_BEGIN(size, packet);
+        READ_OR_ERROR(reader_u32, &oid);
+        SKIP(4); // Position
+        READ_OR_ERROR(reader_u8, &stance);
+        SKIP(5);
+        SKIP(4); // skill ID
+        READER_END();
+
+        struct ClientResult res = map_hit_reactor(room_get_context(session_get_room(session)), client_get_map(client)->handle, oid, stance);
+        switch (res.type) {
+        case CLIENT_RESULT_TYPE_BAN:
+        case CLIENT_RESULT_TYPE_ERROR:
+            return (struct OnPacketResult) { .status = -1 };
+        case CLIENT_RESULT_TYPE_SUCCESS:
+            return (struct OnPacketResult) { .status = 0, .room = -1 };
+        case CLIENT_RESULT_TYPE_WARP:
+            return (struct OnPacketResult) { .status = 0, .room = res.map };
+        break;
+        }
+        return (struct OnPacketResult) { .status = 0, .room = -1 };
+    }
+    break;
+
     case 0x00CF: {
         READER_BEGIN(size, packet);
         READER_END();
@@ -1253,7 +1291,9 @@ static bool on_client_join(struct Session *session, void *thread_ctx)
 
 static int on_room_create(struct Room *room, void *thread_ctx)
 {
-    struct Map *map = map_create(room);
+    struct GlobalContext *ctx = thread_ctx;
+
+    struct Map *map = map_create(room, ctx->reactorManager);
     if (map == NULL)
         return -1;
 

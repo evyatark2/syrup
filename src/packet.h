@@ -120,6 +120,15 @@ void spawn_monster_controller_packet(uint32_t oid, bool aggro, uint32_t id, int1
 #define REMOVE_MONSTER_CONTROLLER_PACKET_LENGTH 7
 void remove_monster_controller_packet(uint32_t oid, uint8_t *packet);
 
+#define SPAWN_REACTOR_PACKET_LENGTH 18
+void spawn_reactor_packet(uint32_t oid, uint32_t id, int16_t x, int16_t y, uint8_t state, uint8_t *packet);
+
+#define CHANGE_REACTOR_STATE_PACKET_LENGTH 15
+void change_reactor_state_packet(uint32_t oid, uint8_t state, int16_t x, int16_t y, uint8_t stance, uint8_t *packet);
+
+#define DESTROY_REACTOR_PACKET_LENGTH 11
+void destroy_reactor_packet(uint32_t oid, uint8_t state, int16_t x, int16_t y, uint8_t *packet);
+
 void npc_action_packet(size_t size, uint8_t *data, uint8_t *packet);
 
 #define MOVE_MOB_PACKET_MAX_LENGTH 3843
