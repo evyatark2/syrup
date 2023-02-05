@@ -192,7 +192,7 @@ CREATE TABLE IF NOT EXISTS MonsterBooks (
     character_id INT UNSIGNED,
     card_id INT UNSIGNED,
     quantity TINYINT NOT NULL,
-    PRIMARY KEY (character_id, monster_id),
+    PRIMARY KEY (character_id, card_id),
     FOREIGN KEY (character_id) REFERENCES Characters (id) ON DELETE CASCADE
 );
 
@@ -13653,7 +13653,7 @@ INSERT INTO temp_reactor_drop_data VALUES
 
 INSERT IGNORE INTO ReactorDrops SELECT reactor_id, item_id, chance FROM temp_reactor_drop_data WHERE quest_id = -1 && item_id != 0;
 INSERT IGNORE INTO ReactorQuestDrops SELECT reactor_id, item_id, quest_id, chance FROM temp_reactor_drop_data WHERE quest_id != -1 && item_id != 0;
-INSERT IGNORE INTO ReactorMesoDrops SELECT reactor_id, chance FROM temp_reactor_drop_data WHERE item_id = 0;
+INSERT IGNORE INTO ReactorMesoDrops (reactor_id, chance) SELECT reactor_id, chance FROM temp_reactor_drop_data WHERE item_id = 0;
 
 DROP TABLE temp_reactor_drop_data;
 
