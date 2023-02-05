@@ -272,7 +272,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
     break;
 
     case 0x0029: {
-        if (client_get_map(client)->handle == NULL)
+        if (client_get_map(client)->player == NULL)
             return (struct OnPacketResult) { .status = 0, .room = -1 };
 
         size_t len = 1;
@@ -418,7 +418,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         }
 
         for (uint8_t i = 0; i < monster_count; i++) {
-            uint32_t killed = map_damage_monster_by(map, client_get_map(client)->handle, chr->id, oids[i], hit_count, damage + i * hit_count);
+            uint32_t killed = map_damage_monster_by(map, client_get_map(client)->player, chr->id, oids[i], hit_count, damage + i * hit_count);
             if (killed != -1)
                 client_kill_monster(client, killed);
         }
@@ -475,7 +475,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         }
 
         for (uint8_t i = 0; i < monster_count; i++) {
-            uint32_t killed = map_damage_monster_by(map, client_get_map(client)->handle, chr->id, oids[i], hit_count, damage + i * hit_count);
+            uint32_t killed = map_damage_monster_by(map, client_get_map(client)->player, chr->id, oids[i], hit_count, damage + i * hit_count);
             if (killed != -1)
                 client_kill_monster(client, killed);
         }
@@ -948,7 +948,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
     break;
 
     case 0x00BC: {
-        if (client_get_map(client)->handle == NULL)
+        if (client_get_map(client)->player == NULL)
             return (struct OnPacketResult) { .status = 0, .room = -1 };
 
         struct Map *map = room_get_context(session_get_room(session));
@@ -1028,7 +1028,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         }
         SKIP(9);
 
-        if (map_move_monster(map, client_get_map(client)->handle, activity, oid, x, y, fh, stance, len, packet + 25)) {
+        if (map_move_monster(map, client_get_map(client)->player, activity, oid, x, y, fh, stance, len, packet + 25)) {
             uint8_t send[MOVE_MOB_RESPONSE_PACKET_LENGTH];
             move_monster_response_packet(oid, moveid, send);
             session_write(session, MOVE_MOB_RESPONSE_PACKET_LENGTH, send);
@@ -1040,7 +1040,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
     break;
 
     case 0x00C5: {
-        if (client_get_map(client)->handle == NULL)
+        if (client_get_map(client)->player == NULL)
             return (struct OnPacketResult) { .status = 0, .room = -1 };
 
         READER_BEGIN(size, packet);
@@ -1155,7 +1155,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         SKIP(4); // skill ID
         READER_END();
 
-        struct ClientResult res = map_hit_reactor(room_get_context(session_get_room(session)), client_get_map(client)->handle, oid, stance);
+        struct ClientResult res = map_hit_reactor(room_get_context(session_get_room(session)), client_get_map(client)->player, oid, stance);
         switch (res.type) {
         case CLIENT_RESULT_TYPE_BAN:
         case CLIENT_RESULT_TYPE_ERROR:

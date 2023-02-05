@@ -14,7 +14,7 @@
 #include "../packet.h"
 #include "../wz.h"
 
-struct MapHandle {
+struct MapPlayer {
     struct MapHandleContainer *container;
     struct ControllerHeapNode *node;
     size_t count;
@@ -35,7 +35,7 @@ struct Monster {
     uint32_t oid;
     uint32_t id;
     size_t spawnerIndex;
-    struct MapHandle *controller;
+    struct MapPlayer *controller;
     size_t indexInController;
     int16_t x;
     int16_t y;
@@ -87,7 +87,7 @@ static struct MapObject *object_list_get(struct ObjectList *list, uint32_t oid);
 struct ControllerHeapNode {
     size_t index;
     size_t controlleeCount;
-    struct MapHandle *controller;
+    struct MapPlayer *controller;
 };
 
 struct ControllerHeap {
@@ -98,7 +98,7 @@ struct ControllerHeap {
 
 static int heap_init(struct ControllerHeap *heap);
 static void heap_destroy(struct ControllerHeap *heap);
-static struct ControllerHeapNode *heap_push(struct ControllerHeap *heap, size_t count, struct MapHandle *client);
+static struct ControllerHeapNode *heap_push(struct ControllerHeap *heap, size_t count, struct MapPlayer *client);
 static size_t heap_inc(struct ControllerHeap *heap, size_t count);
 static void heap_remove(struct ControllerHeap *heap, struct ControllerHeapNode *node);
 static struct ControllerHeapNode *heap_top(struct ControllerHeap *heap);
@@ -122,9 +122,9 @@ struct DropBatch {
 
 struct Map {
     struct Room *room;
-    size_t handleCapacity;
-    size_t handleCount;
-    struct MapHandle *handles;
+    size_t playerCapacity;
+    size_t playerCount;
+    struct MapPlayer *players;
     struct TimerHandle *respawnHandle;
     const struct FootholdRTree *footholdTree;
     struct ObjectList objectList;
@@ -257,8 +257,8 @@ struct Map *map_create(struct Room *room, struct ScriptManager *reactor_manager)
         return NULL;
     }
 
-    map->handles = malloc(sizeof(struct MapHandle));
-    if (map->handles == NULL) {
+    map->players = malloc(sizeof(struct MapPlayer));
+    if (map->players == NULL) {
         free(map->reactors);
         free(map->dropBatches);
         free(map->droppingBatches);
@@ -271,7 +271,7 @@ struct Map *map_create(struct Room *room, struct ScriptManager *reactor_manager)
     }
 
     if (heap_init(&map->heap) == -1) {
-        free(map->handles);
+        free(map->players);
         free(map->reactors);
         free(map->dropBatches);
         free(map->droppingBatches);
@@ -318,7 +318,7 @@ struct Map *map_create(struct Room *room, struct ScriptManager *reactor_manager)
     map->monsters = malloc(map->spawnerCount * sizeof(struct Monster));
     if (map->monsters == NULL) {
         heap_destroy(&map->heap);
-        free(map->handles);
+        free(map->players);
         free(map->reactors);
         free(map->dropBatches);
         free(map->droppingBatches);
@@ -370,8 +370,8 @@ struct Map *map_create(struct Room *room, struct ScriptManager *reactor_manager)
     map->dropBatchStart = 0;
     map->dropBatchEnd = 0;
 
-    map->handleCapacity = 1;
-    map->handleCount = 0;
+    map->playerCapacity = 1;
+    map->playerCount = 0;
 
     map->room = room;
 
@@ -403,7 +403,7 @@ void map_destroy(struct Map *map)
     free(map->spawners);
     free(map->monsters);
     free(map->npcs);
-    free(map->handles);
+    free(map->players);
     free(map);
 }
 
@@ -412,56 +412,56 @@ uint32_t map_get_id(struct Map *map)
     return room_get_id(map->room);
 }
 
-int map_join(struct Map *map, struct Client *client, struct MapHandleContainer *handle)
+int map_join(struct Map *map, struct Client *client, struct MapHandleContainer *player)
 {
     struct Session *session = client_get_session(client);
-    if (map->handleCount == map->handleCapacity) {
-        void *temp = realloc(map->handles, (map->handleCapacity * 2) * sizeof(struct MapHandle));
+    if (map->playerCount == map->playerCapacity) {
+        void *temp = realloc(map->players, (map->playerCapacity * 2) * sizeof(struct MapPlayer));
         if (temp == NULL)
             return -1;
 
-        map->handles = temp;
-        for (size_t i = 0; i < map->handleCount; i++) {
-            map->handles[i].container->handle = &map->handles[i];
-            map->handles[i].node->controller = &map->handles[i];
-            for (size_t j = 0; j < map->handles[i].count; j++)
-                map->handles[i].monsters[j]->controller = &map->handles[i];
+        map->players = temp;
+        for (size_t i = 0; i < map->playerCount; i++) {
+            map->players[i].container->player = &map->players[i];
+            map->players[i].node->controller = &map->players[i];
+            for (size_t j = 0; j < map->players[i].count; j++)
+                map->players[i].monsters[j]->controller = &map->players[i];
         }
 
-        map->handleCapacity *= 2;
+        map->playerCapacity *= 2;
     }
 
-    handle->handle = &map->handles[map->handleCount];
+    player->player = &map->players[map->playerCount];
 
     if (map->heap.count == 0)
         map->respawnHandle = room_add_timer(map->room, 10 * 1000, on_respawn, NULL, false);
 
-    handle->handle->monsters = malloc(map->spawnerCount * sizeof(struct Monster *));
-    if (handle->handle->monsters == NULL) {
+    player->player->monsters = malloc(map->spawnerCount * sizeof(struct Monster *));
+    if (player->player->monsters == NULL) {
         room_stop_timer(map->respawnHandle);
         return -1;
     }
 
-    handle->handle->count = 0;
+    player->player->count = 0;
     if (map->heap.count == 0) {
         for (size_t i = 0; i < map->monsterCount; i++) {
             if (map->monsters[i].hp > 0) {
-                handle->handle->monsters[handle->handle->count] = &map->monsters[i];
-                map->monsters[i].controller = handle->handle;
-                map->monsters[i].indexInController = handle->handle->count;
-                handle->handle->count++;
+                player->player->monsters[player->player->count] = &map->monsters[i];
+                map->monsters[i].controller = player->player;
+                map->monsters[i].indexInController = player->player->count;
+                player->player->count++;
             }
         }
     }
 
-    handle->handle->node = heap_push(&map->heap, handle->handle->count, handle->handle);
-    if (handle->handle->node == NULL) {
-        free(handle->handle->monsters);
-        free(handle->handle);
+    player->player->node = heap_push(&map->heap, player->player->count, player->player);
+    if (player->player->node == NULL) {
+        free(player->player->monsters);
+        free(player->player);
         return -1;
     }
 
-    handle->handle->client = client;
+    player->player->client = client;
 
     for (size_t i = 0; i < map->monsterCount; i++) {
         struct Monster *monster = &map->monsters[i];
@@ -470,8 +470,8 @@ int map_join(struct Map *map, struct Client *client, struct MapHandleContainer *
         session_write(session, SPAWN_MONSTER_PACKET_LENGTH, packet);
     }
 
-    for (size_t i = 0; i < handle->handle->count; i++) {
-        struct Monster *monster = handle->handle->monsters[i];
+    for (size_t i = 0; i < player->player->count; i++) {
+        struct Monster *monster = player->player->monsters[i];
         uint8_t packet[SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH];
         spawn_monster_controller_packet(monster->oid, false, monster->id, monster->x, monster->y, monster->fh, false, packet);
         session_write(session, SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH, packet);
@@ -501,47 +501,47 @@ int map_join(struct Map *map, struct Client *client, struct MapHandleContainer *
         }
     }
 
-    handle->handle->container = handle;
-    handle->handle->script = NULL;
-    map->handleCount++;
+    player->player->container = player;
+    player->player->script = NULL;
+    map->playerCount++;
 
     return 0;
 }
 
-void map_leave(struct Map *map, struct MapHandle *handle)
+void map_leave(struct Map *map, struct MapPlayer *player)
 {
-    if (handle != NULL) {
-        heap_remove(&map->heap, handle->node);
+    if (player != NULL) {
+        heap_remove(&map->heap, player->node);
         struct ControllerHeapNode *next = heap_top(&map->heap);
         if (next != NULL) {
-            for (size_t i = 0; i < handle->count; i++) {
-                handle->monsters[i]->controller = next->controller;
-                handle->monsters[i]->indexInController = next->controller->count;
-                next->controller->monsters[next->controller->count] = handle->monsters[i];
+            for (size_t i = 0; i < player->count; i++) {
+                player->monsters[i]->controller = next->controller;
+                player->monsters[i]->indexInController = next->controller->count;
+                next->controller->monsters[next->controller->count] = player->monsters[i];
                 next->controller->count++;
             }
-            free(handle->monsters);
+            free(player->monsters);
             for (size_t i = 0; i < next->controller->count; i++) {
                 struct Monster *monster = next->controller->monsters[i];
                 uint8_t packet[SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH];
                 spawn_monster_controller_packet(monster->oid, false, monster->id, monster->x, monster->y, monster->fh, false, packet);
                 session_write(client_get_session(next->controller->client), SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH, packet);
             }
-            if (handle - map->handles != map->handleCount - 1) {
-                map->handles[handle - map->handles] = map->handles[map->handleCount - 1];
-                map->handles[handle - map->handles].container->handle = &map->handles[handle - map->handles];
-                map->handles[handle - map->handles].node->controller = &map->handles[handle - map->handles];
-                for (size_t i = 0; i < map->handles[handle - map->handles].count; i++)
-                    map->handles[handle - map->handles].monsters[i]->controller = &map->handles[handle - map->handles];
+            if (player - map->players != map->playerCount - 1) {
+                map->players[player - map->players] = map->players[map->playerCount - 1];
+                map->players[player - map->players].container->player = &map->players[player - map->players];
+                map->players[player - map->players].node->controller = &map->players[player - map->players];
+                for (size_t i = 0; i < map->players[player - map->players].count; i++)
+                    map->players[player - map->players].monsters[i]->controller = &map->players[player - map->players];
             }
         } else {
-            for (size_t i = 0; i < handle->count; i++)
-                handle->monsters[i]->controller = NULL;
-            free(handle->monsters);
+            for (size_t i = 0; i < player->count; i++)
+                player->monsters[i]->controller = NULL;
+            free(player->monsters);
             room_stop_timer(map->respawnHandle);
         }
 
-        map->handleCount--;
+        map->playerCount--;
     }
 }
 
@@ -584,7 +584,7 @@ bool map_monster_is_alive(struct Map *map, uint32_t id, uint32_t oid)
     return monster->hp > 0;
 }
 
-uint32_t map_damage_monster_by(struct Map *map, struct MapHandle *handle, uint32_t char_id, uint32_t oid, size_t hit_count, int32_t *damage)
+uint32_t map_damage_monster_by(struct Map *map, struct MapPlayer *player, uint32_t char_id, uint32_t oid, size_t hit_count, int32_t *damage)
 {
     struct MapObject *object = object_list_get(&map->objectList, oid);
     if (object == NULL || object->type != MAP_OBJECT_MONSTER)
@@ -593,18 +593,18 @@ uint32_t map_damage_monster_by(struct Map *map, struct MapHandle *handle, uint32
     struct Monster *monster = &map->monsters[object->index];
 
     if (monster->hp > 0) {
-        if (monster->controller != handle) {
+        if (monster->controller != player) {
             // Switch the control of the monster
             struct MapObject *object = object_list_get(&map->objectList, oid);
             struct Monster *monster = &map->monsters[object->index];
-            struct MapHandle *old = monster->controller;
+            struct MapPlayer *old = monster->controller;
             old->count--;
             old->monsters[monster->indexInController] = old->monsters[old->count];
             old->monsters[monster->indexInController]->indexInController = monster->indexInController;
-            monster->controller = handle;
-            monster->indexInController = handle->count;
-            handle->monsters[handle->count] = monster;
-            handle->count++;
+            monster->controller = player;
+            monster->indexInController = player->count;
+            player->monsters[player->count] = monster;
+            player->count++;
 
             {
                 uint8_t packet[REMOVE_MONSTER_CONTROLLER_PACKET_LENGTH];
@@ -615,7 +615,7 @@ uint32_t map_damage_monster_by(struct Map *map, struct MapHandle *handle, uint32
             {
                 uint8_t packet[SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH];
                 spawn_monster_controller_packet(oid, false, monster->id, monster->x, monster->y, monster->fh, false, packet);
-                session_write(client_get_session(handle->client), SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH, packet);
+                session_write(client_get_session(player->client), SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH, packet);
             }
         }
 
@@ -628,7 +628,7 @@ uint32_t map_damage_monster_by(struct Map *map, struct MapHandle *handle, uint32
         {
             uint8_t packet[MONSTER_HP_PACKET_LENGTH];
             monster_hp_packet(monster->oid, monster->hp * 100 / wz_get_monster_stats(monster->id)->hp, packet);
-            session_write(client_get_session(handle->client), MONSTER_HP_PACKET_LENGTH, packet);
+            session_write(client_get_session(player->client), MONSTER_HP_PACKET_LENGTH, packet);
         }
 
         if (monster->hp == 0) {
@@ -687,7 +687,7 @@ uint32_t map_damage_monster_by(struct Map *map, struct MapHandle *handle, uint32
     return -1;
 }
 
-struct ClientResult map_hit_reactor(struct Map *map, struct MapHandle *handle, uint32_t oid, uint8_t stance)
+struct ClientResult map_hit_reactor(struct Map *map, struct MapPlayer *player, uint32_t oid, uint8_t stance)
 {
     struct MapObject *object = object_list_get(&map->objectList, oid);
     if (object == NULL || object->type != MAP_OBJECT_REACTOR)
@@ -714,27 +714,27 @@ struct ClientResult map_hit_reactor(struct Map *map, struct MapHandle *handle, u
         char script_name[37];
         strcpy(script_name, wz_get_reactor_info(reactor->id)->action);
         strcat(script_name, ".lua");
-        handle->script = script_manager_alloc(map->reactorManager, script_name, 0);
-        if (handle->script == NULL) {
+        player->script = script_manager_alloc(map->reactorManager, script_name, 0);
+        if (player->script == NULL) {
             return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_ERROR };
         }
 
-        handle->rm = reactor_manager_create(map, handle->client, object->index, oid);
+        player->rm = reactor_manager_create(map, player->client, object->index, oid);
 
-        struct ScriptResult res = script_manager_run(handle->script, SCRIPT_REACTOR_MANAGER_TYPE, handle->rm);
+        struct ScriptResult res = script_manager_run(player->script, SCRIPT_REACTOR_MANAGER_TYPE, player->rm);
 
         switch (res.result) {
         case SCRIPT_RESULT_VALUE_KICK:
-            reactor_manager_destroy(handle->rm);
-            script_manager_free(handle->script);
-            handle->script = NULL;
+            reactor_manager_destroy(player->rm);
+            script_manager_free(player->script);
+            player->script = NULL;
             return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
         break;
 
         case SCRIPT_RESULT_VALUE_FAILURE:
-            reactor_manager_destroy(handle->rm);
-            script_manager_free(handle->script);
-            handle->script = NULL;
+            reactor_manager_destroy(player->rm);
+            script_manager_free(player->script);
+            player->script = NULL;
             return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_ERROR };
         break;
 
@@ -742,9 +742,9 @@ struct ClientResult map_hit_reactor(struct Map *map, struct MapHandle *handle, u
             if (!reactor->keepAlive)
                 map_destroy_reactor(map, reactor->oid);
 
-            reactor_manager_destroy(handle->rm);
-            script_manager_free(handle->script);
-            handle->script = NULL;
+            reactor_manager_destroy(player->rm);
+            script_manager_free(player->script);
+            player->script = NULL;
         /* FALLTHROUGH */
         case SCRIPT_RESULT_VALUE_NEXT:
             return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
@@ -764,9 +764,9 @@ struct ClientResult map_hit_reactor(struct Map *map, struct MapHandle *handle, u
     return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
 }
 
-struct ClientResult map_cont_script(struct Map *map, struct MapHandle *handle)
+struct ClientResult map_cont_script(struct Map *map, struct MapPlayer *player)
 {
-    script_manager_run(handle->script, SCRIPT_REACTOR_MANAGER_TYPE, handle->rm);
+    script_manager_run(player->script, SCRIPT_REACTOR_MANAGER_TYPE, player->rm);
     return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
 }
 
@@ -778,7 +778,7 @@ const struct Npc *map_get_npc(struct Map *map, uint32_t oid)
     return &map->npcs[object->index];
 }
 
-bool map_move_monster(struct Map *map, struct MapHandle *controller, uint8_t activity, uint32_t oid, int16_t x, int16_t y, uint16_t fh, uint8_t stance, size_t len, uint8_t *raw_data)
+bool map_move_monster(struct Map *map, struct MapPlayer *controller, uint8_t activity, uint32_t oid, int16_t x, int16_t y, uint16_t fh, uint8_t stance, size_t len, uint8_t *raw_data)
 {
     struct MapObject *obj = object_list_get(&map->objectList, oid);
     if (obj == NULL || obj->type != MAP_OBJECT_MONSTER)
@@ -1465,7 +1465,7 @@ static void heap_destroy(struct ControllerHeap *heap)
 static void sift_down(struct ControllerHeap *heap, size_t i);
 static void sift_up(struct ControllerHeap *heap, size_t i);
 
-static struct ControllerHeapNode *heap_push(struct ControllerHeap *heap, size_t count, struct MapHandle *controller)
+static struct ControllerHeapNode *heap_push(struct ControllerHeap *heap, size_t count, struct MapPlayer *controller)
 {
     struct ControllerHeapNode *node = malloc(sizeof(struct ControllerHeapNode));
     if (node == NULL)

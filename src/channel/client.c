@@ -101,7 +101,7 @@ struct Client *client_create(struct Session *session, struct DatabaseConnection 
 
     client->session = session;
     client->conn = conn;
-    client->map.handle = NULL;
+    client->map.player = NULL;
     client->managers.quest = quest_manager;
     client->managers.portal = portal_mananger;
     client->managers.npc = npc_manager;
@@ -142,7 +142,7 @@ void client_login_start(struct Client *client, uint32_t id)
 void client_logout_start(struct Client *client)
 {
     script_manager_free(client->script);
-    map_leave(room_get_context(session_get_room(client->session)), client->map.handle);
+    map_leave(room_get_context(session_get_room(client->session)), client->map.player);
     client->handlerType = PACKET_TYPE_LOGOUT;
     client->databaseState = 0;
 }
@@ -3032,8 +3032,8 @@ void client_warp(struct Client *client, uint32_t map, uint8_t portal)
         session_broadcast_to_room(client->session, REMOVE_PLAYER_FROM_MAP_PACKET_LENGTH, packet);
     }
 
-    map_leave(room_get_context(session_get_room(client->session)), client->map.handle);
-    client->map.handle = NULL;
+    map_leave(room_get_context(session_get_room(client->session)), client->map.player);
+    client->map.player = NULL;
 
     {
         uint8_t packet[CHANGE_MAP_PACKET_LENGTH];

@@ -20,9 +20,9 @@ struct Npc {
     bool f;
 };
 
-struct MapHandle;
+struct MapPlayer;
 struct MapHandleContainer {
-    struct MapHandle *handle;
+    struct MapPlayer *player;
 };
 
 struct DropBatch;
@@ -52,7 +52,7 @@ uint32_t map_get_id(struct Map *map);
  *
  * \param map The map to insert into
  * \param client The player to be inserted
- * \param[out] handle A handle that respresents the player in the map
+ * \param[out] player A handle that respresents the player in the map
  *
  * \return 0 if successful; -1 if an error occurred
  */
@@ -62,9 +62,9 @@ int map_join(struct Map *map, struct Client *client, struct MapHandleContainer *
  * Remove a player from a map
  *
  * \param map The map to remove from
- * \param handle The handle that was returned in \p map_join of the player to remove
+ * \param player The handle that was returned in \p map_join of the player to remove
  */
-void map_leave(struct Map *map, struct MapHandle *handle);
+void map_leave(struct Map *map, struct MapPlayer *player);
 
 /**
  * Do an action for each NPC in the map
@@ -108,11 +108,11 @@ bool map_monster_is_alive(struct Map *map, uint32_t id, uint32_t oid);
  *
  * \return If the monster was killed, its ID; otherwise -1.
  */
-uint32_t map_damage_monster_by(struct Map *map, struct MapHandle *controller, uint32_t char_id, uint32_t oid, size_t hit_count, int32_t *damage);
+uint32_t map_damage_monster_by(struct Map *map, struct MapPlayer *controller, uint32_t char_id, uint32_t oid, size_t hit_count, int32_t *damage);
 
-struct ClientResult map_hit_reactor(struct Map *map, struct MapHandle *handle, uint32_t oid, uint8_t stance);
+struct ClientResult map_hit_reactor(struct Map *map, struct MapPlayer *player, uint32_t oid, uint8_t stance);
 
-struct ClientResult map_cont_script(struct Map *map, struct MapHandle *client);
+struct ClientResult map_cont_script(struct Map *map, struct MapPlayer *player);
 
 /**
  * Gets an NPC in the map
@@ -146,7 +146,7 @@ const struct Npc *map_get_npc(struct Map *map, uint32_t oid);
  *
  * \return true if the movement was successful; false if an error occurred.
  */
-bool map_move_monster(struct Map *map, struct MapHandle *controller, uint8_t activity, uint32_t oid, int16_t x, int16_t y, uint16_t fh, uint8_t stance, size_t len, uint8_t *raw_data);
+bool map_move_monster(struct Map *map, struct MapPlayer *controller, uint8_t activity, uint32_t oid, int16_t x, int16_t y, uint16_t fh, uint8_t stance, size_t len, uint8_t *raw_data);
 
 int map_drop_batch_from_map_object(struct Map *map, uint32_t owner_id, uint32_t dropper_oid, size_t count, struct Drop *drops);
 
