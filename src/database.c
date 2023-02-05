@@ -1478,7 +1478,6 @@ static int do_update_character(struct DatabaseRequest *req, int status)
         INPUT_BINDER_FINALIZE(req->stmt);
 
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { sizeof(*data) });
-
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { count });
 
         DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
@@ -1486,7 +1485,6 @@ static int do_update_character(struct DatabaseRequest *req, int status)
         req->temp.updateCharacter.data = NULL;
 
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { 0 });
-
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { 0 });
 
         DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
@@ -1699,7 +1697,6 @@ static int do_update_character(struct DatabaseRequest *req, int status)
         INPUT_BINDER_FINALIZE(req->stmt);
 
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { sizeof(*data) });
-
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { count });
 
         DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
@@ -1707,7 +1704,6 @@ static int do_update_character(struct DatabaseRequest *req, int status)
         req->temp.updateCharacter.data = NULL;
 
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { 0 });
-
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { 0 });
 
         DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
@@ -1788,10 +1784,12 @@ static int do_update_character(struct DatabaseRequest *req, int status)
         INPUT_BINDER_FINALIZE(req->stmt);
 
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { sizeof(struct DatabaseEquipment) });
-
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { req->params.updateCharacter.equippedCount });
 
         DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
+
+        mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { 0 });
+        mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { 0 });
     }
 
     if (req->params.updateCharacter.equipCount > 0) {
@@ -1800,10 +1798,12 @@ static int do_update_character(struct DatabaseRequest *req, int status)
         INPUT_BINDER_FINALIZE(req->stmt);
 
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { sizeof(*req->params.updateCharacter.equipmentInventory) });
-
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { req->params.updateCharacter.equipCount });
 
         DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
+
+        mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { 0 });
+        mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { 0 });
     }
 
     DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
@@ -1817,10 +1817,12 @@ static int do_update_character(struct DatabaseRequest *req, int status)
         INPUT_BINDER_FINALIZE(req->stmt);
 
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { sizeof(struct DatabaseEquipment) });
-
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { req->params.updateCharacter.equippedCount });
 
         DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
+
+        mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { 0 });
+        mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { 0 });
     }
 
     if (req->params.updateCharacter.equipCount > 0) {
@@ -1829,52 +1831,54 @@ static int do_update_character(struct DatabaseRequest *req, int status)
         INPUT_BINDER_FINALIZE(req->stmt);
 
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { sizeof(*req->params.updateCharacter.equipmentInventory) });
-
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { req->params.updateCharacter.equipCount });
 
         DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
+
+        mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { 0 });
+        mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { 0 });
     }
 
     DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
 
-    query = "INSERT INTO EquippedEquipment VALUES (?)";
-    DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
-
     if (req->params.updateCharacter.equippedCount > 0) {
+        query = "INSERT INTO EquippedEquipment VALUES (?)";
+        DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
+
         INPUT_BINDER_INIT(1);
         INPUT_BINDER_u64(&req->params.updateCharacter.equippedEquipment->id);
         INPUT_BINDER_FINALIZE(req->stmt);
 
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { sizeof(struct DatabaseEquipment) });
-
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { req->params.updateCharacter.equippedCount });
 
         DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
+
+        mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { 0 });
+        mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { 0 });
+
+        DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
     }
 
-    DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
-
-    query = "INSERT INTO InventoryEquipment VALUES (?, ?)";
-    DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
-
     if (req->params.updateCharacter.equipCount > 0) {
+        query = "INSERT INTO InventoryEquipment VALUES (?, ?)";
+        DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
+
         INPUT_BINDER_INIT(2);
         INPUT_BINDER_u64(&req->params.updateCharacter.equipmentInventory->equip.id);
         INPUT_BINDER_u8(&req->params.updateCharacter.equipmentInventory->slot);
         INPUT_BINDER_FINALIZE(req->stmt);
 
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { sizeof(*req->params.updateCharacter.equipmentInventory) });
-
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { req->params.updateCharacter.equipCount });
 
         DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
+
+        mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { 0 });
+        mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { 0 });
+
+        DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
     }
-
-    //mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { 0 });
-
-    //mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { 0 });
-
-    DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
 
     if (req->params.updateCharacter.itemCount > 0) {
         query = "INSERT INTO InventoryItems VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE slot = ?, count = ?";
@@ -1889,13 +1893,11 @@ static int do_update_character(struct DatabaseRequest *req, int status)
         INPUT_BINDER_FINALIZE(req->stmt);
 
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { sizeof(*req->params.updateCharacter.inventoryItems) });
-
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { req->params.updateCharacter.itemCount });
 
         DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
 
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { 0 });
-
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { 0 });
 
         DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
@@ -1938,10 +1940,12 @@ static int do_update_character(struct DatabaseRequest *req, int status)
         INPUT_BINDER_FINALIZE(req->stmt);
 
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { sizeof(uint16_t) });
-
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { req->params.updateCharacter.questCount });
 
         DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
+
+        mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { 0 });
+        mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { 0 });
 
         DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
     }
@@ -1958,10 +1962,12 @@ static int do_update_character(struct DatabaseRequest *req, int status)
         INPUT_BINDER_FINALIZE(req->stmt);
 
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { sizeof(struct DatabaseProgress) });
-
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { req->params.updateCharacter.progressCount });
 
         DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
+
+        mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { 0 });
+        mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { 0 });
 
         DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
     }
@@ -1977,10 +1983,12 @@ static int do_update_character(struct DatabaseRequest *req, int status)
         INPUT_BINDER_FINALIZE(req->stmt);
 
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { sizeof(struct DatabaseCompletedQuest) });
-
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { req->params.updateCharacter.completedQuestCount });
 
         DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
+
+        mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { 0 });
+        mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { 0 });
 
         DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
     }
@@ -2001,13 +2009,15 @@ static int do_update_character(struct DatabaseRequest *req, int status)
         INPUT_BINDER_FINALIZE(req->stmt);
 
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { sizeof(struct DatabaseSkill) });
-
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { req->params.updateCharacter.skillCount });
 
         DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
-    }
 
-    DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
+        mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { 0 });
+        mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { 0 });
+
+        DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
+    }
 
     if (req->params.updateCharacter.monsterBookEntryCount > 0) {
         char query[87];
@@ -2023,7 +2033,6 @@ static int do_update_character(struct DatabaseRequest *req, int status)
         INPUT_BINDER_FINALIZE(req->stmt);
 
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { sizeof(struct DatabaseMonsterBookEntry) });
-
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { req->params.updateCharacter.monsterBookEntryCount });
 
         DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
