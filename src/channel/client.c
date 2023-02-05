@@ -847,8 +847,7 @@ bool client_announce_drop(struct Client *client, uint32_t owner_id, uint32_t dro
     case DROP_TYPE_MESO: {
         uint8_t packet[DROP_MESO_FROM_OBJECT_PACKET_LENGTH];
         drop_meso_from_object_packet(drop->oid, drop->meso, owner_id, drop->x, drop->y, drop->x, drop->y, dropper_oid, player_drop, packet);
-        if (session_write(client->session, DROP_MESO_FROM_OBJECT_PACKET_LENGTH, packet) == -1)
-            return false;
+        session_write(client->session, DROP_MESO_FROM_OBJECT_PACKET_LENGTH, packet);
     }
     break;
 
@@ -858,14 +857,12 @@ bool client_announce_drop(struct Client *client, uint32_t owner_id, uint32_t dro
             if (quest != NULL) {
                 uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
                 drop_item_from_object_packet(drop->oid, drop->item.item.itemId, owner_id, drop->x, drop->y, drop->x, drop->y, dropper_oid, player_drop, packet);
-                if (session_write(client->session, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet) == -1)
-                    return false;
+                session_write(client->session, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet);
             }
         } else {
             uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
             drop_item_from_object_packet(drop->oid, drop->item.item.itemId, owner_id, drop->x, drop->y, drop->x, drop->y, dropper_oid, player_drop, packet);
-            if (session_write(client->session, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet) == -1)
-                return false;
+            session_write(client->session, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet);
         }
     }
     break;
@@ -873,8 +870,7 @@ bool client_announce_drop(struct Client *client, uint32_t owner_id, uint32_t dro
     case DROP_TYPE_EQUIP: {
             uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
             drop_item_from_object_packet(drop->oid, drop->equip.item.itemId, owner_id, drop->x, drop->y, drop->x, drop->y, dropper_oid, player_drop, packet);
-            if (session_write(client->session, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet) == -1)
-                return false;
+            session_write(client->session, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet);
     }
     break;
     }
@@ -891,8 +887,7 @@ bool client_announce_spawn_drop(struct Client *client, uint32_t owner_id, uint32
     case DROP_TYPE_MESO: {
         uint8_t packet[SPAWN_MESO_DROP_PACKET_LENGTH];
         spawn_meso_drop_packet(drop->oid, drop->meso, owner_id, drop->x, drop->y, dropper_oid, player_drop, packet);
-        if (session_write(client->session, SPAWN_MESO_DROP_PACKET_LENGTH, packet) == -1)
-            return false;
+        session_write(client->session, SPAWN_MESO_DROP_PACKET_LENGTH, packet);
     }
     break;
 
@@ -902,14 +897,12 @@ bool client_announce_spawn_drop(struct Client *client, uint32_t owner_id, uint32
             if (quest != NULL) {
                 uint8_t packet[SPAWN_ITEM_DROP_PACKET_LENGTH];
                 spawn_item_drop_packet(drop->oid, drop->item.item.itemId, owner_id, drop->x, drop->y, dropper_oid, player_drop, packet);
-                if (session_write(client->session, SPAWN_ITEM_DROP_PACKET_LENGTH, packet) == -1)
-                    return false;
+                session_write(client->session, SPAWN_ITEM_DROP_PACKET_LENGTH, packet);
             }
         } else {
             uint8_t packet[SPAWN_ITEM_DROP_PACKET_LENGTH];
             spawn_item_drop_packet(drop->oid, drop->item.item.itemId, owner_id, drop->x, drop->y, dropper_oid, player_drop, packet);
-            if (session_write(client->session, SPAWN_ITEM_DROP_PACKET_LENGTH, packet) == -1)
-                return false;
+            session_write(client->session, SPAWN_ITEM_DROP_PACKET_LENGTH, packet);
         }
     }
     break;
@@ -917,8 +910,7 @@ bool client_announce_spawn_drop(struct Client *client, uint32_t owner_id, uint32
     case DROP_TYPE_EQUIP: {
             uint8_t packet[SPAWN_ITEM_DROP_PACKET_LENGTH];
             spawn_item_drop_packet(drop->oid, drop->equip.item.itemId, owner_id, drop->x, drop->y, dropper_oid, player_drop, packet);
-            if (session_write(client->session, SPAWN_ITEM_DROP_PACKET_LENGTH, packet) == -1)
-                return false;
+            session_write(client->session, SPAWN_ITEM_DROP_PACKET_LENGTH, packet);
     }
     break;
     }
@@ -1736,8 +1728,7 @@ bool client_gain_equipment(struct Client *client, const struct Equipment *item, 
                 {
                     uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
                     size_t len = modify_items_packet(1, &mod, packet);
-                    if (session_write(client->session, len, packet) == -1)
-                        return false;
+                    session_write(client->session, len, packet);
                 }
 
                 *success = true;
@@ -2852,8 +2843,7 @@ struct ClientResult client_open_shop(struct Client *client, uint32_t id)
 
         uint8_t packet[OPEN_SHOP_PACKET_MAX_LENGTH];
         size_t len = open_shop_packet(id, info->count, items, packet);
-        if (session_write(client->session, len, packet) == -1)
-            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_ERROR };
+        session_write(client->session, len, packet);
     }
 
     return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
@@ -2886,8 +2876,7 @@ struct ClientResult client_buy(struct Client *client, uint16_t pos, uint32_t id,
     if (client->character.mesos < price) {
         uint8_t packet[SHOP_ACTION_RESPONSE_PACKET_LENGTH];
         shop_action_response(2, packet);
-        if (session_write(client->session, SHOP_ACTION_RESPONSE_PACKET_LENGTH, packet) == -1)
-            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_ERROR };
+        session_write(client->session, SHOP_ACTION_RESPONSE_PACKET_LENGTH, packet);
 
         return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
     }
@@ -2903,8 +2892,7 @@ struct ClientResult client_buy(struct Client *client, uint16_t pos, uint32_t id,
 
     uint8_t packet[SHOP_ACTION_RESPONSE_PACKET_LENGTH];
     shop_action_response(0, packet);
-    if (session_write(client->session, SHOP_ACTION_RESPONSE_PACKET_LENGTH, packet) == -1)
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_ERROR };
+    session_write(client->session, SHOP_ACTION_RESPONSE_PACKET_LENGTH, packet);
 
     return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
 }

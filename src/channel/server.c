@@ -604,10 +604,10 @@ bool session_assign_token(struct Session *session, uint32_t token, uint32_t *id)
     return true;
 }
 
-int session_write(struct Session *session, size_t len, uint8_t *packet)
+void session_write(struct Session *session, size_t len, uint8_t *packet)
 {
     if (len == 0)
-        return 0;
+        return;
 
     printf("Sending packet with opcode %hd\n", ((uint16_t *)packet)[0]);
     for (uint16_t i = 0; i < len; i++)
@@ -616,9 +616,9 @@ int session_write(struct Session *session, size_t len, uint8_t *packet)
 
     uint16_t packet_len = len;
     if (bufferevent_write(session->event, &packet_len, 2) == -1)
-        return -1;
+        return;
 
-    return bufferevent_write(session->event, packet, len);
+    bufferevent_write(session->event, packet, len);
 }
 
 void session_set_context(struct Session *session, void *ctx)

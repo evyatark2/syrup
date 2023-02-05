@@ -73,7 +73,7 @@ enum ResponderResult channel_server_start(struct ChannelServer *server);
 void channel_server_stop(struct ChannelServer *server);
 
 bool session_assign_token(struct Session *session, uint32_t token, uint32_t *id);
-int session_write(struct Session *session, size_t len, uint8_t *packet);
+void session_write(struct Session *session, size_t len, uint8_t *packet);
 void session_set_context(struct Session *session, void *ctx);
 void *session_get_context(struct Session *session);
 int session_get_event_disposition(struct Session *session);

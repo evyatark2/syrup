@@ -45,8 +45,8 @@ struct Monster {
 };
 
 struct Reactor {
-    uint32_t id;
     uint32_t oid;
+    uint32_t id;
     int16_t x;
     int16_t y;
     uint8_t state;

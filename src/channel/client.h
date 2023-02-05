@@ -105,6 +105,7 @@ void client_destroy_reactor(struct Client *client);
 struct ClientResult client_open_shop(struct Client *client, uint32_t id);
 struct ClientResult client_buy(struct Client *client, uint16_t pos, uint32_t id, int16_t quantity, int32_t price);
 struct ClientResult client_sell(struct Client *client, uint16_t pos, uint32_t id, int16_t quantity);
+struct ClientResult client_reactor_action(struct Client *client, struct Reactor *reactor);
 bool client_close_shop(struct Client *client);
 bool client_is_in_shop(struct Client *client);
 void client_send_ok(struct Client *client, size_t msg_len, const char *msg);

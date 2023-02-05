@@ -631,7 +631,6 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             uint16_t position;
             uint32_t id;
             int16_t quantity;
-            int32_t price;
             READ_OR_ERROR(reader_u16, &position);
             READ_OR_ERROR(reader_u32, &id);
             READ_OR_ERROR(reader_i16, &quantity);
