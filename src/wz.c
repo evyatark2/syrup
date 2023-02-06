@@ -1744,11 +1744,19 @@ static void on_quest_check_start(void *user_data, const XML_Char *name, const XM
                 quest->startRequirementCount = 0;
                 ctx->reqCapacity = 1;
                 new->type = QUEST_CHECK_ITEM_TYPE_START;
-            } else {
+            } else if (t == 1) {
                 quest->endRequirements = malloc(sizeof(struct QuestRequirement));
                 quest->endRequirementCount = 0;
                 ctx->reqCapacity = 1;
                 new->type = QUEST_CHECK_ITEM_TYPE_END;
+            } else {
+                fprintf(stderr, "Warning: Not a start or end requiremnt imgdir in quest %hu\n", quest->id);
+                // In quest 4940 there is quest 4961, probably there by accident
+                // as it should be in its own imgdir, it seems like this quest is unused
+                // and was probably superseded by quest 4955 - 'Psycho Jack'
+                ctx->skip++;
+                ctx->head = new->next;
+                free(new);
             }
         }
         break;
@@ -2195,7 +2203,7 @@ static void on_quest_act_start(void *user_data, const XML_Char *name, const XML_
 
             uint16_t id = strtol(attrs[1], NULL, 10);
             ctx->currentQuest = cmph_search(QUEST_INFO_MPH, (void *)&id, sizeof(uint16_t));
-            if (QUEST_INFOS[ctx->currentQuest].id != id) {
+            if (ctx->currentQuest >= QUEST_INFO_COUNT || QUEST_INFOS[ctx->currentQuest].id != id) {
                 if (ctx->questCapacity == QUEST_INFO_COUNT) {
                     QUEST_INFOS = realloc(QUEST_INFOS, (ctx->questCapacity * 2) * sizeof(struct QuestInfo));
                     ctx->questCapacity *= 2;
