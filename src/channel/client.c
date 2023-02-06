@@ -2484,7 +2484,7 @@ bool client_use_item_immediate(struct Client *client, uint32_t id)
         struct MonsterBookEntry *entry = hash_set_u32_get(chr->monsterBook, id);
         if (entry == NULL || entry->count < 5) {
             if (entry == NULL) {
-                    struct MonsterBookEntry new = {
+                struct MonsterBookEntry new = {
                     .id = id,
                     .count = 0
                 };
@@ -2515,7 +2515,7 @@ bool client_use_item_immediate(struct Client *client, uint32_t id)
         {
             uint8_t packet[SHOW_FOREIGN_EFFECT_PACKET_LENGTH];
             show_foreign_effect_packet(chr->id, 0x0D, packet);
-            session_write(client->session, SHOW_FOREIGN_EFFECT_PACKET_LENGTH, packet);
+            session_broadcast_to_room(client->session, SHOW_FOREIGN_EFFECT_PACKET_LENGTH, packet);
         }
     }
 
