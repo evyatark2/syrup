@@ -205,6 +205,13 @@ void database_request_destroy(struct DatabaseRequest *req)
             free(monster->multiItemDrops.drops);
         }
         free(req->res.getMonsterDrops.monsters);
+    } else if (req->params.type == DATABASE_REQUEST_TYPE_GET_REACTOR_DROPS) {
+        for (size_t i = 0; i < req->res.getReactorDrops.count; i++) {
+            struct ReactorDrops *reactor = &req->res.getReactorDrops.reactors[i];
+            free(reactor->itemDrops.drops);
+            free(reactor->questItemDrops.drops);
+        }
+        free(req->res.getReactorDrops.reactors);
     } else if (req->params.type == DATABASE_REQUEST_TYPE_GET_SHOPS) {
         for (size_t i = 0; i < req->res.getShops.count; i++) {
             struct Shop *shop = &req->res.getShops.shops[i];

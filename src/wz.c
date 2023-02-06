@@ -1009,6 +1009,7 @@ void wz_terminate(void)
         free(MAP_INFOS[i].footholdTree);
         free(MAP_INFOS[i].lives);
         free(MAP_INFOS[i].portals);
+        free(MAP_INFOS[i].reactors);
     }
     free(MAP_INFOS);
     //if (WRITER) {
