@@ -10,7 +10,7 @@
 size_t quest_get_progress_string(struct Quest *quest, char *out)
 {
     for (size_t i = 0; i < quest->progressCount; i++)
-        snprintf(out + 3*i, 4, "%03" PRId32, quest->progress[i].amount);
+        snprintf(out + 3*i, 4, "%03" PRId32, quest->progress[i]);
 
     return quest->progressCount * 3;
 }

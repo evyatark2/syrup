@@ -77,15 +77,15 @@ struct Inventory {
     } items[MAX_ITEM_COUNT];
 };
 
-struct Progress {
-    uint32_t id;
-    int32_t amount;
+struct QuestInfoProgress {
+    uint16_t info;
+    char value[8];
 };
 
 struct Quest {
     uint16_t id;
     uint8_t progressCount;
-    struct Progress progress[5];
+    int32_t progress[5];
 };
 
 struct MonsterRefCount {
