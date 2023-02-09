@@ -45,6 +45,7 @@ struct Client {
             void *monsterBook;
         };
     };
+    enum Stat stats;
 };
 
 static bool check_quest_requirements(struct Character *chr, size_t req_count, const struct QuestRequirement *reqs, uint32_t npc);
@@ -112,6 +113,7 @@ struct Client *client_create(struct Session *session, struct DatabaseConnection 
     client->character.monsterBook = NULL;
     client->script = NULL;
     client->shop = -1;
+    client->stats = 0;
 
     return client;
 }
@@ -409,10 +411,10 @@ struct ClientContResult client_cont(struct Client *client, int status)
                 const struct QuestInfo *info = wz_get_quest_info(quest->id);
                 uint8_t j;
                 int16_t amount;
-                for (size_t i_ = 0; i_ < info->endRequirementCount; i_++) {
+                for (size_t i_ = 0; true; i_++) {
                     struct QuestRequirement *req = &info->endRequirements[i_];
                     if (req->type == QUEST_REQUIREMENT_TYPE_MOB) {
-                        for (size_t i_ = 0; i_ < req->mob.count; i_++) {
+                        for (size_t i_ = 0; true; i_++) {
                             if (req->mob.mobs[i_].id == res->getCharacter.progresses[i].progressId) {
                                 j = i_;
                                 amount = req->mob.mobs[i_].count;
@@ -931,38 +933,53 @@ void client_update_player_pos(struct Client *client, int16_t x, int16_t y, uint1
 void client_set_hp(struct Client *client, int16_t hp)
 {
     struct Character *chr = &client->character;
-    if (hp < 0)
-        hp = 0;
+    character_set_hp(chr, hp);
+    client->stats |= STAT_HP;
+}
 
-    if (hp > character_get_effective_hp(chr))
-        hp = character_get_effective_hp(chr);
-
-    client->character.hp = hp;
+void client_set_hp_now(struct Client *client, int16_t hp)
+{
+    struct Character *chr = &client->character;
+    character_set_hp(chr, hp);
     uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
-    union StatValue value = { .i16 = hp };
+    union StatValue value = { .i16 = chr->hp };
     size_t len = stat_change_packet(true, STAT_HP, &value, packet);
     session_write(client->session, len, packet);
 }
 
 void client_adjust_hp(struct Client *client, int32_t hp)
 {
+    // Overflow protection
     if (hp > 0 && client->character.hp > INT16_MAX - hp)
         hp = INT16_MAX - client->character.hp;
+    else if (client->character.hp < INT16_MIN - hp)
+        hp = INT16_MIN - client->character.hp;
     client_set_hp(client, client->character.hp + hp);
+}
+
+void client_adjust_hp_now(struct Client *client, int32_t hp)
+{
+    // Overflow protection
+    if (hp > 0 && client->character.hp > INT16_MAX - hp)
+        hp = INT16_MAX - client->character.hp;
+    else if (client->character.hp < INT16_MIN - hp)
+        hp = INT16_MIN - client->character.hp;
+    client_set_hp_now(client, client->character.hp + hp);
 }
 
 void client_set_mp(struct Client *client, int16_t mp)
 {
     struct Character *chr = &client->character;
-    if (mp < 0)
-        mp = 0;
+    character_set_mp(chr, mp);
+    client->stats |= STAT_MP;
+}
 
-    if (mp > character_get_effective_mp(chr))
-        mp = character_get_effective_mp(chr);
-
-    client->character.mp = mp;
+void client_set_mp_now(struct Client *client, int16_t mp)
+{
+    struct Character *chr = &client->character;
+    character_set_mp(chr, mp);
     uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
-    union StatValue value = { .i16 = mp };
+    union StatValue value = { .i16 = chr->mp };
     size_t len = stat_change_packet(true, STAT_MP, &value, packet);
     session_write(client->session, len, packet);
 }
@@ -974,100 +991,152 @@ void client_adjust_mp(struct Client *client, int16_t mp)
     client_set_mp(client, client->character.mp + mp);
 }
 
+void client_adjust_mp_now(struct Client *client, int32_t mp)
+{
+    // Overflow protection
+    if (mp > 0 && client->character.mp > INT16_MAX - mp)
+        mp = INT16_MAX - client->character.mp;
+    else if (client->character.mp < INT16_MIN - mp)
+        mp = INT16_MIN - client->character.mp;
+    client_set_mp_now(client, client->character.mp + mp);
+}
+
 void client_adjust_sp(struct Client *client, int16_t sp)
 {
     struct Character *chr = &client->character;
     if (sp > 0 && chr->sp > INT16_MAX - sp)
         sp = INT16_MAX - chr->sp;
-
-    chr->sp += sp;
-    if (chr->sp < 0)
-        chr->sp = 0;
-
-    uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
-    union StatValue value = { .i16 = chr->sp };
-    size_t len = stat_change_packet(true, STAT_SP, &value, packet);
-    session_write(client->session, len, packet);
+    character_set_sp(chr, chr->sp + sp);
+    client->stats |= STAT_SP;
 }
 
-void client_raise_str(struct Client *client)
-{
-    if (client->character.ap > 0) {
-        client->character.str++;
-        client->character.ap--;
+#define DEFINE_STAT_ADJUST(name, stat_name, stat) \
+    void client_adjust_##name(struct Client *client, int16_t amount) \
+    { \
+        struct Character *chr = &client->character; \
+        if (chr->ap >= amount) { \
+            if (amount > INT16_MAX - chr->stat_name) \
+                amount = INT16_MAX - chr->stat_name; \
+            character_set_##name(chr, chr->stat_name + amount); \
+            character_set_ap(chr, chr->ap - amount); \
+            client->stats |= stat | STAT_AP; \
+        } \
     }
 
-    uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
-    union StatValue value[] = {
-        {
-            .i16 = client->character.str,
-        },
-        {
-            .i16 = client->character.ap,
-        }
-    };
-    size_t len = stat_change_packet(true, STAT_STR | STAT_AP, value, packet);
-    session_write(client->session, len, packet);
-}
+DEFINE_STAT_ADJUST(str, str, STAT_STR)
+DEFINE_STAT_ADJUST(dex, dex, STAT_DEX)
+DEFINE_STAT_ADJUST(int, int_, STAT_INT)
+DEFINE_STAT_ADJUST(luk, luk, STAT_LUK)
 
-void client_raise_dex(struct Client *client)
+void client_commit_stats(struct Client *client)
 {
-    if (client->character.ap > 0) {
-        client->character.dex++;
-        client->character.ap--;
+    struct Character *chr = &client->character;
+    uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
+    uint8_t value_count = 0;
+    union StatValue value[20];
+    if (client->stats & STAT_SKIN) {
+        value[value_count].u8 = chr->skin;
+        value_count++;
     }
 
-    uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
-    union StatValue value[] = {
-        {
-            .i16 = client->character.dex,
-        },
-        {
-            .i16 = client->character.ap,
-        }
-    };
-    size_t len = stat_change_packet(true, STAT_DEX | STAT_AP, value, packet);
-    session_write(client->session, len, packet);
-}
-
-void client_raise_int(struct Client *client)
-{
-    if (client->character.ap > 0) {
-        client->character.int_++;
-        client->character.ap--;
+    if (client->stats & STAT_FACE) {
+        value[value_count].u32 = chr->face;
+        value_count++;
     }
 
-    uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
-    union StatValue value[] = {
-        {
-            .i16 = client->character.int_,
-        },
-        {
-            .i16 = client->character.ap,
-        }
-    };
-    size_t len = stat_change_packet(true, STAT_INT | STAT_AP, value, packet);
-    session_write(client->session, len, packet);
-}
-
-void client_raise_luk(struct Client *client)
-{
-    if (client->character.ap > 0) {
-        client->character.luk++;
-        client->character.ap--;
+    if (client->stats & STAT_HAIR) {
+        value[value_count].u32 = chr->hair;
+        value_count++;
     }
 
-    uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
-    union StatValue value[] = {
-        {
-            .i16 = client->character.luk,
-        },
-        {
-            .i16 = client->character.ap,
-        }
-    };
-    size_t len = stat_change_packet(true, STAT_LUK | STAT_AP, value, packet);
+    if (client->stats & STAT_LEVEL) {
+        value[value_count].u8 = chr->level;
+        value_count++;
+    }
+
+    if (client->stats & STAT_JOB) {
+        value[value_count].u16 = chr->job;
+        value_count++;
+    }
+
+    if (client->stats & STAT_STR) {
+        value[value_count].i16 = chr->str;
+        value_count++;
+    }
+
+    if (client->stats & STAT_DEX) {
+        value[value_count].i16 = chr->dex;
+        value_count++;
+    }
+
+    if (client->stats & STAT_INT) {
+        value[value_count].i16 = chr->int_;
+        value_count++;
+    }
+
+    if (client->stats & STAT_LUK) {
+        value[value_count].i16 = chr->luk;
+        value_count++;
+    }
+
+    if (client->stats & STAT_HP) {
+        value[value_count].i16 = chr->hp;
+        value_count++;
+    }
+
+    if (client->stats & STAT_MAX_HP) {
+        value[value_count].i16 = chr->maxHp;
+        value_count++;
+    }
+
+    if (client->stats & STAT_MP) {
+        value[value_count].i16 = chr->mp;
+        value_count++;
+    }
+
+    if (client->stats & STAT_MAX_MP) {
+        value[value_count].i16 = chr->maxMp;
+        value_count++;
+    }
+
+    if (client->stats & STAT_AP) {
+        value[value_count].i16 = chr->ap;
+        value_count++;
+    }
+
+    if (client->stats & STAT_SP) {
+        value[value_count].i16 = chr->sp;
+        value_count++;
+    }
+
+    if (client->stats & STAT_EXP) {
+        value[value_count].i32 = chr->exp;
+        value_count++;
+    }
+
+    if (client->stats & STAT_FAME) {
+        value[value_count].i16 = chr->fame;
+        value_count++;
+    }
+
+    if (client->stats & STAT_MESO) {
+        value[value_count].i32 = chr->mesos;
+        value_count++;
+    }
+
+    if (client->stats & STAT_PET) {
+        //value[value_count].u8 = chr->pe;
+        //value_count++;
+    }
+
+    if (client->stats & STAT_GACHA_EXP) {
+        value[value_count].i32 = chr->gachaExp;
+        value_count++;
+    }
+
+    size_t len = stat_change_packet(true, client->stats, value, packet);
     session_write(client->session, len, packet);
+    client->stats = 0;
 }
 
 bool client_assign_sp(struct Client *client, uint32_t id)
@@ -1127,157 +1196,102 @@ void client_gain_exp(struct Client *client, int32_t exp, bool reward)
         session_write(client->session, EXP_GAIN_IN_CHAT_PACKET_LENGTH, packet);
     }
 
-    // This outer loop should only run 2 times at most
+    client->stats |= STAT_EXP;
+
     do {
-        if (chr->exp > INT32_MAX - exp) {
-            exp -= INT32_MAX - chr->exp;
-            chr->exp = INT32_MAX;
-        } else {
-            chr->exp += exp;
-            exp = 0;
-        }
-        while (chr->exp >= EXP_TABLE[chr->level - 1]) {
-            if ((chr->job == JOB_BEGINNER || chr->job == JOB_NOBLESSE || chr->job == JOB_LEGEND) && chr->level <= 10) {
-                if (chr->level <= 5) {
-                    chr->str += 5;
-                } else {
-                    chr->str += 4;
-                    chr->dex += 1;
-                }
+        exp = character_gain_exp(chr, exp);
+        if (exp < 0)
+            break;
+
+        if ((chr->job == JOB_BEGINNER || chr->job == JOB_NOBLESSE || chr->job == JOB_LEGEND) && chr->level <= 10) {
+            if (chr->level <= 5) {
+                chr->str += 5;
+                client->stats |= STAT_STR;
             } else {
-                if (chr->job != JOB_BEGINNER && chr->job != JOB_NOBLESSE && chr->job != JOB_LEGEND)
-                    chr->sp += 3;
-
-                int8_t ap = 5;
-                if (job_type(chr->job) == JOB_TYPE_CYGNUS) {
-                    if (chr->level > 10) {
-                        if (chr->level <= 17)
-                            ap += 2;
-                        else if (chr->level < 77)
-                            ap++;
-                    }
-                }
-                chr->ap += ap;
+                chr->str += 4;
+                chr->dex += 1;
+                client->stats |= STAT_STR | STAT_DEX;
             }
+        } else {
+            if (chr->job != JOB_BEGINNER && chr->job != JOB_NOBLESSE && chr->job != JOB_LEGEND)
+                chr->sp += 3;
 
-            if (chr->job == JOB_BEGINNER || chr->job == JOB_NOBLESSE || chr->job == JOB_LEGEND) {
-                chr->maxHp += rand() % 5 + 12;
-                chr->maxMp += rand() % 3 + 10;
-            } else if (job_is_a(chr->job, JOB_FIGHTER) || job_is_a(chr->job, JOB_DAWN_WARRIOR)) {
-                chr->maxHp += rand() % 5 + 24;
-                chr->maxMp += rand() % 3 + 4;
-            } else if (job_is_a(chr->job, JOB_MAGICIAN) || job_is_a(chr->job, JOB_BLAZE_WIZARD)) {
-                chr->maxHp += rand() % 5 + 10;
-                chr->maxMp += rand() % 3 + 22;
-            } else if (job_is_a(chr->job, JOB_ARCHER) || job_is_a(chr->job, JOB_ROGUE) || job_is_a(chr->job, JOB_WIND_ARCHER) || job_is_a(chr->job, JOB_NIGHT_WALKER)) {
-                chr->maxHp += rand() % 5 + 20;
-                chr->maxMp += rand() % 3 + 14;
-            } else if (job_is_a(chr->job, JOB_PIRATE) || job_is_a(chr->job, JOB_THUNDER_BREAKER)) {
-                chr->maxHp += rand() % 7 + 22;
-                chr->maxMp += rand() % 6 + 18;
-            } else if (job_is_a(chr->job, JOB_ARAN)) {
-                chr->maxHp += rand() % 5 + 44;
-                chr->maxMp += rand() % 5 + 4;
-            }
-
-            chr->maxMp += character_get_effective_int(chr) / (job_is_a(chr->job, JOB_MAGICIAN) || job_is_a(chr->job, JOB_BLAZE_WIZARD) ? 20 : 10);
-
-            chr->hp = character_get_effective_hp(chr);
-            chr->mp = character_get_effective_mp(chr);
-
-            chr->exp -= EXP_TABLE[chr->level - 1];
-            chr->level++;
-
-            {
-                uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
-                if ((chr->job == JOB_BEGINNER || chr->job == JOB_NOBLESSE || chr->job == JOB_LEGEND) && chr->level <= 10) {
-                    union StatValue values[] = {
-                        {
-                            .u8 = client->character.level,
-                        },
-                        {
-                            .i16 = client->character.str,
-                        },
-                        {
-                            .i16 = client->character.dex,
-                        },
-                        {
-                            .i16 = client->character.hp,
-                        },
-                        {
-                            .i16 = client->character.maxHp,
-                        },
-                        {
-                            .i16 = client->character.mp,
-                        },
-                        {
-                            .i16 = client->character.maxMp,
-                        },
-                        {
-                            .i32 = client->character.exp
-                        }
-                    };
-                    size_t size = stat_change_packet(true, STAT_LEVEL | STAT_STR | STAT_DEX | STAT_HP | STAT_MAX_HP | STAT_MP | STAT_MAX_MP | STAT_EXP, values, packet);
-                    session_write(client->session, size, packet);
-                } else {
-                    union StatValue values[] = {
-                        {
-                            .u8 = client->character.level,
-                        },
-                        {
-                            .i16 = client->character.hp,
-                        },
-                        {
-                            .i16 = client->character.maxHp,
-                        },
-                        {
-                            .i16 = client->character.mp,
-                        },
-                        {
-                            .i16 = client->character.maxMp,
-                        },
-                        {
-                            .i16 = client->character.ap,
-                        },
-                        {
-                            .i16 = client->character.sp,
-                        },
-                        {
-                            .i32 = client->character.exp
-                        }
-                    };
-                    size_t size = stat_change_packet(true, STAT_LEVEL | STAT_HP | STAT_MAX_HP | STAT_MP | STAT_MAX_MP | STAT_AP | STAT_SP | STAT_EXP, values, packet);
-                    session_write(client->session, size, packet);
+            int8_t ap = 5;
+            if (job_type(chr->job) == JOB_TYPE_CYGNUS) {
+                if (chr->level > 10) {
+                    if (chr->level <= 17)
+                        ap += 2;
+                    else if (chr->level < 77)
+                        ap++;
                 }
             }
-
-            {
-                uint8_t packet[SHOW_FOREIGN_EFFECT_PACKET_LENGTH];
-                show_foreign_effect_packet(client->character.id, 0, packet);
-                session_broadcast_to_room(client->session, SHOW_FOREIGN_EFFECT_PACKET_LENGTH, packet);
-            }
+            character_set_ap(chr, chr->ap + ap); // TODO: Overflow protection
+            client->stats |= STAT_AP;
         }
-    } while (exp > 0);
 
-    {
-        uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
-        union StatValue value = { .i32 = client->character.exp };
-        size_t len = stat_change_packet(false, STAT_EXP, &value, packet);
-        session_write(client->session, len, packet);
-    }
+        if (chr->job == JOB_BEGINNER || chr->job == JOB_NOBLESSE || chr->job == JOB_LEGEND) {
+            character_set_max_hp(chr, chr->maxHp + rand() % 5 + 12);
+            character_set_max_mp(chr, chr->maxHp + rand() % 3 + 10);
+        } else if (job_is_a(chr->job, JOB_FIGHTER) || job_is_a(chr->job, JOB_DAWN_WARRIOR)) {
+            character_set_max_hp(chr, chr->maxHp + rand() % 5 + 24);
+            character_set_max_mp(chr, chr->maxHp + rand() % 3 + 4);
+        } else if (job_is_a(chr->job, JOB_MAGICIAN) || job_is_a(chr->job, JOB_BLAZE_WIZARD)) {
+            character_set_max_hp(chr, chr->maxHp + rand() % 5 + 10);
+            character_set_max_mp(chr, chr->maxHp + rand() % 3 + 22);
+        } else if (job_is_a(chr->job, JOB_ARCHER) || job_is_a(chr->job, JOB_ROGUE) ||
+                job_is_a(chr->job, JOB_WIND_ARCHER) || job_is_a(chr->job, JOB_NIGHT_WALKER)) {
+            character_set_max_hp(chr, chr->maxHp + rand() % 5 + 20);
+            character_set_max_mp(chr, chr->maxHp + rand() % 3 + 14);
+        } else if (job_is_a(chr->job, JOB_PIRATE) || job_is_a(chr->job, JOB_THUNDER_BREAKER)) {
+            character_set_max_hp(chr, chr->maxHp + rand() % 7 + 22);
+            character_set_max_mp(chr, chr->maxHp + rand() % 6 + 18);
+        } else if (job_is_a(chr->job, JOB_ARAN)) {
+            character_set_max_hp(chr, chr->maxHp + rand() % 5 + 44);
+            character_set_max_mp(chr, chr->maxHp + rand() % 5 + 4);
+        }
+        character_set_max_mp(chr, chr->maxMp + character_get_effective_int(chr) /
+                (job_is_a(chr->job, JOB_MAGICIAN) || job_is_a(chr->job, JOB_BLAZE_WIZARD) ? 20 : 10));
+
+        client->stats |= STAT_MAX_HP;
+        client->stats |= STAT_MAX_MP;
+
+        character_set_hp(chr, character_get_effective_hp(chr));
+        character_set_mp(chr, character_get_effective_mp(chr));
+        client->stats |= STAT_HP;
+        client->stats |= STAT_MP;
+
+        {
+            uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
+            union StatValue value = {
+                .u8 = client->character.level,
+            };
+            size_t size = stat_change_packet(true, STAT_LEVEL, &value, packet);
+            session_write(client->session, size, packet);
+        }
+
+        {
+            uint8_t packet[SHOW_FOREIGN_EFFECT_PACKET_LENGTH];
+            show_foreign_effect_packet(client->character.id, 0, packet);
+            session_broadcast_to_room(client->session, SHOW_FOREIGN_EFFECT_PACKET_LENGTH, packet);
+        }
+
+    } while (true);
 }
 
 void client_gain_meso(struct Client *client, int32_t mesos, bool pickup, bool reward)
 {
+    struct Character *chr = &client->character;
     if (mesos > 0) {
-        if (client->character.mesos > INT32_MAX - mesos)
-            mesos = INT32_MAX - client->character.mesos;
+        if (chr->mesos > INT32_MAX - mesos)
+            mesos = INT32_MAX - chr->mesos;
     } else {
-        if (client->character.mesos + mesos < 0)
-            mesos = client->character.mesos;
+        if (chr->mesos + mesos < 0)
+            mesos = chr->mesos;
     }
 
-    client->character.mesos += mesos;
+    character_set_meso(chr, chr->mesos + mesos);
+    client->stats |= STAT_MESO;
+
     if (pickup) {
         uint8_t packet[MESO_GAIN_PACKET_LENGTH];
         meso_gain_packet(mesos, packet);
@@ -1287,11 +1301,6 @@ void client_gain_meso(struct Client *client, int32_t mesos, bool pickup, bool re
         meso_gain_in_chat_packet(mesos, packet);
         session_write(client->session, MESO_GAIN_IN_CHAT_PACKET_LENGTH, packet);
     }
-
-    uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
-    union StatValue value = { .i32 = client->character.mesos };
-    size_t len = stat_change_packet(true, STAT_MESO, &value, packet);
-    session_write(client->session, len, packet);
 }
 
 void client_adjust_fame(struct Client *client, int16_t fame)
@@ -1302,11 +1311,8 @@ void client_adjust_fame(struct Client *client, int16_t fame)
     if (fame < 0 && client->character.fame < INT16_MIN - fame)
         fame = INT16_MIN - client->character.fame;
 
-    client->character.fame += fame;
-    uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
-    union StatValue value = { .i16 = client->character.fame };
-    size_t len = stat_change_packet(true, STAT_FAME, &value, packet);
-    session_write(client->session, len, packet);
+    character_set_fame(&client->character, client->character.fame + fame);
+    client->stats |= STAT_FAME;
 }
 
 bool client_has_item(struct Client *client, uint32_t id)
@@ -2810,6 +2816,7 @@ void client_kill_monster(struct Client *client, uint32_t id)
     struct Character *chr = &client->character;
     const struct MobInfo *info = wz_get_monster_stats(id);
     client_gain_exp(client, info->exp, false);
+    client_commit_stats(client);
     struct CheckProgressContext ctx = {
         .session = client->session,
         .monsterQuests = chr->monsterQuests,
@@ -2880,6 +2887,7 @@ struct ClientResult client_buy(struct Client *client, uint16_t pos, uint32_t id,
         return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_ERROR };
 
     client_gain_meso(client, -price, false, false);
+    client_commit_stats(client);
 
     if (!success)
         return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN, .reason = "Client tried to buy an item while not having a slot for it" };
@@ -2924,6 +2932,7 @@ struct ClientResult client_sell(struct Client *client, uint16_t pos, uint32_t id
     }
 
     client_gain_meso(client, info->price * quantity, false, false);
+    client_commit_stats(client);
 
     uint8_t packet[SHOP_ACTION_RESPONSE_PACKET_LENGTH];
     shop_action_response(0x8, packet);
@@ -3099,7 +3108,8 @@ void client_change_job(struct Client *client, enum Job job)
 {
     struct Character *chr = &client->character;
 
-    chr->job = job;
+    character_set_job(chr, job);
+    client->stats |= STAT_JOB;
     int16_t sp = 1;
     if (job % 10 == 2)
         sp += 2;
@@ -3113,59 +3123,42 @@ void client_change_job(struct Client *client, enum Job job)
         rand1 = rand1 % (250 - 200 + 1) + 200;
         if (chr->maxHp > 30000 - rand1)
             rand1 = 30000 - chr->maxHp;
-        chr->maxHp += rand1;
+        character_set_max_hp(chr, chr->maxHp + rand1);
     } else if (chr->job % 1000 == 200) {
         rand1 = rand1 % (150 - 100 + 1) + 100;
         if (chr->maxMp > 30000 - rand1)
             rand1 = 30000 - chr->maxMp;
-        chr->maxMp += rand1;
+        character_set_max_mp(chr, chr->maxMp + rand1);
     } else if (chr->job % 100 == 0) {
         rand1 = rand1 % (150 - 100 + 1) + 100;
         if (chr->maxHp > 30000 - rand1)
             rand1 = 30000 - chr->maxHp;
-        chr->maxHp += rand1;
+        character_set_max_hp(chr, chr->maxHp + rand1);
 
         int16_t rand2 = random() % (50 - 25 + 1) + 25;
         if (chr->maxMp > 30000 - rand2)
             rand2 = 30000 - chr->maxMp;
-        chr->maxMp += rand2;
+        character_set_max_mp(chr, chr->maxMp + rand2);
     } else if (chr->job % 1000 > 0 && chr->job % 1000 < 200) {
         rand1 = rand1 % (350 - 300 + 1) + 300;
         if (chr->maxHp > 30000 - rand1)
             rand1 = 30000 - chr->maxHp;
-        chr->maxHp += rand1;
+        character_set_max_hp(chr, chr->maxHp + rand1);
     } else if (chr->job % 1000 < 300) {
         rand1 = rand1 % (500 - 450 + 1) + 450;
         if (chr->maxMp > 30000 - rand1)
             rand1 = 30000 - chr->maxMp;
-        chr->maxMp += rand1;
+        character_set_max_mp(chr, chr->maxMp + rand1);
     } else if (chr->job % 1000 > 300) {
         rand1 = rand1 % (350 - 300 + 1) + 300;
         if (chr->maxHp > 30000 - rand1)
             rand1 = 30000 - chr->maxHp;
-        chr->maxHp += rand1;
+        character_set_max_hp(chr, chr->maxHp + rand1);
 
         int16_t rand2 = random() % (200 - 150 + 1) + 150;
         if (chr->maxMp > 30000 - rand2)
             rand2 = 30000 - chr->maxMp;
-        chr->maxMp += rand2;
-    }
-
-    {
-        uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
-        union StatValue values[] = {
-            {
-                .u16 = chr->job
-            },
-            {
-                .i16 = chr->maxHp
-            },
-            {
-                .i16 = chr->maxMp
-            }
-        };
-        size_t len = stat_change_packet(true, STAT_JOB | STAT_MAX_HP | STAT_MAX_MP, values, packet);
-        session_write(client->session, len, packet);
+        character_set_max_mp(chr, chr->maxMp + rand2);
     }
 
     // TODO: Broadcast to family, party, guild
@@ -3460,6 +3453,8 @@ static bool start_quest(struct Client *client, uint16_t qid, uint32_t npc, bool 
         }
     }
 
+    client_commit_stats(client);
+
     char progress[15];
     size_t prog_len = quest_get_progress_string(&quest, progress);
     {
@@ -3611,6 +3606,8 @@ static bool end_quest(struct Client *client, uint16_t qid, uint32_t npc, bool *s
         }
     }
 
+    client_commit_stats(client);
+
     if (!next_quest) {
         uint8_t packet[UPDATE_QUEST_COMPLETION_TIME_PACKET_LENGTH];
         end_quest_packet(qid, npc, 0, packet);
@@ -3629,29 +3626,28 @@ static void check_progress(void *data, void *ctx_)
     struct Quest *quest = data;
     const struct QuestInfo *info = wz_get_quest_info(quest->id);
 
-    const struct QuestRequirement *req;
     for (size_t i = 0; i < info->endRequirementCount; i++) {
         if (info->endRequirements[i].type == QUEST_REQUIREMENT_TYPE_MOB) {
-            req = &info->endRequirements[i];
-            break;
-        }
-    }
+            const struct QuestRequirement *req = &info->endRequirements[i];
+            for (size_t i = 0; i < req->mob.count; i++) {
+                if (req->mob.mobs[i].id == ctx->id && quest->progress[i] < req->mob.mobs[i].count) {
+                    quest->progress[i]++;
+                    if (quest->progress[i] == req->mob.mobs[i].count) {
+                        struct MonsterRefCount *monster = hash_set_u32_get(ctx->monsterQuests, ctx->id);
+                        monster->refCount--;
+                        if (monster->refCount == 0)
+                            hash_set_u32_remove(ctx->monsterQuests, ctx->id);
+                    }
 
-    for (size_t i = 0; i < req->mob.count; i++) {
-        if (req->mob.mobs[i].id == ctx->id && quest->progress[i] < req->mob.mobs[i].count) {
-            quest->progress[i]++;
-            if (quest->progress[i] == req->mob.mobs[i].count) {
-                struct MonsterRefCount *monster = hash_set_u32_get(ctx->monsterQuests, ctx->id);
-                monster->refCount--;
-                if (monster->refCount == 0)
-                    hash_set_u32_remove(ctx->monsterQuests, ctx->id);
+                    char progress[15];
+                    size_t prog_len = quest_get_progress_string(quest, progress);
+                    uint8_t packet[UPDATE_QUEST_PACKET_MAX_LENGTH];
+                    size_t len = update_quest_packet(quest->id, prog_len, progress, packet);
+                    session_write(ctx->session, len, packet);
+                    break;
+                }
             }
-
-            char progress[15];
-            size_t prog_len = quest_get_progress_string(quest, progress);
-            uint8_t packet[UPDATE_QUEST_PACKET_MAX_LENGTH];
-            size_t len = update_quest_packet(quest->id, prog_len, progress, packet);
-            session_write(ctx->session, len, packet);
+            break;
         }
     }
 }

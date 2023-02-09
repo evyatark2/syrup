@@ -32,7 +32,7 @@ struct GlobalContext {
 
 static void on_log(enum LogType type, const char *fmt, ...);
 
-static void *create_context();
+static void *create_context(void *global_ctx);
 static void destroy_context(void *ctx);
 static int on_client_connect(struct Session *session, void *global_ctx, void *thread_ctx, struct sockaddr *addr);
 static void on_client_disconnect(struct Session *session);
@@ -50,7 +50,7 @@ static void notify_npc_on_map(struct Npc *npc, void *ctx);
 
 struct ChannelServer *SERVER;
 
-int main()
+int main(void)
 {
     if (channel_config_load("channel/config.json") == -1)
         return -1;
@@ -264,7 +264,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
 
             client_warp(client, id, portal->id);
 
-            client_set_hp(client, 50);
+            client_set_hp_now(client, 50);
 
             return (struct OnPacketResult) { .status = 0, .room = id };
         }
@@ -505,6 +505,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         if (skill != (uint8_t)-3 && skill != (uint8_t)-4) {
             if (map_monster_is_alive(map, monster_id, oid)) {
                 client_adjust_hp(client, -damage);
+                client_commit_stats(client);
                 uint8_t packet[DAMAGE_PLAYER_PACKET_MAX_LENGTH];
                 size_t len = damange_player_packet(skill, monster_id, chr->id, damage, 0, direction, packet);
                 session_broadcast_to_room(session, len, packet);
@@ -757,21 +758,22 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
 
         switch (stat) {
         case 0x40:
-            client_raise_str(client);
+            client_adjust_str(client, 1);
         break;
         case 0x80:
-            client_raise_dex(client);
+            client_adjust_dex(client, 1);
         break;
         case 0x100:
-            client_raise_int(client);
+            client_adjust_int(client, 1);
         break;
         case 0x200:
-            client_raise_luk(client);
+            client_adjust_luk(client, 1);
         break;
         default:
             return (struct OnPacketResult) { .status = -1 };
         }
 
+        client_commit_stats(client);
         return (struct OnPacketResult) { .status = 0, .room = -1 };
     }
     break;
@@ -802,6 +804,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             return (struct OnPacketResult) { .status = 0, .room = -1 };
 
         client_gain_meso(client, -amount, false, false);
+        client_commit_stats(client);
 
         struct Drop drop = {
             .type = DROP_TYPE_MESO,
@@ -1088,6 +1091,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             switch (drop->type) {
             case DROP_TYPE_MESO:
                 client_gain_meso(client, drop->meso, true, false);
+                client_commit_stats(client);
                 map_remove_drop(room_get_context(session_get_room(session)), chr->id, oid);
                 return (struct OnPacketResult) { .status = 0, .room = -1 };
             break;
@@ -1113,8 +1117,6 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             }
 
             if (success) {
-                map_remove_drop(room_get_context(session_get_room(session)), chr->id, oid);
-
                 {
                     uint8_t packet[ITEM_GAIN_PACKET_LENGTH];
                     item_gain_packet(id, 1, packet);
@@ -1126,6 +1128,8 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
                     size_t len = stat_change_packet(true, 0, NULL, packet);
                     session_write(session, len, packet);
                 }
+
+                map_remove_drop(room_get_context(session_get_room(session)), chr->id, oid);
             } else {
                 {
                     uint8_t packet[INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH];

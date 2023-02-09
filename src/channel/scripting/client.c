@@ -117,6 +117,7 @@ static int l_client_change_job(lua_State *L)
     struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
     int16_t job = luaL_checkinteger(L, 2);
     client_change_job(client, job);
+    client_commit_stats(client);
     return 0;
 }
 
@@ -146,7 +147,7 @@ static int l_client_gain_hp(lua_State *L)
 {
     struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
     int16_t hp = luaL_checkinteger(L, 2);
-    client_adjust_hp(client, hp);
+    client_adjust_hp_now(client, hp);
     return 0;
 }
 
@@ -184,7 +185,7 @@ static int l_client_gain_mp(lua_State *L)
 {
     struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
     int16_t mp = luaL_checkinteger(L, 2);
-    client_adjust_mp(client, mp);
+    client_adjust_mp_now(client, mp);
     return 0;
 }
 
@@ -250,6 +251,7 @@ static int l_client_gain_meso(lua_State *L)
     struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
     int32_t amount = luaL_checkinteger(L, 2);
     client_gain_meso(client, amount, false, true);
+    client_commit_stats(client);
     return 0;
 }
 
@@ -258,6 +260,7 @@ static int l_client_gain_exp(lua_State *L)
     struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
     int32_t exp = luaL_checkinteger(L, 2);
     client_gain_exp(client, exp, true);
+    client_commit_stats(client);
     return 0;
 }
 
@@ -266,6 +269,7 @@ static int l_client_gain_fame(lua_State *L)
     struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
     int16_t fame = luaL_checkinteger(L, 2);
     client_adjust_fame(client, fame);
+    client_commit_stats(client);
     return 0;
 }
 

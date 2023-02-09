@@ -184,6 +184,30 @@ struct CharacterStats character_to_character_stats(struct Character *chr);
 
 struct CharacterAppearance character_to_character_appearance(struct Character *chr);
 
+void character_set_job(struct Character *chr, uint16_t job);
+void character_set_max_hp(struct Character *chr, int16_t hp);
+void character_set_hp(struct Character *chr, int16_t hp);
+void character_set_max_mp(struct Character *chr, int16_t hp);
+void character_set_mp(struct Character *chr, int16_t mp);
+void character_set_str(struct Character *chr, int16_t str);
+void character_set_dex(struct Character *chr, int16_t dex);
+void character_set_int(struct Character *chr, int16_t int_);
+void character_set_luk(struct Character *chr, int16_t luk);
+void character_set_fame(struct Character *chr, int16_t fame);
+void character_set_ap(struct Character *chr, int16_t ap);
+void character_set_sp(struct Character *chr, int16_t sp);
+
+/**
+ * If \p exp is positive:
+ *  * Returns a negative number if all the experience has been consumed
+ *  * otherwise, A level up has occurred and the number of experience points that still need to be consumed will be returned
+ *  * If 0 is returned then an 'exact' level up has occurred
+ * otherwise:
+ *  * Returns the number of experience points that have been deducted
+ *  * Since a 'level-down' can't occur there is no need for an indication for it unlike the level-up case
+ */
+int32_t character_gain_exp(struct Character *chr, int32_t exp);
+void character_set_meso(struct Character *chr, int32_t meso);
 int16_t character_get_effective_str(struct Character *chr);
 int16_t character_get_effective_dex(struct Character *chr);
 int16_t character_get_effective_int(struct Character *chr);
