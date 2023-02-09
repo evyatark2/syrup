@@ -907,7 +907,8 @@ static void on_command(int fd, short what, void *ctx)
     }
 }
 
-static void on_session_connect(struct evconnlistener *listener, evutil_socket_t fd, struct sockaddr *addr, int socklen, void *ctx_)
+static void on_session_connect(struct evconnlistener *listener, evutil_socket_t fd,
+        struct sockaddr *addr, int socklen, void *ctx_)
 {
     struct ChannelServer *server = ctx_;
 
@@ -933,11 +934,13 @@ static void on_session_connect(struct evconnlistener *listener, evutil_socket_t 
 static void on_login_server_read(struct bufferevent *bev, void *ctx);
 static void on_login_server_event(struct bufferevent *bev, short what, void *ctx);
 
-static void on_login_server_connect(struct evconnlistener *listener, evutil_socket_t fd, struct sockaddr *addr, int socklen, void *ctx)
+static void on_login_server_connect(struct evconnlistener *listener, evutil_socket_t fd,
+        struct sockaddr *addr, int socklen, void *ctx)
 {
     struct ChannelServer *server = ctx;
     // TODO: Check if addr is allowed
-    *server->worker.login = bufferevent_socket_new(evconnlistener_get_base(listener), fd, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_THREADSAFE);
+    *server->worker.login = bufferevent_socket_new(evconnlistener_get_base(listener), fd,
+            BEV_OPT_CLOSE_ON_FREE | BEV_OPT_THREADSAFE);
     if (*server->worker.login == NULL) {
         close(fd);
         return;
@@ -1484,8 +1487,10 @@ static void on_session_event(struct bufferevent *event, short what, void *ctx)
 {
     struct Session *session = ctx;
 
-    if (what & BEV_EVENT_EOF || what & BEV_EVENT_ERROR)
+    if (what & BEV_EVENT_READING && (what & BEV_EVENT_EOF || what & BEV_EVENT_ERROR))
         kick_session(session, false);
+    else if (what & BEV_EVENT_WRITING)
+        shutdown(bufferevent_getfd(session->event), SHUT_RD);
 }
 
 static int start_worker(void *ctx_)
