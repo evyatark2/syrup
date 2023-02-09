@@ -118,7 +118,8 @@ enum QuestRequirementType {
     QUEST_REQUIREMENT_TYPE_BUFF,
     QUEST_REQUIREMENT_TYPE_EXCEPT_BUFF,
     QUEST_REQUIREMENT_TYPE_MOB,
-    QUEST_REQUIREMENT_TYPE_ITEM
+    QUEST_REQUIREMENT_TYPE_ITEM,
+    QUEST_REQUIREMENT_TYPE_INFO
 };
 
 enum QuestState {
@@ -162,6 +163,11 @@ struct QuestRequirement {
         struct {
             int16_t hours;
         } interval;
+        struct {
+            uint16_t number;
+            size_t infoCount;
+            char **infos;
+        } info;
     };
 };
 

@@ -40,6 +40,7 @@ struct Client {
         struct {
             void *quests;
             void *progresses;
+            void *questInfos;
             void *completedQuests;
             void *skills;
             void *monsterBook;
@@ -66,6 +67,13 @@ struct AddProgressContext {
 };
 
 static void add_progress(void *data, void *ctx);
+
+struct AddQuestInfoContext {
+    struct DatabaseInfoProgress *infos;
+    size_t currentInfo;
+};
+
+static void add_quest_info(void *data, void *ctx);
 
 struct AddCompletedQuestContext {
     struct DatabaseCompletedQuest *quests;
@@ -108,6 +116,7 @@ struct Client *client_create(struct Session *session, struct DatabaseConnection 
     client->managers.npc = npc_manager;
     client->character.quests = NULL;
     client->character.monsterQuests = NULL;
+    client->character.questInfos = NULL;
     client->character.completedQuests = NULL;
     client->character.skills = NULL;
     client->character.monsterBook = NULL;
@@ -122,6 +131,7 @@ void client_destroy(struct Client *client)
 {
     hash_set_u16_destroy(client->character.quests);
     hash_set_u32_destroy(client->character.monsterQuests);
+    hash_set_u16_destroy(client->character.questInfos);
     hash_set_u16_destroy(client->character.completedQuests);
     hash_set_u32_destroy(client->character.skills);
     hash_set_u32_destroy(client->character.monsterBook);
@@ -442,8 +452,32 @@ struct ClientContResult client_cont(struct Client *client, int status)
                 quest->progressCount++;
             }
 
+            chr->questInfos = hash_set_u16_create(sizeof(struct QuestInfoProgress), offsetof(struct QuestInfoProgress, id));
+            if (chr->questInfos == NULL) {
+                hash_set_u32_destroy(chr->monsterQuests);
+                chr->monsterQuests = NULL;
+                hash_set_u16_destroy(chr->quests);
+                chr->quests = NULL;
+                database_request_destroy(client->request);
+                database_connection_unlock(client->conn);
+                return (struct ClientContResult) { -1 };
+            }
+
+            for (size_t i = 0; i < res->getCharacter.questInfoCount; i++) {
+                struct QuestInfoProgress new = {
+                    .id = res->getCharacter.questInfos[i].infoId,
+                    .length = res->getCharacter.questInfos[i].progressLength,
+                };
+
+                memcpy(new.value, res->getCharacter.questInfos[i].progress, res->getCharacter.questInfos[i].progressLength);
+
+                hash_set_u16_insert(chr->questInfos, &new);
+            }
+
             chr->completedQuests = hash_set_u16_create(sizeof(struct CompletedQuest), offsetof(struct CompletedQuest, id));
             if (chr->completedQuests == NULL) {
+                hash_set_u16_destroy(chr->questInfos);
+                chr->questInfos = NULL;
                 hash_set_u32_destroy(chr->monsterQuests);
                 chr->monsterQuests = NULL;
                 hash_set_u16_destroy(chr->quests);
@@ -475,6 +509,8 @@ struct ClientContResult client_cont(struct Client *client, int status)
             if (chr->skills == NULL) {
                 hash_set_u16_destroy(chr->completedQuests);
                 chr->completedQuests = NULL;
+                hash_set_u16_destroy(chr->questInfos);
+                chr->questInfos = NULL;
                 hash_set_u32_destroy(chr->monsterQuests);
                 chr->monsterQuests = NULL;
                 hash_set_u16_destroy(chr->quests);
@@ -499,6 +535,8 @@ struct ClientContResult client_cont(struct Client *client, int status)
                 chr->skills = NULL;
                 hash_set_u16_destroy(chr->completedQuests);
                 chr->completedQuests = NULL;
+                hash_set_u16_destroy(chr->questInfos);
+                chr->questInfos = NULL;
                 hash_set_u32_destroy(chr->monsterQuests);
                 chr->monsterQuests = NULL;
                 hash_set_u16_destroy(chr->quests);
@@ -713,8 +751,27 @@ struct ClientContResult client_cont(struct Client *client, int status)
 
             params.updateCharacter.progressCount = ctx2.currentProgress;
 
+            params.updateCharacter.questInfos = malloc(hash_set_u16_size(chr->questInfos) * sizeof(struct DatabaseInfoProgress));
+            if (params.updateCharacter.questInfos == NULL) {
+                free(client->progresses);
+                free(client->quests);
+                client_destroy(client);
+                return (struct ClientContResult) { .status = -1 };
+            }
+
+            client->questInfos = params.updateCharacter.questInfos;
+
+            struct AddQuestInfoContext ctx3 = {
+                .infos = params.updateCharacter.questInfos,
+                .currentInfo = 0,
+            };
+            hash_set_u16_foreach(chr->questInfos, add_quest_info, &ctx3);
+
+            params.updateCharacter.questInfoCount = ctx3.currentInfo;
+
             params.updateCharacter.completedQuests = malloc(hash_set_u16_size(chr->completedQuests) * sizeof(struct DatabaseCompletedQuest));
             if (params.updateCharacter.completedQuests == NULL) {
+                free(client->questInfos);
                 free(client->progresses);
                 free(client->quests);
                 client_destroy(client);
@@ -723,13 +780,13 @@ struct ClientContResult client_cont(struct Client *client, int status)
 
             client->completedQuests = params.updateCharacter.completedQuests;
 
-            struct AddCompletedQuestContext ctx3 = {
+            struct AddCompletedQuestContext ctx4 = {
                 .quests = params.updateCharacter.completedQuests,
                 .currentQuest = 0,
             };
-            hash_set_u16_foreach(chr->completedQuests, add_completed_quest, &ctx3);
+            hash_set_u16_foreach(chr->completedQuests, add_completed_quest, &ctx4);
 
-            params.updateCharacter.completedQuestCount = ctx3.currentQuest;
+            params.updateCharacter.completedQuestCount = ctx4.currentQuest;
 
             params.updateCharacter.skills = malloc(hash_set_u32_size(chr->skills) * sizeof(struct DatabaseSkill));
             if (params.updateCharacter.completedQuests == NULL) {
@@ -742,13 +799,13 @@ struct ClientContResult client_cont(struct Client *client, int status)
 
             client->skills = params.updateCharacter.skills;
 
-            struct AddSkillContext ctx4 = {
+            struct AddSkillContext ctx5 = {
                 .skills = params.updateCharacter.skills,
                 .currentSkill = 0,
             };
-            hash_set_u32_foreach(chr->skills, add_skill, &ctx4);
+            hash_set_u32_foreach(chr->skills, add_skill, &ctx5);
 
-            params.updateCharacter.skillCount = ctx4.currentSkill;
+            params.updateCharacter.skillCount = ctx5.currentSkill;
 
             params.updateCharacter.monsterBook = malloc(hash_set_u32_size(chr->monsterBook) * sizeof(struct DatabaseMonsterBookEntry));
             if (params.updateCharacter.monsterBook == NULL) {
@@ -762,13 +819,13 @@ struct ClientContResult client_cont(struct Client *client, int status)
 
             client->monsterBook = params.updateCharacter.monsterBook;
 
-            struct AddMonsterBookContext ctx5 = {
+            struct AddMonsterBookContext ctx6 = {
                 .monsterBook = params.updateCharacter.monsterBook,
                 .currentEntry = 0,
             };
-            hash_set_u32_foreach(chr->monsterBook, add_monster_book_entry, &ctx5);
+            hash_set_u32_foreach(chr->monsterBook, add_monster_book_entry, &ctx6);
 
-            params.updateCharacter.monsterBookEntryCount = ctx5.currentEntry;
+            params.updateCharacter.monsterBookEntryCount = ctx6.currentEntry;
 
             client->request = database_request_create(client->conn, &params);
             if (client->request == NULL) {
@@ -2639,6 +2696,36 @@ struct ClientResult client_start_quest(struct Client *client, uint16_t qid, uint
     return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
 }
 
+int client_set_quest_info(struct Client *client, uint16_t info, const char *value)
+{
+    struct Character *chr = &client->character;
+    struct QuestInfoProgress *qi = hash_set_u16_get(chr->questInfos, info);
+    if (qi == NULL) {
+        struct QuestInfoProgress new = {
+            .id = info,
+            .length = strlen(value)
+        };
+        strncpy(new.value, value, new.length); // Note that if value is exactly 12 then the nul terminator isn't writter
+        if (hash_set_u16_insert(chr->questInfos, &new) == -1)
+            return -1;
+        uint8_t packet[UPDATE_QUEST_PACKET_MAX_LENGTH];
+        size_t len = update_quest_packet(info, strlen(value), value, packet);
+        session_write(client->session, len, packet);
+    } else {
+        if (strncmp(qi->value, value, qi->length)) {
+            uint8_t packet[UPDATE_QUEST_PACKET_MAX_LENGTH];
+            size_t len = update_quest_packet(info, strlen(value), value, packet);
+            session_write(client->session, len, packet);
+        }
+
+        qi->length = strlen(value);
+        strcpy(qi->value, value);
+    }
+
+    return 0;
+}
+
+
 bool client_start_quest_now(struct Client *client, bool *success)
 {
     return start_quest(client, client->qid, client->npc, success);
@@ -3322,6 +3409,17 @@ static bool check_quest_requirements(struct Character *chr, size_t req_count, co
             }
         }
         break;
+
+        case QUEST_REQUIREMENT_TYPE_INFO: {
+            struct QuestInfoProgress *info = hash_set_u16_get(chr->questInfos, reqs[i].info.number);
+            if (info == NULL)
+                return false;
+
+            // TODO: For now, only implement single quest-info value
+            if (strcmp(info->value, reqs[i].info.infos[0]))
+                return false;
+        }
+        break;
         }
     }
 
@@ -3616,6 +3714,10 @@ static bool end_quest(struct Client *client, uint16_t qid, uint32_t npc, bool *s
 
     hash_set_u16_remove(chr->quests, qid);
 
+    if (hash_set_u16_get(chr->questInfos, qid) != NULL) {
+        hash_set_u16_remove(chr->questInfos, qid);
+    }
+
     *success = true;
     return true;
 }
@@ -3682,6 +3784,17 @@ static void add_progress(void *data, void *ctx_)
         ctx->progresses[ctx->currentProgress].progress = quest->progress[i];
         ctx->currentProgress++;
     }
+}
+
+static void add_quest_info(void *data, void *ctx_)
+{
+    struct QuestInfoProgress *info = data;
+    struct AddQuestInfoContext *ctx = ctx_;
+
+    ctx->infos[ctx->currentInfo].infoId = info->id;
+    ctx->infos[ctx->currentInfo].progressLength = info->length;
+    strncpy(ctx->infos[ctx->currentInfo].progress, info->value, info->length);
+    ctx->currentInfo++;
 }
 
 static void add_completed_quest(void *data, void *ctx_)

@@ -54,6 +54,11 @@ struct DatabaseRequest {
             my_bool isNull;
             union {
                 struct {
+                    uint16_t infoId;
+                    size_t infoProgressLength;
+                    char infoProgress[12];
+                };
+                struct {
                     uint16_t quest;
                     union {
                         struct {
@@ -184,6 +189,7 @@ struct DatabaseRequest *database_request_create(struct DatabaseConnection *conn,
     } else if (req->params.type == DATABASE_REQUEST_TYPE_GET_CHARACTER) {
         req->res.getCharacter.quests = NULL;
         req->res.getCharacter.progresses = NULL;
+        req->res.getCharacter.questInfos = NULL;
         req->res.getCharacter.completedQuests = NULL;
         req->res.getCharacter.skills = NULL;
         req->res.getCharacter.monsterBook = NULL;
@@ -223,6 +229,7 @@ void database_request_destroy(struct DatabaseRequest *req)
         free(req->res.getCharacter.skills);
         free(req->res.getCharacter.completedQuests);
         free(req->res.getCharacter.progresses);
+        free(req->res.getCharacter.questInfos);
         free(req->res.getCharacter.quests);
     } else if (req->params.type == DATABASE_REQUEST_TYPE_UPDATE_CHARACTER) {
         free(req->temp.updateCharacter.data);
@@ -1246,6 +1253,41 @@ static int do_get_character(struct DatabaseRequest *req, int status)
 
     DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
 
+    query = "SELECT info_id, progress FROM QuestInfos WHERE character_id = ?";
+    DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
+
+    INPUT_BINDER_INIT(1);
+    INPUT_BINDER_u32(&req->params.getCharacter.id);
+    INPUT_BINDER_FINALIZE(req->stmt);
+
+    OUTPUT_BINDER_INIT(2);
+    OUTPUT_BINDER_u16(&req->temp.getCharacter.infoId);
+    OUTPUT_BINDER_sized_string(&req->temp.getCharacter.infoProgressLength, req->temp.getCharacter.infoProgress);
+    OUTPUT_BINDER_FINALIZE(req->stmt);
+
+    DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
+
+    DO_ASYNC(ret, ret != 0, mysql_stmt_store_result, req, status);
+
+    req->res.getCharacter.questInfos = malloc(mysql_stmt_num_rows(req->stmt) * sizeof(struct DatabaseInfoProgress));
+    if (req->res.getCharacter.questInfos == NULL)
+        return -1;
+
+    DO_ASYNC(ret, ret == 1, mysql_stmt_fetch, req, status);
+    req->res.getCharacter.questInfoCount = 0;
+    while (ret != MYSQL_NO_DATA) {
+        req->res.getCharacter.questInfos[req->res.getCharacter.questInfoCount].infoId = req->temp.getCharacter.infoId;
+        strncpy(req->res.getCharacter.questInfos[req->res.getCharacter.questInfoCount].progress,
+                req->temp.getCharacter.infoProgress,
+                req->temp.getCharacter.infoProgressLength);
+        req->res.getCharacter.questInfos[req->res.getCharacter.questInfoCount].progressLength = req->temp.getCharacter.infoProgressLength;
+        req->res.getCharacter.questInfoCount++;
+
+        DO_ASYNC(ret, ret == 1, mysql_stmt_fetch, req, status);
+    }
+
+    DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
+
     query = "SELECT quest_id, time FROM CompletedQuests WHERE character_id = ?";
     DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
 
@@ -1269,8 +1311,10 @@ static int do_get_character(struct DatabaseRequest *req, int status)
     DO_ASYNC(ret, ret == 1, mysql_stmt_fetch, req, status);
     req->res.getCharacter.completedQuestCount = 0;
     while (ret != MYSQL_NO_DATA) {
-        req->res.getCharacter.completedQuests[req->res.getCharacter.completedQuestCount].id = req->temp.getCharacter.quest;
-        req->res.getCharacter.completedQuests[req->res.getCharacter.completedQuestCount].time = req->temp.getCharacter.time;
+        req->res.getCharacter.completedQuests[req->res.getCharacter.completedQuestCount].id =
+            req->temp.getCharacter.quest;
+        req->res.getCharacter.completedQuests[req->res.getCharacter.completedQuestCount].time =
+            req->temp.getCharacter.time;
         req->res.getCharacter.completedQuestCount++;
 
         DO_ASYNC(ret, ret == 1, mysql_stmt_fetch, req, status);
@@ -1302,9 +1346,12 @@ static int do_get_character(struct DatabaseRequest *req, int status)
     DO_ASYNC(ret, ret == 1, mysql_stmt_fetch, req, status);
     req->res.getCharacter.skillCount = 0;
     while (ret != MYSQL_NO_DATA) {
-        req->res.getCharacter.skills[req->res.getCharacter.skillCount].id = req->temp.getCharacter.skillId;
-        req->res.getCharacter.skills[req->res.getCharacter.skillCount].level = req->temp.getCharacter.skillLevel;
-        req->res.getCharacter.skills[req->res.getCharacter.skillCount].masterLevel = req->temp.getCharacter.skillMasterLevel;
+        req->res.getCharacter.skills[req->res.getCharacter.skillCount].id =
+            req->temp.getCharacter.skillId;
+        req->res.getCharacter.skills[req->res.getCharacter.skillCount].level =
+            req->temp.getCharacter.skillLevel;
+        req->res.getCharacter.skills[req->res.getCharacter.skillCount].masterLevel =
+            req->temp.getCharacter.skillMasterLevel;
         req->res.getCharacter.skillCount++;
 
         DO_ASYNC(ret, ret == 1, mysql_stmt_fetch, req, status);
@@ -1335,8 +1382,10 @@ static int do_get_character(struct DatabaseRequest *req, int status)
     DO_ASYNC(ret, ret == 1, mysql_stmt_fetch, req, status);
     req->res.getCharacter.monsterBookEntryCount = 0;
     while (ret != MYSQL_NO_DATA) {
-        req->res.getCharacter.monsterBook[req->res.getCharacter.monsterBookEntryCount].id = req->temp.getCharacter.cardId;
-        req->res.getCharacter.monsterBook[req->res.getCharacter.monsterBookEntryCount].quantity = req->temp.getCharacter.quantity;
+        req->res.getCharacter.monsterBook[req->res.getCharacter.monsterBookEntryCount].id =
+            req->temp.getCharacter.cardId;
+        req->res.getCharacter.monsterBook[req->res.getCharacter.monsterBookEntryCount].quantity =
+            req->temp.getCharacter.quantity;
         req->res.getCharacter.monsterBookEntryCount++;
 
         DO_ASYNC(ret, ret == 1, mysql_stmt_fetch, req, status);
@@ -1353,7 +1402,14 @@ static int do_update_character(struct DatabaseRequest *req, int status)
     my_bool bret;
     const char *query;
     BEGIN_ASYNC(req)
-    query = "UPDATE Characters SET map = ?, spawn = ?, job = ?, level = ?, exp = ?, max_hp = ?, hp = ?, max_mp = ?, mp = ?, str = ?, dex = ?, int_ = ?, luk = ?, ap = ?, sp = ?, fame = ?, mesos = ?, skin = ?, face = ?, hair = ?, equip_slots = ?, use_slots = ?, setup_slots = ?, etc_slots = ? WHERE id = ?";
+    query = "UPDATE Characters SET \
+        map = ?, spawn = ?, job = ?, level = ?, exp = ?, \
+        max_hp = ?, hp = ?, max_mp = ?, mp = ?, \
+        str = ?, dex = ?, int_ = ?, luk = ?, \
+        ap = ?, sp = ?, fame = ?, mesos = ?, \
+        skin = ?, face = ?, hair = ?, \
+        equip_slots = ?, use_slots = ?, setup_slots = ?, etc_slots = ? \
+        WHERE id = ?";
     DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
 
     INPUT_BINDER_INIT(25);
@@ -1423,7 +1479,9 @@ static int do_update_character(struct DatabaseRequest *req, int status)
 
     // Update existing items
     if (item_count_not_zero) {
-        query = "INSERT INTO Items (id, character_id, item_id, flags, owner, giver) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE character_id = ?, flags = ?, owner = ?, giver = ?, deleted = 0";
+        query = "INSERT INTO Items (id, character_id, item_id, flags, owner, giver) \
+            VALUES (?, ?, ?, ?, ?, ?) \
+            ON DUPLICATE KEY UPDATE character_id = ?, flags = ?, owner = ?, giver = ?, deleted = 0";
         DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
 
         struct {
@@ -1502,7 +1560,9 @@ static int do_update_character(struct DatabaseRequest *req, int status)
     DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
 
     // Insert new equipped items
-    for (req->temp.updateCharacter.i = 0; req->temp.updateCharacter.i < req->params.updateCharacter.equippedCount; req->temp.updateCharacter.i++) {
+    for (req->temp.updateCharacter.i = 0;
+            req->temp.updateCharacter.i < req->params.updateCharacter.equippedCount;
+            req->temp.updateCharacter.i++) {
         struct DatabaseItem *item = &req->params.updateCharacter.equippedEquipment[req->temp.updateCharacter.i].item;
         if (item->id == 0) {
             INPUT_BINDER_INIT(5);
@@ -1527,8 +1587,11 @@ static int do_update_character(struct DatabaseRequest *req, int status)
     }
 
     // Insert new equipment-inventory items
-    for (req->temp.updateCharacter.i = 0; req->temp.updateCharacter.i < req->params.updateCharacter.equipCount; req->temp.updateCharacter.i++) {
-        struct DatabaseItem *item = &req->params.updateCharacter.equipmentInventory[req->temp.updateCharacter.i].equip.item;
+    for (req->temp.updateCharacter.i = 0;
+            req->temp.updateCharacter.i < req->params.updateCharacter.equipCount;
+            req->temp.updateCharacter.i++) {
+        struct DatabaseItem *item =
+            &req->params.updateCharacter.equipmentInventory[req->temp.updateCharacter.i].equip.item;
         if (item->id == 0) {
             INPUT_BINDER_INIT(5);
             INPUT_BINDER_u32(&req->params.updateCharacter.id);
@@ -1552,7 +1615,9 @@ static int do_update_character(struct DatabaseRequest *req, int status)
     }
 
     // Insert new inventory items
-    for (req->temp.updateCharacter.i = 0; req->temp.updateCharacter.i < req->params.updateCharacter.itemCount; req->temp.updateCharacter.i++) {
+    for (req->temp.updateCharacter.i = 0;
+            req->temp.updateCharacter.i < req->params.updateCharacter.itemCount;
+            req->temp.updateCharacter.i++) {
         struct DatabaseItem *item = &req->params.updateCharacter.inventoryItems[req->temp.updateCharacter.i].item;
         if (item->id == 0) {
             INPUT_BINDER_INIT(5);
@@ -1601,7 +1666,9 @@ static int do_update_character(struct DatabaseRequest *req, int status)
 
     // Update existing equipment
     if (item_count_not_zero) {
-        query = "INSERT INTO Equipment VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE level = ?, slots = ?, str = ?, dex = ?, int_ = ?, luk = ?, hp = ?, mp = ?, atk = ?, matk = ?, def = ?, mdef = ?, acc = ?, avoid = ?, speed = ?, jump = ?";
+        query = "INSERT INTO Equipment \
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+            ON DUPLICATE KEY UPDATE level = ?, slots = ?, str = ?, dex = ?, int_ = ?, luk = ?, hp = ?, mp = ?, atk = ?, matk = ?, def = ?, mdef = ?, acc = ?, avoid = ?, speed = ?, jump = ?";
         DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
 
         struct {
@@ -1717,7 +1784,8 @@ static int do_update_character(struct DatabaseRequest *req, int status)
     }
 
     // Insert new equipment - Probably can't batch the request as we need the ID of each inserted equipment
-    query = "INSERT INTO Equipment (item, level, slots, str, dex, int_, luk, hp, mp, atk, matk, def, mdef, acc, avoid, speed, jump) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+    query = "INSERT INTO Equipment (item, level, slots, str, dex, int_, luk, hp, mp, atk, matk, def, mdef, acc, avoid, speed, jump) \
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
     DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
 
     // Insert new equipped equipment
@@ -1824,7 +1892,8 @@ static int do_update_character(struct DatabaseRequest *req, int status)
         INPUT_BINDER_FINALIZE(req->stmt);
 
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { sizeof(struct DatabaseEquipment) });
-        mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { req->params.updateCharacter.equippedCount });
+        mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE,
+                (unsigned int[]) { req->params.updateCharacter.equippedCount });
 
         DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
 
@@ -1927,6 +1996,16 @@ static int do_update_character(struct DatabaseRequest *req, int status)
 
     DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
 
+    query = "DELETE FROM QuestInfos WHERE character_id = ?";
+    DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
+    INPUT_BINDER_INIT(1);
+    INPUT_BINDER_u32(&req->params.updateCharacter.id);
+    INPUT_BINDER_FINALIZE(req->stmt);
+
+    DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
+
+    DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
+
     query = "DELETE FROM CompletedQuests WHERE character_id = ?";
     DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
     INPUT_BINDER_INIT(1);
@@ -1938,8 +2017,11 @@ static int do_update_character(struct DatabaseRequest *req, int status)
     DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
 
     if (req->params.updateCharacter.questCount > 0) {
-        char query[77];
-        int len = sprintf(query, "INSERT INTO InProgressQuests (character_id, quest_id) VALUES (%" PRIu32 ", ?)", req->params.updateCharacter.id);
+        char query[122];
+        int len = sprintf(query,
+                "INSERT INTO InProgressQuests (character_id, quest_id) VALUES (%" PRIu32 ", ?) "
+                "ON DUPLICATE KEY UPDATE quest_id = quest_id",
+                req->params.updateCharacter.id);
         DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, len);
 
         INPUT_BINDER_INIT(1);
@@ -1958,13 +2040,17 @@ static int do_update_character(struct DatabaseRequest *req, int status)
     }
 
     if (req->params.updateCharacter.progressCount > 0) {
-        char query[100];
-        int len = sprintf(query, "INSERT INTO Progresses (character_id, quest_id, progress_id, progress) VALUES (%" PRIu32 ", ?, ?, ?)", req->params.updateCharacter.id);
+        char query[138];
+        int len = sprintf(query,
+                "INSERT INTO Progresses (character_id, quest_id, progress_id, progress) VALUES (%" PRIu32 ", ?, ?, ?) "
+                "ON DUPLICATE KEY UPDATE progress = ?",
+                req->params.updateCharacter.id);
         DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, len);
 
-        INPUT_BINDER_INIT(3);
+        INPUT_BINDER_INIT(4);
         INPUT_BINDER_u16(&req->params.updateCharacter.progresses->questId);
         INPUT_BINDER_u32(&req->params.updateCharacter.progresses->progressId);
+        INPUT_BINDER_i16(&req->params.updateCharacter.progresses->progress);
         INPUT_BINDER_i16(&req->params.updateCharacter.progresses->progress);
         INPUT_BINDER_FINALIZE(req->stmt);
 
@@ -1979,13 +2065,43 @@ static int do_update_character(struct DatabaseRequest *req, int status)
         DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
     }
 
-    if (req->params.updateCharacter.completedQuestCount > 0) {
-        char query[85];
-        int len = sprintf(query, "INSERT INTO CompletedQuests (character_id, quest_id, time) VALUES (%" PRIu32 ", ?, ?)", req->params.updateCharacter.id);
+    if (req->params.updateCharacter.questInfoCount > 0) {
+        char query[121];
+        int len = sprintf(query,
+                "INSERT INTO QuestInfos (character_id, info_id, progress) VALUES (%" PRIu32 ", ?, ?) "
+                "ON DUPLICATE KEY UPDATE progress = ?",
+                req->params.updateCharacter.id);
         DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, len);
 
-        INPUT_BINDER_INIT(2);
+        INPUT_BINDER_INIT(3);
+        INPUT_BINDER_u16(&req->params.updateCharacter.questInfos->infoId);
+        INPUT_BINDER_sized_string(req->params.updateCharacter.questInfos->progressLength, req->params.updateCharacter.questInfos->progress);
+        INPUT_BINDER_sized_string(req->params.updateCharacter.questInfos->progressLength, req->params.updateCharacter.questInfos->progress);
+        INPUT_BINDER_FINALIZE(req->stmt);
+
+        mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { sizeof(struct DatabaseInfoProgress) });
+        mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { req->params.updateCharacter.questInfoCount });
+
+        DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
+
+        mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { 0 });
+        mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { 0 });
+
+        DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
+
+    }
+
+    if (req->params.updateCharacter.completedQuestCount > 0) {
+        char query[119];
+        int len = sprintf(query,
+                "INSERT INTO CompletedQuests (character_id, quest_id, time) VALUES (%" PRIu32 ", ?, ?) "
+                "ON DUPLICATE KEY UPDATE time = ?",
+                req->params.updateCharacter.id);
+        DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, len);
+
+        INPUT_BINDER_INIT(3);
         INPUT_BINDER_u16(&req->params.updateCharacter.completedQuests->id);
+        INPUT_BINDER_time(&req->params.updateCharacter.completedQuests->time);
         INPUT_BINDER_time(&req->params.updateCharacter.completedQuests->time);
         INPUT_BINDER_FINALIZE(req->stmt);
 
@@ -2002,7 +2118,9 @@ static int do_update_character(struct DatabaseRequest *req, int status)
 
     if (req->params.updateCharacter.skillCount > 0) {
         char query[94];
-        int len = sprintf(query, "INSERT INTO Skills VALUES (%" PRIu32 ", ?, ?, ?) ON DUPLICATE KEY UPDATE level = ?, master = ?", req->params.updateCharacter.id);
+        int len = sprintf(query,
+                "INSERT INTO Skills VALUES (%" PRIu32 ", ?, ?, ?) ON DUPLICATE KEY UPDATE level = ?, master = ?",
+                req->params.updateCharacter.id);
         DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, len);
 
         INPUT_BINDER_INIT(5);
@@ -2028,7 +2146,9 @@ static int do_update_character(struct DatabaseRequest *req, int status)
 
     if (req->params.updateCharacter.monsterBookEntryCount > 0) {
         char query[87];
-        int len = sprintf(query, "INSERT INTO MonsterBooks VALUES (%" PRIu32 ", ?, ?) ON DUPLICATE KEY UPDATE quantity = ?", req->params.updateCharacter.id);
+        int len = sprintf(query,
+                "INSERT INTO MonsterBooks VALUES (%" PRIu32 ", ?, ?) ON DUPLICATE KEY UPDATE quantity = ?",
+                req->params.updateCharacter.id);
         DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, len);
 
         INPUT_BINDER_INIT(3);
@@ -2211,7 +2331,9 @@ static int do_get_monster_drops(struct DatabaseRequest *req, int status)
 static int do_get_reactor_drops(struct DatabaseRequest *req, int status)
 {
     int ret;
-    const char *query = "SELECT DISTINCT reactor_id FROM ReactorDrops UNION SELECT DISTINCT reactor_id FROM ReactorQuestDrops UNION SELECT DISTINCT reactor_id FROM ReactorMesoDrops";
+    const char *query = "SELECT DISTINCT reactor_id FROM ReactorDrops UNION \
+        SELECT DISTINCT reactor_id FROM ReactorQuestDrops UNION \
+        SELECT DISTINCT reactor_id FROM ReactorMesoDrops";
     assert(mysql_stmt_prepare(req->stmt, query, strlen(query)) == 0);
 
     uint32_t id;

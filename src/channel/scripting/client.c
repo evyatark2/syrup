@@ -35,6 +35,7 @@ static int l_client_send_prev_next(lua_State *L);
 static int l_client_send_yes_no(lua_State *L);
 static int l_client_set_hp(lua_State *L);
 static int l_client_set_mp(lua_State *L);
+static int l_client_set_quest_info(lua_State *L);
 static int l_client_start_quest_now(lua_State *L);
 static int l_client_to_string(lua_State *L);
 static int l_client_warp(lua_State *L);
@@ -72,6 +73,7 @@ static const struct luaL_Reg clientlib[] = {
     { "sendYesNo", l_client_send_yes_no },
     { "setHp", l_client_set_hp },
     { "setMp", l_client_set_mp },
+    { "setQuestInfo", l_client_set_quest_info },
     { "startQuestNow", l_client_start_quest_now },
     { "warp", l_client_warp },
     { "__tostring", l_client_to_string },
@@ -293,6 +295,16 @@ static int l_client_meso(lua_State *L)
     struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
     lua_pushinteger(L, client_get_character(client)->mesos);
     return 1;
+}
+
+static int l_client_set_quest_info(lua_State *L)
+{
+    struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
+    uint16_t info = luaL_checkinteger(L, 2);
+    const char *value = luaL_checkstring(L, 3);
+    if (client_set_quest_info(client, info, value) == -1)
+        return luaL_error(L, "Memory error");
+    return 0;
 }
 
 static int l_client_start_quest_now(lua_State *L)

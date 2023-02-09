@@ -69,6 +69,12 @@ struct DatabaseProgress {
     int16_t progress;
 };
 
+struct DatabaseInfoProgress {
+    uint16_t infoId;
+    uint8_t progressLength;
+    char progress[12];
+};
+
 struct DatabaseCompletedQuest {
     uint16_t id;
     MYSQL_TIME time;
@@ -184,6 +190,8 @@ struct RequestParams {
             uint16_t *quests;
             size_t progressCount;
             struct DatabaseProgress *progresses;
+            size_t questInfoCount;
+            struct DatabaseInfoProgress *questInfos;
             size_t completedQuestCount;
             struct DatabaseCompletedQuest *completedQuests;
             size_t skillCount;
@@ -368,6 +376,8 @@ union DatabaseResult {
         uint16_t *quests;
         size_t progressCount;
         struct DatabaseProgress *progresses;
+        size_t questInfoCount;
+        struct DatabaseInfoProgress *questInfos;
         size_t completedQuestCount;
         struct DatabaseCompletedQuest *completedQuests;
         size_t skillCount;

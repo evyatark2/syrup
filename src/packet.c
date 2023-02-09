@@ -186,10 +186,11 @@ size_t create_character_response_packet(struct CharacterStats *chr, uint8_t *pac
     return writer.pos;
 }
 
-static void add_quest_info(void *data, void *ctx_);
-static void add_completed_quest_info(void *data, void *ctx_);
-static void add_skill_info(void *data, void *ctx);
-static void add_monster_book_entry(void *data, void *ctx);
+static void add_skills(void *data, void *ctx);
+static void add_quests(void *data, void *ctx_);
+static void add_quest_infos(void *data, void *ctx_);
+static void add_completed_quests(void *data, void *ctx_);
+static void add_monster_book_entries(void *data, void *ctx);
 
 size_t enter_map_packet(struct Character *chr, uint8_t *packet) {
     struct Writer writer;
@@ -360,15 +361,17 @@ size_t enter_map_packet(struct Character *chr, uint8_t *packet) {
 
     // Skills
     writer_u16(&writer, hash_set_u32_size(chr->skills)); // Number for skills
-    hash_set_u32_foreach(chr->skills, add_skill_info, &writer);
+    hash_set_u32_foreach(chr->skills, add_skills, &writer);
 
     writer_u16(&writer, 0); // Number for cooldowns
 
-    writer_i16(&writer, hash_set_u16_size(chr->quests)); // Started quests count
-    hash_set_u16_foreach(chr->quests, add_quest_info, &writer);
+    // Quests
+    writer_i16(&writer, hash_set_u16_size(chr->quests) + hash_set_u16_size(chr->questInfos)); // Started quests count
+    hash_set_u16_foreach(chr->quests, add_quests, &writer);
+    hash_set_u16_foreach(chr->questInfos, add_quest_infos, &writer);
 
     writer_i16(&writer, hash_set_u16_size(chr->completedQuests)); // Completed quests count
-    hash_set_u16_foreach(chr->completedQuests, add_completed_quest_info, &writer);
+    hash_set_u16_foreach(chr->completedQuests, add_completed_quests, &writer);
 
     writer_u16(&writer, 0); // Mini game info
     writer_u16(&writer, 0); // Crush rings count
@@ -387,7 +390,7 @@ size_t enter_map_packet(struct Character *chr, uint8_t *packet) {
     writer_u32(&writer, 0); // Cover
     writer_u8(&writer, 0);
     writer_u16(&writer, hash_set_u32_size(chr->monsterBook));
-    hash_set_u32_foreach(chr->monsterBook, add_monster_book_entry, &writer);
+    hash_set_u32_foreach(chr->monsterBook, add_monster_book_entries, &writer);
 
     writer_u16(&writer, 0); // New year records count
 
@@ -1186,7 +1189,7 @@ void end_quest_packet(uint16_t qid, uint32_t npc, uint16_t next, uint8_t *packet
     writer_u16(&writer, next);
 }
 
-size_t update_quest_packet(uint16_t id, uint16_t len, char *progress, uint8_t *packet)
+size_t update_quest_packet(uint16_t id, uint16_t len, const char *progress, uint8_t *packet)
 {
     struct Writer writer;
     writer_init(&writer, UPDATE_QUEST_PACKET_MAX_LENGTH, packet);
@@ -1412,26 +1415,6 @@ size_t popup_message_packet(uint16_t len, const char *message, uint8_t *packet)
     return writer.pos;
 }
 
-static void add_skill_info(void *data, void *ctx)
-{
-    struct Skill *skill = data;
-    struct Writer *writer = ctx;
-
-    writer_u32(writer, skill->id);
-    writer_u32(writer, skill->level);
-    writer_u64(writer, 150842304000000000L); // DEFAULT_TIME
-    // writer_u32(writer, skill->masterLevel); // Only when the skill is a 4th job skill
-}
-
-static void add_monster_book_entry(void *data, void *ctx)
-{
-    struct MonsterBookEntry *entry = data;
-    struct Writer *writer = ctx;
-
-    writer_u16(writer, entry->id % 10000);
-    writer_i8(writer, entry->count);
-}
-
 static void exp_gain_packet_internal(struct Writer *writer, int32_t exp, int32_t equip_bonus, int32_t party_bonus, bool white, bool in_chat)
 {
     writer_u16(writer, 0x0027);
@@ -1452,7 +1435,18 @@ static void exp_gain_packet_internal(struct Writer *writer, int32_t exp, int32_t
     writer_i32(writer, 0); // Rainbow week bonus
 }
 
-static void add_quest_info(void *data, void *ctx_)
+static void add_skills(void *data, void *ctx)
+{
+    struct Skill *skill = data;
+    struct Writer *writer = ctx;
+
+    writer_u32(writer, skill->id);
+    writer_u32(writer, skill->level);
+    writer_u64(writer, 150842304000000000L); // DEFAULT_TIME
+    // writer_u32(writer, skill->masterLevel); // Only when the skill is a 4th job skill
+}
+
+static void add_quests(void *data, void *ctx_)
 {
     struct Quest *quest = data;
     struct Writer *writer = ctx_;
@@ -1462,7 +1456,15 @@ static void add_quest_info(void *data, void *ctx_)
     writer_sized_string(writer, 3 * quest->progressCount, str);
 }
 
-static void add_completed_quest_info(void *data, void *ctx_)
+static void add_quest_infos(void *data, void *ctx_)
+{
+    struct QuestInfoProgress *info = data;
+    struct Writer *writer = ctx_;
+    writer_u16(writer, info->id);
+    writer_sized_string(writer, info->length, info->value);
+}
+
+static void add_completed_quests(void *data, void *ctx_)
 {
     struct CompletedQuest *quest = data;
     struct Writer *writer = ctx_;
@@ -1472,4 +1474,12 @@ static void add_completed_quest_info(void *data, void *ctx_)
     writer_u64(writer, quest->time * 1000L * 10000L + 116444736010800000L + tm.tm_gmtoff * 1000L * 10000L); // Current time
 }
 
+static void add_monster_book_entries(void *data, void *ctx)
+{
+    struct MonsterBookEntry *entry = data;
+    struct Writer *writer = ctx;
+
+    writer_u16(writer, entry->id % 10000);
+    writer_i8(writer, entry->count);
+}
 

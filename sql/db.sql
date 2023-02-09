@@ -163,6 +163,14 @@ CREATE TABLE IF NOT EXISTS Progresses (
     FOREIGN KEY (character_id, quest_id) REFERENCES InProgressQuests (character_id, quest_id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS QuestInfos (
+    character_id INT UNSIGNED,
+    info_id SMALLINT UNSIGNED,
+    progress VARCHAR(12) NOT NULL,
+    PRIMARY KEY (character_id, info_id),
+    FOREIGN KEY (character_id) REFERENCES Characters (id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS CompletedQuests (
     character_id INT UNSIGNED,
     quest_id SMALLINT UNSIGNED,

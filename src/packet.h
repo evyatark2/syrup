@@ -252,7 +252,7 @@ void start_quest_packet(uint16_t qid, uint32_t npc, uint8_t *packet);
 void end_quest_packet(uint16_t qid, uint32_t npc, uint16_t next, uint8_t *packet);
 
 #define UPDATE_QUEST_PACKET_MAX_LENGTH 28
-size_t update_quest_packet(uint16_t id, uint16_t len, char *progress, uint8_t *packet);
+size_t update_quest_packet(uint16_t id, uint16_t len, const char *progress, uint8_t *packet);
 
 #define UPDATE_QUEST_COMPLETION_TIME_PACKET_LENGTH 14
 void update_quest_completion_time_packet(uint16_t qid, time_t time, uint8_t *packet);

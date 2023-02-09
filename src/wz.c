@@ -131,7 +131,9 @@ enum QuestCheckItemType {
     QUEST_CHECK_ITEM_TYPE_REQ_ITEMS,
     QUEST_CHECK_ITEM_TYPE_REQ_ITEM,
     QUEST_CHECK_ITEM_TYPE_REQ_MOBS,
-    QUEST_CHECK_ITEM_TYPE_REQ_MOB
+    QUEST_CHECK_ITEM_TYPE_REQ_MOB,
+    QUEST_CHECK_ITEM_TYPE_REQ_INFOS,
+    QUEST_CHECK_ITEM_TYPE_REQ_INFO,
 };
 
 struct QuestCheckParserStackNode {
@@ -144,6 +146,7 @@ struct QuestCheckParserContext {
     size_t questCapacity;
     size_t reqCapacity;
     size_t capacity;
+    struct QuestRequirement *infoReq;
     uint32_t skip;
 };
 
@@ -989,11 +992,23 @@ void wz_terminate(void)
                 free(QUEST_INFOS[i].endRequirements[j].job.jobs);
             else if (QUEST_INFOS[i].endRequirements[j].type == QUEST_REQUIREMENT_TYPE_MOB)
                 free(QUEST_INFOS[i].endRequirements[j].mob.mobs);
+            else if (QUEST_INFOS[i].endRequirements[j].type == QUEST_REQUIREMENT_TYPE_INFO) {
+                for (size_t k = 0; k < QUEST_INFOS[i].endRequirements[j].info.infoCount; k++)
+                    free(QUEST_INFOS[i].endRequirements[j].info.infos[k]);
+
+                free(QUEST_INFOS[i].endRequirements[j].info.infos);
+            }
         }
         free(QUEST_INFOS[i].endRequirements);
         for (size_t j = 0; j < QUEST_INFOS[i].startRequirementCount; j++) {
             if (QUEST_INFOS[i].startRequirements[j].type == QUEST_REQUIREMENT_TYPE_JOB)
                 free(QUEST_INFOS[i].startRequirements[j].job.jobs);
+            else if (QUEST_INFOS[i].startRequirements[j].type == QUEST_REQUIREMENT_TYPE_INFO) {
+                for (size_t k = 0; k < QUEST_INFOS[i].startRequirements[j].info.infoCount; k++)
+                    free(QUEST_INFOS[i].startRequirements[j].info.infos[k]);
+
+                free(QUEST_INFOS[i].startRequirements[j].info.infos);
+            }
         }
         free(QUEST_INFOS[i].startRequirements);
     }
@@ -1801,6 +1816,24 @@ static void on_quest_check_start(void *user_data, const XML_Char *name, const XM
                     req->type = QUEST_REQUIREMENT_TYPE_COMPLETED_QUEST;
                     req->questCompleted.amount = strtol(value, NULL, 10);
                     quest->startRequirementCount++;
+                } else if (!strcmp(key, "infoNumber")) {
+                    struct QuestRequirement *req = NULL;
+                    for (size_t i = 0; i < quest->startRequirementCount; i++) {
+                        if (quest->startRequirements[i].type == QUEST_REQUIREMENT_TYPE_INFO) {
+                            req = &quest->startRequirements[i];
+                            break;
+                        }
+                    }
+
+                    if (req == NULL) {
+                        req = &quest->startRequirements[quest->startRequirementCount];
+                        req->type = QUEST_REQUIREMENT_TYPE_INFO;
+                        req->info.infoCount = 0;
+                        req->info.infos = NULL;
+                        quest->startRequirementCount++;
+                    }
+
+                    req->info.number = strtol(value, NULL, 10);
                 }
                 ctx->skip++;
             } else if (!strcmp(name, "string")) {
@@ -1844,6 +1877,37 @@ static void on_quest_check_start(void *user_data, const XML_Char *name, const XM
                     quest->startRequirements[quest->startRequirementCount].job.jobs = malloc(sizeof(uint16_t));
                     ctx->capacity = 1;
                     quest->startRequirements[quest->startRequirementCount].job.count = 0;
+                } else if (!strcmp(attrs[1], "infoex")) {
+                    if (quest->startRequirementCount == ctx->reqCapacity) {
+                        quest->startRequirements = realloc(quest->startRequirements, (ctx->reqCapacity * 2) * sizeof(struct QuestRequirement));
+                        ctx->reqCapacity *= 2;
+                    }
+
+                    struct QuestCheckParserStackNode *new = malloc(sizeof(struct QuestCheckParserStackNode));
+                    new->next = ctx->head;
+                    new->type = QUEST_CHECK_ITEM_TYPE_REQ_INFOS;
+                    ctx->head = new;
+
+                    struct QuestRequirement *req = NULL;
+                    for (size_t i = 0; i < quest->startRequirementCount; i++) {
+                        if (quest->startRequirements[i].type == QUEST_REQUIREMENT_TYPE_INFO) {
+                            req = &quest->startRequirements[i];
+                            break;
+                        }
+                    }
+
+                    if (req == NULL) {
+                        req = &quest->startRequirements[quest->startRequirementCount];
+                        req->type = QUEST_REQUIREMENT_TYPE_INFO;
+                        req->info.number = 0;
+                        quest->startRequirementCount++;
+                    }
+
+                    req->info.infos = malloc(sizeof(char *));
+                    req->info.infoCount = 0;
+
+                    ctx->infoReq = req;
+                    ctx->capacity = 1;
                 } else {
                     ctx->skip++;
                 }
@@ -1891,6 +1955,24 @@ static void on_quest_check_start(void *user_data, const XML_Char *name, const XM
                     req->type = QUEST_REQUIREMENT_TYPE_COMPLETED_QUEST;
                     req->questCompleted.amount = strtol(value, NULL, 10);
                     quest->endRequirementCount++;
+                } else if (!strcmp(key, "infoNumber")) {
+                    struct QuestRequirement *req = NULL;
+                    for (size_t i = 0; i < quest->endRequirementCount; i++) {
+                        if (quest->endRequirements[i].type == QUEST_REQUIREMENT_TYPE_INFO) {
+                            req = &quest->endRequirements[i];
+                            break;
+                        }
+                    }
+
+                    if (req == NULL) {
+                        req = &quest->endRequirements[quest->endRequirementCount];
+                        req->type = QUEST_REQUIREMENT_TYPE_INFO;
+                        req->info.infoCount = 0;
+                        req->info.infos = NULL;
+                        quest->endRequirementCount++;
+                    }
+
+                    req->info.number = strtol(value, NULL, 10);
                 }
                 ctx->skip++;
             } else if (!strcmp(name, "string")) {
@@ -1947,6 +2029,37 @@ static void on_quest_check_start(void *user_data, const XML_Char *name, const XM
                     quest->endRequirements[quest->endRequirementCount].job.jobs = malloc(sizeof(uint16_t));
                     ctx->capacity = 1;
                     quest->endRequirements[quest->endRequirementCount].job.count = 0;
+                } else if (!strcmp(attrs[1], "infoex")) {
+                    if (quest->endRequirementCount == ctx->reqCapacity) {
+                        quest->endRequirements = realloc(quest->endRequirements, (ctx->reqCapacity * 2) * sizeof(struct QuestRequirement));
+                        ctx->reqCapacity *= 2;
+                    }
+
+                    struct QuestCheckParserStackNode *new = malloc(sizeof(struct QuestCheckParserStackNode));
+                    new->next = ctx->head;
+                    new->type = QUEST_CHECK_ITEM_TYPE_REQ_INFOS;
+                    ctx->head = new;
+
+                    struct QuestRequirement *req = NULL;
+                    for (size_t i = 0; i < quest->endRequirementCount; i++) {
+                        if (quest->endRequirements[i].type == QUEST_REQUIREMENT_TYPE_INFO) {
+                            req = &quest->endRequirements[i];
+                            break;
+                        }
+                    }
+
+                    if (req == NULL) {
+                        req = &quest->endRequirements[quest->endRequirementCount];
+                        req->type = QUEST_REQUIREMENT_TYPE_INFO;
+                        req->info.number = 0;
+                        quest->endRequirementCount++;
+                    }
+
+                    req->info.infos = malloc(sizeof(char *));
+                    req->info.infoCount = 0;
+
+                    ctx->infoReq = req;
+                    ctx->capacity = 1;
                 } else {
                     ctx->skip++;
                 }
@@ -2013,25 +2126,26 @@ static void on_quest_check_start(void *user_data, const XML_Char *name, const XM
         break;
 
         case QUEST_CHECK_ITEM_TYPE_REQ_ITEMS: {
+            struct QuestInfo *quest = &QUEST_INFOS[QUEST_INFO_COUNT];
              if (strcmp(name, "imgdir"))
                 assert(0);
 
             if (ctx->head->next->type == QUEST_CHECK_ITEM_TYPE_START)  {
-                if (QUEST_INFOS[QUEST_INFO_COUNT].startRequirementCount == ctx->reqCapacity) {
-                    QUEST_INFOS[QUEST_INFO_COUNT].startRequirements = realloc(QUEST_INFOS[QUEST_INFO_COUNT].startRequirements, (ctx->reqCapacity * 2) * sizeof(struct QuestRequirement));
+                if (quest->startRequirementCount == ctx->reqCapacity) {
+                    quest->startRequirements = realloc(quest->startRequirements, (ctx->reqCapacity * 2) * sizeof(struct QuestRequirement));
                     ctx->reqCapacity *= 2;
                 }
 
-                QUEST_INFOS[QUEST_INFO_COUNT].startRequirements[QUEST_INFOS[QUEST_INFO_COUNT].startRequirementCount].type = QUEST_REQUIREMENT_TYPE_ITEM;
-                QUEST_INFOS[QUEST_INFO_COUNT].startRequirements[QUEST_INFOS[QUEST_INFO_COUNT].startRequirementCount].item.count = 0;
+                quest->startRequirements[quest->startRequirementCount].type = QUEST_REQUIREMENT_TYPE_ITEM;
+                quest->startRequirements[quest->startRequirementCount].item.count = 0;
             } else {
-                if (QUEST_INFOS[QUEST_INFO_COUNT].endRequirementCount == ctx->reqCapacity) {
-                    QUEST_INFOS[QUEST_INFO_COUNT].endRequirements = realloc(QUEST_INFOS[QUEST_INFO_COUNT].endRequirements, (ctx->reqCapacity * 2) * sizeof(struct QuestRequirement));
+                if (quest->endRequirementCount == ctx->reqCapacity) {
+                    quest->endRequirements = realloc(quest->endRequirements, (ctx->reqCapacity * 2) * sizeof(struct QuestRequirement));
                     ctx->reqCapacity *= 2;
                 }
 
-                QUEST_INFOS[QUEST_INFO_COUNT].endRequirements[QUEST_INFOS[QUEST_INFO_COUNT].endRequirementCount].type = QUEST_REQUIREMENT_TYPE_ITEM;
-                QUEST_INFOS[QUEST_INFO_COUNT].endRequirements[QUEST_INFOS[QUEST_INFO_COUNT].endRequirementCount].item.count = 0;
+                quest->endRequirements[quest->endRequirementCount].type = QUEST_REQUIREMENT_TYPE_ITEM;
+                quest->endRequirements[quest->endRequirementCount].item.count = 0;
             }
 
 
@@ -2043,6 +2157,7 @@ static void on_quest_check_start(void *user_data, const XML_Char *name, const XM
         break;
 
         case QUEST_CHECK_ITEM_TYPE_REQ_ITEM: {
+            struct QuestInfo *quest = &QUEST_INFOS[QUEST_INFO_COUNT];
              if (strcmp(name, "int"))
                 assert(0);
 
@@ -2061,14 +2176,14 @@ static void on_quest_check_start(void *user_data, const XML_Char *name, const XM
             ctx->skip++;
             if (!strcmp(key, "id")) {
                 if (ctx->head->next->next->type == QUEST_CHECK_ITEM_TYPE_START)
-                    QUEST_INFOS[QUEST_INFO_COUNT].startRequirements[QUEST_INFOS[QUEST_INFO_COUNT].startRequirementCount].item.id = strtol(value, NULL, 10);
+                    quest->startRequirements[quest->startRequirementCount].item.id = strtol(value, NULL, 10);
                 else
-                    QUEST_INFOS[QUEST_INFO_COUNT].endRequirements[QUEST_INFOS[QUEST_INFO_COUNT].endRequirementCount].item.id = strtol(value, NULL, 10);
+                    quest->endRequirements[quest->endRequirementCount].item.id = strtol(value, NULL, 10);
             } else if (!strcmp(key, "count")) {
                 if (ctx->head->next->next->type == QUEST_CHECK_ITEM_TYPE_START)
-                    QUEST_INFOS[QUEST_INFO_COUNT].startRequirements[QUEST_INFOS[QUEST_INFO_COUNT].startRequirementCount].item.count = strtol(value, NULL, 10);
+                    quest->startRequirements[quest->startRequirementCount].item.count = strtol(value, NULL, 10);
                 else
-                    QUEST_INFOS[QUEST_INFO_COUNT].endRequirements[QUEST_INFOS[QUEST_INFO_COUNT].endRequirementCount].item.count = strtol(value, NULL, 10);
+                    quest->endRequirements[quest->endRequirementCount].item.count = strtol(value, NULL, 10);
             }
         }
         break;
@@ -2146,6 +2261,47 @@ static void on_quest_check_start(void *user_data, const XML_Char *name, const XM
         }
         break;
 
+        case QUEST_CHECK_ITEM_TYPE_REQ_INFOS: {
+            struct QuestRequirement *req = ctx->infoReq;
+
+            if (strcmp(name, "imgdir"))
+                assert(0);
+
+            if (req->info.infoCount == ctx->capacity) {
+                req->info.infos = realloc(req->info.infos, (ctx->capacity * 2) * sizeof(char *));
+                ctx->capacity *= 2;
+            }
+
+            struct QuestCheckParserStackNode *new = malloc(sizeof(struct QuestCheckParserStackNode));
+            new->next = ctx->head;
+            new->type = QUEST_CHECK_ITEM_TYPE_REQ_INFO;
+            ctx->head = new;
+        }
+        break;
+
+        case QUEST_CHECK_ITEM_TYPE_REQ_INFO: {
+            const XML_Char *key = NULL;
+            const XML_Char *value;
+            for (size_t i = 0; attrs[i] != NULL; i += 2) {
+                if (!strcmp(attrs[i], "name"))
+                    key = attrs[i+1];
+                else if (!strcmp(attrs[i], "value"))
+                    value = attrs[i+1];
+            }
+
+            if (key == NULL)
+                assert(0); // ERROR
+
+            struct QuestRequirement *req = ctx->infoReq;
+
+            ctx->skip++;
+            if (!strcmp(key, "value")) {
+                req->info.infos[req->info.infoCount] = malloc(strlen(value) + 1);
+                strcpy(req->info.infos[req->info.infoCount], value);
+            }
+        }
+        break;
+
         default:
             ctx->skip++;
         }
@@ -2160,7 +2316,9 @@ static void on_quest_check_end(void *user_data, const XML_Char *name)
         return;
     }
 
-    if (ctx->head->type == QUEST_CHECK_ITEM_TYPE_REQ_MOB) {
+    if (ctx->head->type == QUEST_CHECK_ITEM_TYPE_REQ_INFO) {
+        ctx->infoReq->info.infoCount++;
+    } else if (ctx->head->type == QUEST_CHECK_ITEM_TYPE_REQ_MOB) {
         QUEST_INFOS[QUEST_INFO_COUNT].endRequirements[QUEST_INFOS[QUEST_INFO_COUNT].endRequirementCount].mob.count++;
     } else if (ctx->head->type == QUEST_CHECK_ITEM_TYPE_REQ_QUEST || ctx->head->type == QUEST_CHECK_ITEM_TYPE_REQ_ITEM || ctx->head->type == QUEST_CHECK_ITEM_TYPE_REQ_MOBS) {
         if (ctx->head->next->next->type == QUEST_CHECK_ITEM_TYPE_START)

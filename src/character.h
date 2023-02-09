@@ -78,8 +78,9 @@ struct Inventory {
 };
 
 struct QuestInfoProgress {
-    uint16_t info;
-    char value[8];
+    uint16_t id;
+    uint8_t length;
+    char value[12];
 };
 
 struct Quest {
@@ -173,6 +174,7 @@ struct Character {
     // For each monster ID in this set, there is a reference count of the number of quests that have this monster as a requirement.
     // This is used in client_kill_monster() to quickly check if the monster has a quest before starting to iterate over the elements of \p quests
     struct HashSetU32 *monsterQuests; 
+    struct HashSetU16 *questInfos;
     struct HashSetU16 *completedQuests;
 
     struct HashSetU32 *skills;
