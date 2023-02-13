@@ -1349,7 +1349,7 @@ static void on_worker_user_fd_ready(int fd, short what, void *ctx)
         event_free(session->userEvent);
         session->userEvent = NULL;
 
-        if (res.status < 0) {
+        if (session->state != SESSION_STATE_KICKING && session->state != SESSION_STATE_DISCONNECTING && res.status < 0) {
             kick_session(session, false);
         } else if (session->state == SESSION_STATE_KICKING) {
             kick_session(session, false);
@@ -1724,7 +1724,7 @@ static bool kick_common(struct Worker *worker, struct Session *session, void (*d
             bufferevent_disable(session->event, EV_READ);
             session->state = SESSION_STATE_DISCONNECTING;
         }
-    } else {
+    } else if (session->state != SESSION_STATE_DISCONNECTING) {
         session->state = SESSION_STATE_KICKING;
     }
 
