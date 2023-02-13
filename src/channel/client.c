@@ -500,7 +500,7 @@ struct ClientContResult client_cont(struct Client *client, int status)
                 };
                 struct CompletedQuest quest = {
                     .id = res->getCharacter.completedQuests[i].id,
-                    .time = mktime(&tm)
+                    .time = timegm(&tm)
                 };
                 hash_set_u16_insert(chr->completedQuests, &quest); // TODO: Check
             }
@@ -3805,7 +3805,7 @@ static void add_completed_quest(void *data, void *ctx_)
     ctx->quests[ctx->currentQuest].id = quest->id;
     struct tm tm;
     gmtime_r(&quest->time, &tm);
-    ctx->quests[ctx->currentQuest].time.year = tm.tm_year;
+    ctx->quests[ctx->currentQuest].time.year = tm.tm_year + 1900;
     ctx->quests[ctx->currentQuest].time.month = tm.tm_mon + 1;
     ctx->quests[ctx->currentQuest].time.day = tm.tm_mday;
     ctx->quests[ctx->currentQuest].time.hour = tm.tm_hour;
