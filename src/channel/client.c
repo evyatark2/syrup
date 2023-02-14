@@ -1271,8 +1271,10 @@ void client_gain_exp(struct Client *client, int32_t exp, bool reward)
                 client->stats |= STAT_STR | STAT_DEX;
             }
         } else {
-            if (chr->job != JOB_BEGINNER && chr->job != JOB_NOBLESSE && chr->job != JOB_LEGEND)
+            if (chr->job != JOB_BEGINNER && chr->job != JOB_NOBLESSE && chr->job != JOB_LEGEND) {
                 chr->sp += 3;
+                client->stats |= STAT_SP;
+            }
 
             int8_t ap = 5;
             if (job_type(chr->job) == JOB_TYPE_CYGNUS) {
@@ -3431,6 +3433,10 @@ static bool check_quest_requirements(struct Character *chr, size_t req_count, co
                 return false;
         }
         break;
+
+        default: {
+            fprintf(stderr, "Unimplemented\n");
+        }
         }
     }
 
