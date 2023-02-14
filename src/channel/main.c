@@ -524,7 +524,14 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             READ_OR_ERROR(reader_u8, &show);
         READER_END();
 
-        if (string[0] != '/') {
+        if (string[0] == '!') {
+            if (!strncmp(string + 1, "autopickup", str_len - 1)) {
+                client_toggle_auto_pickup(client);
+                if (client_is_auto_pickup_enabled(client)) {
+                    map_pick_up_all(room_get_context(session_get_room(session)), client_get_map(client)->player);
+                }
+            }
+        } else if (string[0] != '/') {
             uint8_t packet[CHAT_PACKET_MAX_LENGTH];
             size_t len = chat_packet(chr->id, false, str_len, string, show, packet);
             room_broadcast(session_get_room(session), len, packet);
@@ -714,7 +721,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
                 }
             }
 
-            map_add_player_drop(map, chr->id, &drop);
+            map_add_player_drop(map, client_get_map(client)->player, &drop);
         } else {
             if (quantity != -1)
                 return (struct OnPacketResult) { .status = -1 };
@@ -812,7 +819,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             .y = chr->y,
             .meso = amount
         };
-        map_add_player_drop(room_get_context(session_get_room(session)), chr->id, &drop);
+        map_add_player_drop(room_get_context(session_get_room(session)), client_get_map(client)->player, &drop);
     }
     break;
 

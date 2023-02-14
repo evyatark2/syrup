@@ -17,8 +17,14 @@
 struct MapPlayer {
     struct MapHandleContainer *container;
     struct ControllerHeapNode *node;
-    size_t count;
+    size_t monsterCount;
     struct Monster **monsters;
+    size_t dropCapacity;
+    size_t dropCount;
+    struct DropBatch **drops;
+    size_t droppingCapacity;
+    size_t droppingCount;
+    struct DroppingBatch **droppings;
     struct ReactorManager *rm;
     struct ScriptInstance *script;
     struct Client *client;
@@ -107,10 +113,11 @@ struct DroppingBatch {
     size_t index;
     size_t count;
     size_t current;
-    //struct Drop *drops;
     struct TimerHandle *timer;
-    uint32_t owner_id;
-    uint32_t dropper_oid;
+    struct MapPlayer *owner;
+    size_t indexInPlayer;
+    uint32_t ownerId;
+    uint32_t dropperOid;
     struct Drop drops[];
 };
 
@@ -118,6 +125,9 @@ struct DropBatch {
     size_t count;
     struct Drop *drops;
     struct TimerHandle *timer;
+    struct MapPlayer *owner;
+    size_t indexInPlayer;
+    uint32_t ownerId;
 };
 
 struct Map {
@@ -424,7 +434,7 @@ int map_join(struct Map *map, struct Client *client, struct MapHandleContainer *
         for (size_t i = 0; i < map->playerCount; i++) {
             map->players[i].container->player = &map->players[i];
             map->players[i].node->controller = &map->players[i];
-            for (size_t j = 0; j < map->players[i].count; j++)
+            for (size_t j = 0; j < map->players[i].monsterCount; j++)
                 map->players[i].monsters[j]->controller = &map->players[i];
         }
 
@@ -442,19 +452,19 @@ int map_join(struct Map *map, struct Client *client, struct MapHandleContainer *
         return -1;
     }
 
-    player->player->count = 0;
+    player->player->monsterCount = 0;
     if (map->heap.count == 0) {
         for (size_t i = 0; i < map->monsterCount; i++) {
             if (map->monsters[i].hp > 0) {
-                player->player->monsters[player->player->count] = &map->monsters[i];
+                player->player->monsters[player->player->monsterCount] = &map->monsters[i];
                 map->monsters[i].controller = player->player;
-                map->monsters[i].indexInController = player->player->count;
-                player->player->count++;
+                map->monsters[i].indexInController = player->player->monsterCount;
+                player->player->monsterCount++;
             }
         }
     }
 
-    player->player->node = heap_push(&map->heap, player->player->count, player->player);
+    player->player->node = heap_push(&map->heap, player->player->monsterCount, player->player);
     if (player->player->node == NULL) {
         free(player->player->monsters);
         free(player->player);
@@ -470,7 +480,7 @@ int map_join(struct Map *map, struct Client *client, struct MapHandleContainer *
         session_write(session, SPAWN_MONSTER_PACKET_LENGTH, packet);
     }
 
-    for (size_t i = 0; i < player->player->count; i++) {
+    for (size_t i = 0; i < player->player->monsterCount; i++) {
         struct Monster *monster = player->player->monsters[i];
         uint8_t packet[SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH];
         spawn_monster_controller_packet(monster->oid, false, monster->id, monster->x, monster->y, monster->fh, false, packet);
@@ -487,19 +497,55 @@ int map_join(struct Map *map, struct Client *client, struct MapHandleContainer *
         }
     }
 
+    size_t drop_count = 0;
     for (size_t i = map->dropBatchStart; i < map->dropBatchEnd; i++) {
+        if (map->dropBatches[i].ownerId == client_get_character(client)->id) {
+            map->dropBatches[i].owner = player->player;
+            drop_count++;
+        }
+
         for (size_t j = 0; j < map->dropBatches[i].count; j++) {
             struct Drop *drop = &map->dropBatches[i].drops[j];
             client_announce_spawn_drop(client, 0, 0, false, drop);
         }
     }
 
+    player->player->dropCapacity = drop_count != 0 ? drop_count : 1;
+    player->player->drops = malloc(player->player->dropCapacity * sizeof(struct DropBatch *));
+    player->player->dropCount = 0;
+    for (size_t i = map->dropBatchStart; i < map->dropBatchEnd; i++) {
+        if (map->dropBatches[i].ownerId == client_get_character(client)->id) {
+            player->player->drops[player->player->dropCount] = &map->dropBatches[i];
+            map->dropBatches[i].indexInPlayer = player->player->dropCount;
+            player->player->dropCount++;
+        }
+    }
+
+    drop_count = 0;
     for (size_t i = 0; i < map->droppingBatchCount; i++) {
+        if (map->droppingBatches[i]->ownerId == client_get_character(client)->id) {
+            map->droppingBatches[i]->owner = player->player;
+            map->droppingBatches[i]->indexInPlayer = player->player->droppingCount;
+            drop_count++;
+        }
+
         for (size_t j = 0; j < map->droppingBatches[i]->current; j++) {
             struct Drop *drop = &map->droppingBatches[i]->drops[j];
             client_announce_spawn_drop(client, 0, 0, false, drop);
         }
     }
+
+    player->player->droppingCapacity = drop_count != 0 ? drop_count : 1;
+    player->player->droppings = malloc(player->player->droppingCapacity * sizeof(struct DroppingBatch *));
+    player->player->droppingCount = 0;
+    for (size_t i = 0; i < map->droppingBatchCount; i++) {
+        if (map->droppingBatches[i]->owner == player->player) {
+            player->player->droppings[player->player->droppingCount] = map->droppingBatches[i];
+            map->droppingBatches[i]->indexInPlayer = player->player->droppingCount;
+            player->player->droppingCount++;
+        }
+    }
+
 
     player->player->container = player;
     player->player->script = NULL;
@@ -514,14 +560,14 @@ void map_leave(struct Map *map, struct MapPlayer *player)
         heap_remove(&map->heap, player->node);
         struct ControllerHeapNode *next = heap_top(&map->heap);
         if (next != NULL) {
-            for (size_t i = 0; i < player->count; i++) {
+            for (size_t i = 0; i < player->monsterCount; i++) {
                 player->monsters[i]->controller = next->controller;
-                player->monsters[i]->indexInController = next->controller->count;
-                next->controller->monsters[next->controller->count] = player->monsters[i];
-                next->controller->count++;
+                player->monsters[i]->indexInController = next->controller->monsterCount;
+                next->controller->monsters[next->controller->monsterCount] = player->monsters[i];
+                next->controller->monsterCount++;
             }
             free(player->monsters);
-            for (size_t i = 0; i < next->controller->count; i++) {
+            for (size_t i = 0; i < next->controller->monsterCount; i++) {
                 struct Monster *monster = next->controller->monsters[i];
                 uint8_t packet[SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH];
                 spawn_monster_controller_packet(monster->oid, false, monster->id, monster->x, monster->y, monster->fh, false, packet);
@@ -531,16 +577,25 @@ void map_leave(struct Map *map, struct MapPlayer *player)
                 map->players[player - map->players] = map->players[map->playerCount - 1];
                 map->players[player - map->players].container->player = &map->players[player - map->players];
                 map->players[player - map->players].node->controller = &map->players[player - map->players];
-                for (size_t i = 0; i < map->players[player - map->players].count; i++)
+                for (size_t i = 0; i < map->players[player - map->players].monsterCount; i++)
                     map->players[player - map->players].monsters[i]->controller = &map->players[player - map->players];
             }
         } else {
-            for (size_t i = 0; i < player->count; i++)
+            for (size_t i = 0; i < player->monsterCount; i++)
                 player->monsters[i]->controller = NULL;
             free(player->monsters);
             room_stop_timer(map->respawnHandle);
         }
 
+        for (size_t i = 0; i < player->dropCount; i++)
+            player->drops[i]->owner = NULL;
+
+        free(player->drops);
+
+        for (size_t i = 0; i < player->droppingCount; i++)
+            player->droppings[i]->owner = NULL;
+
+        free(player->droppings);
         map->playerCount--;
     }
 }
@@ -598,13 +653,13 @@ uint32_t map_damage_monster_by(struct Map *map, struct MapPlayer *player, uint32
             struct MapObject *object = object_list_get(&map->objectList, oid);
             struct Monster *monster = &map->monsters[object->index];
             struct MapPlayer *old = monster->controller;
-            old->count--;
-            old->monsters[monster->indexInController] = old->monsters[old->count];
+            old->monsterCount--;
+            old->monsters[monster->indexInController] = old->monsters[old->monsterCount];
             old->monsters[monster->indexInController]->indexInController = monster->indexInController;
             monster->controller = player;
-            monster->indexInController = player->count;
-            player->monsters[player->count] = monster;
-            player->count++;
+            monster->indexInController = player->monsterCount;
+            player->monsters[player->monsterCount] = monster;
+            player->monsterCount++;
 
             {
                 uint8_t packet[REMOVE_MONSTER_CONTROLLER_PACKET_LENGTH];
@@ -636,43 +691,91 @@ uint32_t map_damage_monster_by(struct Map *map, struct MapPlayer *player, uint32
 
             // Remove the controller from the monster
             if (monster->controller != NULL) {
-                monster->controller->monsters[monster->indexInController] = monster->controller->monsters[monster->controller->count - 1];
+                monster->controller->monsters[monster->indexInController] = monster->controller->monsters[monster->controller->monsterCount - 1];
                 monster->controller->monsters[monster->indexInController]->indexInController = monster->indexInController;
-                monster->controller->count--;
+                monster->controller->monsterCount--;
                 monster->controller = NULL;
             }
 
             if (info != NULL) {
-                struct Drop drops[info->count];
+                struct DropInfo drops_copy[info->count];
+                for (size_t i = 0; i < info->count; i++)
+                    drops_copy[i] = info->drops[i];
+
+                size_t max_drops = 0;
+                for (size_t i = 0; i < info->count; i++) {
+                    drops_copy[i].chance *= 16;
+                    max_drops += drops_copy[i].chance / 1000000 + 1;
+                }
+                struct Drop drops[max_drops];
                 size_t drop_count = 0;
                 for (size_t i = 0; i < info->count; i++) {
-                    if (rand() % 1000000 < info->drops[i].chance * 16) {
-                        drops[drop_count].type = info->drops[i].itemId == 0 ? DROP_TYPE_MESO : (info->drops[i].itemId / 1000000 == 1 ? DROP_TYPE_EQUIP : DROP_TYPE_ITEM);
-                        switch (drops[drop_count].type) {
+                    if (drops_copy[i].chance > 1000000) {
+                        enum DropType type = drops_copy[i].itemId == 0 ? DROP_TYPE_MESO : (drops_copy[i].itemId / 1000000 == 1 ? DROP_TYPE_EQUIP : DROP_TYPE_ITEM);
+                        switch (type) {
                         case DROP_TYPE_MESO:
-                            drops[drop_count].meso = rand() % (info->drops[i].max - info->drops[i].min + 1) + info->drops[i].min;
+                            drops[drop_count].type = DROP_TYPE_MESO;
+                            drops[drop_count].meso = rand() % (drops_copy[i].max - drops_copy[i].min + 1) + drops_copy[i].min;
+                            drop_count++;
                         break;
 
                         case DROP_TYPE_ITEM:
-                            drops[drop_count].qid = info->drops[i].isQuest ? info->drops[i].questId : 0;
+                            for (size_t j = 0; j < drops_copy[i].chance / 1000000; j++) {
+                                drops[drop_count].type = DROP_TYPE_ITEM;
+                                drops[drop_count].qid = drops_copy[i].isQuest ? drops_copy[i].questId : 0;
+                                drops[drop_count].item.item.id = 0;
+                                drops[drop_count].item.item.itemId = drops_copy[i].itemId;
+                                drops[drop_count].item.item.ownerLength = 0;
+                                drops[drop_count].item.item.flags = 0;
+                                drops[drop_count].item.item.expiration = -1;
+                                drops[drop_count].item.item.giftFromLength = 0;
+                                drops[drop_count].item.quantity = rand() % (drops_copy[i].max - drops_copy[i].min + 1) + drops_copy[i].min;
+                                drop_count++;
+                            }
+
+                            drops_copy[i].chance %= 1000000;
+                        break;
+
+                        case DROP_TYPE_EQUIP:
+                            for (size_t j = 0; j < drops_copy[i].chance / 1000000; j++) {
+                                drops[drop_count].type = DROP_TYPE_EQUIP;
+                                drops[drop_count].equip = equipment_from_info(wz_get_equip_info(drops_copy[i].itemId));
+                                drop_count++;
+                            }
+
+                            drops_copy[i].chance %= 1000000;
+                        break;
+                        }
+
+                    }
+
+                    if (rand() % 1000000 < drops_copy[i].chance) {
+                        drops[drop_count].type = drops_copy[i].itemId == 0 ? DROP_TYPE_MESO : (drops_copy[i].itemId / 1000000 == 1 ? DROP_TYPE_EQUIP : DROP_TYPE_ITEM);
+                        switch (drops[drop_count].type) {
+                        case DROP_TYPE_MESO:
+                            drops[drop_count].meso = rand() % (drops_copy[i].max - drops_copy[i].min + 1) + drops_copy[i].min;
+                        break;
+
+                        case DROP_TYPE_ITEM:
+                            drops[drop_count].qid = drops_copy[i].isQuest ? drops_copy[i].questId : 0;
                             drops[drop_count].item.item.id = 0;
-                            drops[drop_count].item.item.itemId = info->drops[i].itemId;
+                            drops[drop_count].item.item.itemId = drops_copy[i].itemId;
                             drops[drop_count].item.item.ownerLength = 0;
                             drops[drop_count].item.item.flags = 0;
                             drops[drop_count].item.item.expiration = -1;
                             drops[drop_count].item.item.giftFromLength = 0;
-                            drops[drop_count].item.quantity = rand() % (info->drops[i].max - info->drops[i].min + 1) + info->drops[i].min;
+                            drops[drop_count].item.quantity = rand() % (drops_copy[i].max - drops_copy[i].min + 1) + drops_copy[i].min;
                         break;
 
                         case DROP_TYPE_EQUIP:
-                            drops[drop_count].equip = equipment_from_info(wz_get_equip_info(info->drops[i].itemId));
+                            drops[drop_count].equip = equipment_from_info(wz_get_equip_info(drops_copy[i].itemId));
                         break;
                         }
                         drop_count++;
                     }
                 }
 
-                map_drop_batch_from_map_object(map, char_id, monster->oid, drop_count, drops);
+                map_drop_batch_from_map_object(map, player, monster->oid, drop_count, drops);
 
                 if (drop_count == 1)
                     map_kill_monster(map, monster->oid);
@@ -802,7 +905,7 @@ bool map_move_monster(struct Map *map, struct MapPlayer *controller, uint8_t act
     return true;
 }
 
-int map_drop_batch_from_map_object(struct Map *map, uint32_t owner_id, uint32_t dropper_oid, size_t count, struct Drop *drops)
+int map_drop_batch_from_map_object(struct Map *map, struct MapPlayer *player, uint32_t dropper_oid, size_t count, struct Drop *drops)
 {
     struct MapObject *object = object_list_get(&map->objectList, dropper_oid);
     struct Point pos;
@@ -841,6 +944,15 @@ int map_drop_batch_from_map_object(struct Map *map, uint32_t owner_id, uint32_t 
             map->droppingBatchCapacity *= 2;
         }
 
+        if (player->droppingCount == player->droppingCapacity) {
+            void *temp = realloc(player->droppings, (player->droppingCapacity * 2) * sizeof(struct DroppingBatch *));
+            if (temp == NULL)
+                return -1;
+
+            player->droppings = temp;
+            player->droppingCapacity *= 2;
+        }
+
         struct DroppingBatch *batch = malloc(sizeof(struct DroppingBatch) + count * sizeof(struct Drop));
         if (batch == NULL)
             return -1;
@@ -857,7 +969,7 @@ int map_drop_batch_from_map_object(struct Map *map, uint32_t owner_id, uint32_t 
         object->index2 = 0;
 
         struct AnnounceItemDropContext ctx = {
-            .charId = owner_id,
+            .charId = client_get_character(player->client)->id,
             .dropperOid = dropper_oid,
             .drop = drop
         };
@@ -870,8 +982,12 @@ int map_drop_batch_from_map_object(struct Map *map, uint32_t owner_id, uint32_t 
         batch->index = map->droppingBatchCount;
         batch->count = count;
         batch->current = 1;
-        batch->owner_id = owner_id;
-        batch->dropper_oid = dropper_oid;
+        batch->owner = player;
+        batch->indexInPlayer = player->droppingCount;
+        batch->ownerId = client_get_character(player->client)->id;
+        player->droppings[player->droppingCount] = batch;
+        player->droppingCount++;
+        batch->dropperOid = dropper_oid;
         map->droppingBatchCount++;
 
         // If the dropper is a reactor then it was triggered
@@ -881,6 +997,66 @@ int map_drop_batch_from_map_object(struct Map *map, uint32_t owner_id, uint32_t 
         struct MapObject *obj = object_list_get(&map->objectList, dropper_oid);
         if (obj->type == MAP_OBJECT_REACTOR)
             map->reactors[obj->index].keepAlive = true;
+
+        if (client_is_auto_pickup_enabled(player->client)) {
+            // TODO: Check if this client is allowed to pick up the drop
+            bool success = false;
+            uint32_t id;
+            switch (drop->type) {
+            case DROP_TYPE_MESO:
+                client_gain_meso(player->client, drop->meso, true, false);
+                client_commit_stats(player->client);
+                map_remove_drop(map, client_get_character(player->client)->id, drop->oid);
+            break;
+
+            case DROP_TYPE_ITEM:
+                if (drop->item.item.itemId / 1000000 == 2 && wz_get_consumable_info(drop->item.item.itemId)->consumeOnPickup) {
+                    client_use_item_immediate(player->client, drop->item.item.itemId);
+                    map_remove_drop(map, client_get_character(player->client)->id, drop->oid);
+                } else if (!client_gain_inventory_item(player->client, &drop->item, &success)) {
+                    return 0;
+                }
+
+                id = drop->item.item.itemId;
+            break;
+
+            case DROP_TYPE_EQUIP:
+                if (!client_gain_equipment(player->client, &drop->equip, false, &success))
+                    return 0;
+
+                id = drop->equip.item.itemId;
+            break;
+            }
+
+            if (success) {
+                {
+                    uint8_t packet[ITEM_GAIN_PACKET_LENGTH];
+                    item_gain_packet(id, 1, packet);
+                    session_write(client_get_session(player->client), ITEM_GAIN_PACKET_LENGTH, packet);
+                }
+
+                {
+                    uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
+                    size_t len = stat_change_packet(true, 0, NULL, packet);
+                    session_write(client_get_session(player->client), len, packet);
+                }
+
+                map_remove_drop(map, client_get_character(player->client)->id, drop->oid);
+            } else {
+                {
+                    uint8_t packet[INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH];
+                    inventory_full_notification_packet(packet);
+                    session_write(client_get_session(player->client), INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH, packet);
+                }
+
+                {
+                    uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
+                    size_t len = modify_items_packet(0, NULL, packet);
+                    session_write(client_get_session(player->client), len, packet);
+                }
+            }
+
+        }
     } else if (count == 1) {
         if (map->dropBatchEnd == map->dropBatchCapacity) {
             void *temp = realloc(map->dropBatches, (map->dropBatchCapacity * 2) * sizeof(struct DropBatch));
@@ -889,6 +1065,20 @@ int map_drop_batch_from_map_object(struct Map *map, uint32_t owner_id, uint32_t 
 
             map->dropBatches = temp;
             map->dropBatchCapacity *= 2;
+            for (size_t i = map->dropBatchStart; i < map->dropBatchEnd; i++) {
+                struct DropBatch *batch = &map->dropBatches[i];
+                if (batch->owner != NULL)
+                    batch->owner->drops[batch->indexInPlayer] = batch;
+            }
+        }
+
+        if (player->dropCount == player->dropCapacity) {
+            void *temp = realloc(player->drops, (player->dropCapacity * 2) * sizeof(struct DropBatch *));
+            if (temp == NULL)
+                return -1; // TODO: Delete the drops
+
+            player->drops = temp;
+            player->dropCapacity *= 2;
         }
 
         struct DropBatch *batch = &map->dropBatches[map->dropBatchEnd];
@@ -903,19 +1093,24 @@ int map_drop_batch_from_map_object(struct Map *map, uint32_t owner_id, uint32_t 
         object->index = map->dropBatchEnd;
         object->index2 = 0;
         batch->count = 1;
+        batch->owner = player;
+        batch->indexInPlayer = player->dropCount;
+        batch->ownerId = client_get_character(player->client)->id;
+        player->drops[player->dropCount] = batch;
+        player->dropCount++;
         map->dropBatchEnd++;
 
         switch (drop->type) {
         case DROP_TYPE_MESO: {
             uint8_t packet[DROP_MESO_FROM_OBJECT_PACKET_LENGTH];
-            drop_meso_from_object_packet(drop->oid, drop->meso, owner_id, drop->x, drop->y, drop->x, drop->y, dropper_oid, false, packet);
+            drop_meso_from_object_packet(drop->oid, drop->meso, batch->ownerId, drop->x, drop->y, drop->x, drop->y, dropper_oid, false, packet);
             room_broadcast(map->room, DROP_MESO_FROM_OBJECT_PACKET_LENGTH, packet);
         }
             break;
 
         case DROP_TYPE_ITEM: {
             struct AnnounceItemDropContext ctx = {
-                .charId = owner_id,
+                .charId = batch->ownerId,
                 .dropperOid = dropper_oid,
                 .drop = drop
             };
@@ -925,17 +1120,231 @@ int map_drop_batch_from_map_object(struct Map *map, uint32_t owner_id, uint32_t 
 
         case DROP_TYPE_EQUIP: {
             uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
-            drop_item_from_object_packet(drop->oid, drop->equip.item.itemId, owner_id, drop->x, drop->y, drop->x, drop->y, dropper_oid, false, packet);
+            drop_item_from_object_packet(drop->oid, drop->equip.item.itemId, batch->ownerId, drop->x, drop->y, drop->x, drop->y, dropper_oid, false, packet);
             room_broadcast(map->room, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet);
         }
         break;
+        }
+
+        if (client_is_auto_pickup_enabled(player->client)) {
+            // TODO: Check if this client is allowed to pick up the drop
+            bool success = false;
+            uint32_t id;
+            switch (drop->type) {
+            case DROP_TYPE_MESO:
+                client_gain_meso(player->client, drop->meso, true, false);
+                client_commit_stats(player->client);
+                map_remove_drop(map, client_get_character(player->client)->id, drop->oid);
+            break;
+
+            case DROP_TYPE_ITEM:
+                if (drop->item.item.itemId / 1000000 == 2 && wz_get_consumable_info(drop->item.item.itemId)->consumeOnPickup) {
+                    client_use_item_immediate(player->client, drop->item.item.itemId);
+                    map_remove_drop(map, client_get_character(player->client)->id, drop->oid);
+                } else if (!client_gain_inventory_item(player->client, &drop->item, &success)) {
+                    return 0;
+                }
+
+                id = drop->item.item.itemId;
+            break;
+
+            case DROP_TYPE_EQUIP:
+                if (!client_gain_equipment(player->client, &drop->equip, false, &success))
+                    return 0;
+
+                id = drop->equip.item.itemId;
+            break;
+            }
+
+            if (success) {
+                {
+                    uint8_t packet[ITEM_GAIN_PACKET_LENGTH];
+                    item_gain_packet(id, 1, packet);
+                    session_write(client_get_session(player->client), ITEM_GAIN_PACKET_LENGTH, packet);
+                }
+
+                {
+                    uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
+                    size_t len = stat_change_packet(true, 0, NULL, packet);
+                    session_write(client_get_session(player->client), len, packet);
+                }
+
+                map_remove_drop(map, client_get_character(player->client)->id, drop->oid);
+            } else {
+                {
+                    uint8_t packet[INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH];
+                    inventory_full_notification_packet(packet);
+                    session_write(client_get_session(player->client), INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH, packet);
+                }
+
+                {
+                    uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
+                    size_t len = modify_items_packet(0, NULL, packet);
+                    session_write(client_get_session(player->client), len, packet);
+                }
+            }
         }
     }
 
     return 0;
 }
 
-void map_add_player_drop(struct Map *map, uint32_t char_id, struct Drop *drop)
+void map_pick_up_all(struct Map *map, struct MapPlayer *player)
+{
+    // This whole thing is a very hacky way to pick up all the player's items on the map.
+    // Since map_remove_drop() also changes player->dropCount and the current batch->count
+    // and moves `DropBatch`es and `Drop`s around in memory,
+    // we have to be extra careful with the iterators i and j.
+    for (size_t i = 0; i < player->dropCount; i++) {
+        struct DropBatch *batch = player->drops[i];
+        // We need to cache this `count` as `batch` can be invalidated during a call to map_remove_drop()
+        size_t count = batch->count;
+        for (size_t j = 0; j < count; j++) {
+            struct Drop *drop = &batch->drops[j];
+            // TODO: Check if this client is allowed to pick up the drop
+            bool success = false;
+            uint32_t id;
+            switch (drop->type) {
+            case DROP_TYPE_MESO:
+                client_gain_meso(player->client, drop->meso, true, false);
+                client_commit_stats(player->client);
+                if (batch->count == 1)
+                    i--;
+                map_remove_drop(map, client_get_character(player->client)->id, drop->oid);
+                count--;
+                j--;
+            break;
+
+            case DROP_TYPE_ITEM:
+                if (drop->item.item.itemId / 1000000 == 2 && wz_get_consumable_info(drop->item.item.itemId)->consumeOnPickup) {
+                    client_use_item_immediate(player->client, drop->item.item.itemId);
+                    if (batch->count == 1)
+                        i--;
+                    map_remove_drop(map, client_get_character(player->client)->id, drop->oid);
+                    count--;
+                    j--;
+                } else if (!client_gain_inventory_item(player->client, &drop->item, &success)) {
+                    continue;
+                }
+
+                id = drop->item.item.itemId;
+            break;
+
+            case DROP_TYPE_EQUIP:
+                if (!client_gain_equipment(player->client, &drop->equip, false, &success))
+                    continue;
+
+                id = drop->equip.item.itemId;
+            break;
+            }
+
+            if (success) {
+                {
+                    uint8_t packet[ITEM_GAIN_PACKET_LENGTH];
+                    item_gain_packet(id, 1, packet);
+                    session_write(client_get_session(player->client), ITEM_GAIN_PACKET_LENGTH, packet);
+                }
+
+                {
+                    uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
+                    size_t len = stat_change_packet(true, 0, NULL, packet);
+                    session_write(client_get_session(player->client), len, packet);
+                }
+
+                if (batch->count == 1)
+                    i--;
+                map_remove_drop(map, client_get_character(player->client)->id, drop->oid);
+                count--;
+                j--;
+            } else {
+                {
+                    uint8_t packet[INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH];
+                    inventory_full_notification_packet(packet);
+                    session_write(client_get_session(player->client), INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH, packet);
+                }
+
+                {
+                    uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
+                    size_t len = modify_items_packet(0, NULL, packet);
+                    session_write(client_get_session(player->client), len, packet);
+                }
+            }
+        }
+    }
+    
+    for (size_t i = 0; i < player->droppingCount; i++) {
+        struct DroppingBatch *batch = player->droppings[i];
+        // We need to cache this `count` as `batch` can be invalidated during a call to map_remove_drop()
+        size_t current = batch->current;
+        for (size_t j = 0; j < current; j++) {
+            struct Drop *drop = &batch->drops[j];
+            // TODO: Check if this client is allowed to pick up the drop
+            bool success = false;
+            uint32_t id;
+            switch (drop->type) {
+            case DROP_TYPE_MESO:
+                client_gain_meso(player->client, drop->meso, true, false);
+                client_commit_stats(player->client);
+                map_remove_drop(map, client_get_character(player->client)->id, drop->oid);
+                j--;
+                current--;
+            break;
+
+            case DROP_TYPE_ITEM:
+                if (drop->item.item.itemId / 1000000 == 2 && wz_get_consumable_info(drop->item.item.itemId)->consumeOnPickup) {
+                    client_use_item_immediate(player->client, drop->item.item.itemId);
+                    map_remove_drop(map, client_get_character(player->client)->id, drop->oid);
+                    j--;
+                    current--;
+                } else if (!client_gain_inventory_item(player->client, &drop->item, &success)) {
+                    continue;
+                }
+
+                id = drop->item.item.itemId;
+            break;
+
+            case DROP_TYPE_EQUIP:
+                if (!client_gain_equipment(player->client, &drop->equip, false, &success))
+                    continue;
+
+                id = drop->equip.item.itemId;
+            break;
+            }
+
+            if (success) {
+                {
+                    uint8_t packet[ITEM_GAIN_PACKET_LENGTH];
+                    item_gain_packet(id, 1, packet);
+                    session_write(client_get_session(player->client), ITEM_GAIN_PACKET_LENGTH, packet);
+                }
+
+                {
+                    uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
+                    size_t len = stat_change_packet(true, 0, NULL, packet);
+                    session_write(client_get_session(player->client), len, packet);
+                }
+
+                map_remove_drop(map, client_get_character(player->client)->id, drop->oid);
+                j--;
+                current--;
+            } else {
+                {
+                    uint8_t packet[INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH];
+                    inventory_full_notification_packet(packet);
+                    session_write(client_get_session(player->client), INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH, packet);
+                }
+
+                {
+                    uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
+                    size_t len = modify_items_packet(0, NULL, packet);
+                    session_write(client_get_session(player->client), len, packet);
+                }
+            }
+        }
+    }
+}
+
+void map_add_player_drop(struct Map *map, struct MapPlayer *player, struct Drop *drop)
 {
     if (map->dropBatchEnd == map->dropBatchCapacity) {
         void *temp = realloc(map->dropBatches, (map->dropBatchCapacity * 2) * sizeof(struct DropBatch));
@@ -944,6 +1353,20 @@ void map_add_player_drop(struct Map *map, uint32_t char_id, struct Drop *drop)
 
         map->dropBatches = temp;
         map->dropBatchCapacity *= 2;
+        for (size_t i = map->dropBatchStart; i < map->dropBatchEnd; i++) {
+            struct DropBatch *batch = &map->dropBatches[i];
+            if (batch->owner != NULL)
+                batch->owner->drops[batch->indexInPlayer] = batch;
+        }
+    }
+
+    if (player->dropCount == player->dropCapacity) {
+        void *temp = realloc(player->drops, (player->dropCapacity * 2) * sizeof(struct DropBatch *));
+        if (temp == NULL)
+            return;
+
+        player->drops = temp;
+        player->dropCapacity *= 2;
     }
 
     struct DropBatch *batch = &map->dropBatches[map->dropBatchEnd];
@@ -958,26 +1381,31 @@ void map_add_player_drop(struct Map *map, uint32_t char_id, struct Drop *drop)
     object->index = map->dropBatchEnd;
     object->index2 = 0;
     batch->count = 1;
+    batch->owner = player;
+    batch->ownerId = client_get_character(player->client)->id;
+    batch->indexInPlayer = player->dropCount;
+    player->drops[player->dropCount] = batch;
+    player->dropCount++;
     map->dropBatchEnd++;
 
     switch (drop->type) {
     case DROP_TYPE_MESO: {
         uint8_t packet[DROP_MESO_FROM_OBJECT_PACKET_LENGTH];
-        drop_meso_from_object_packet(drop->oid, drop->meso, char_id, drop->x, drop->y, drop->x, drop->y, char_id, true, packet);
+        drop_meso_from_object_packet(drop->oid, drop->meso, batch->ownerId, drop->x, drop->y, drop->x, drop->y, batch->ownerId, true, packet);
         room_broadcast(map->room, DROP_MESO_FROM_OBJECT_PACKET_LENGTH, packet);
     }
     break;
 
     case DROP_TYPE_ITEM: {
         uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
-        drop_item_from_object_packet(drop->oid, drop->item.item.itemId, char_id, drop->x, drop->y, drop->x, drop->y, char_id, true, packet);
+        drop_item_from_object_packet(drop->oid, drop->item.item.itemId, batch->ownerId, drop->x, drop->y, drop->x, drop->y, batch->ownerId, true, packet);
         room_broadcast(map->room, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet);
     }
     break;
 
     case DROP_TYPE_EQUIP: {
         uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
-        drop_item_from_object_packet(drop->oid, drop->equip.item.itemId, char_id, drop->x, drop->y, drop->x, drop->y, char_id, true, packet);
+        drop_item_from_object_packet(drop->oid, drop->equip.item.itemId, batch->ownerId, drop->x, drop->y, drop->x, drop->y, batch->ownerId, true, packet);
         room_broadcast(map->room, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet);
     }
     break;
@@ -1015,6 +1443,19 @@ void map_remove_drop(struct Map *map, uint32_t char_id, uint32_t oid)
         batch->count--;
         if (batch->count == 0) {
             free(batch->drops);
+            if (batch->owner != NULL) {
+                batch->owner->drops[batch->indexInPlayer] = batch->owner->drops[batch->owner->dropCount - 1];
+                batch->owner->drops[batch->indexInPlayer]->indexInPlayer = batch->indexInPlayer;
+                batch->owner->dropCount--;
+                if (batch->owner->dropCount < batch->owner->dropCapacity / 4) {
+                    void *temp = realloc(batch->owner->drops, (batch->owner->dropCapacity / 2) * sizeof(struct DropBatch *));
+                    if (temp == NULL)
+                        ; // TODO
+
+                    batch->owner->drops = temp;
+                    batch->owner->dropCapacity /= 2;
+                }
+            }
             room_stop_timer(batch->timer);
         }
 
@@ -1025,8 +1466,13 @@ void map_remove_drop(struct Map *map, uint32_t char_id, uint32_t oid)
                 if (map->dropBatchStart != 0) {
                     for (size_t i = map->dropBatchStart; i < map->dropBatchEnd; i++) {
                         map->dropBatches[i - map->dropBatchStart] = map->dropBatches[i];
+                        if (map->dropBatches[i - map->dropBatchStart].owner != NULL) {
+                            struct DropBatch *batch = &map->dropBatches[i - map->dropBatchStart];
+                            batch->owner->drops[batch->indexInPlayer] = batch;
+                        }
                         for (size_t j = 0; j < map->dropBatches[i - map->dropBatchStart].count; j++) {
-                            struct MapObject *object = object_list_get(&map->objectList, map->dropBatches[i - map->dropBatchStart].drops[j].oid);
+                            struct MapObject *object =
+                                object_list_get(&map->objectList, map->dropBatches[i - map->dropBatchStart].drops[j].oid);
                             assert(object->type == MAP_OBJECT_DROP);
                             object->index = i - map->dropBatchStart;
                         }
@@ -1040,6 +1486,11 @@ void map_remove_drop(struct Map *map, uint32_t char_id, uint32_t oid)
                 if (temp != NULL) {
                     map->dropBatches = temp;
                     map->dropBatchCapacity /= 2;
+                    for (size_t i = map->dropBatchStart; i < map->dropBatchEnd; i++) {
+                        struct DropBatch *batch = &map->dropBatches[i];
+                        if (batch->owner != NULL)
+                            batch->owner->drops[batch->indexInPlayer] = batch;
+                    }
                 }
             }
         }
@@ -1119,20 +1570,81 @@ static void on_next_drop(struct Room *room, struct TimerHandle *handle)
     struct DroppingBatch *batch = timer_get_data(handle);
     struct Drop *drop = &batch->drops[batch->current];
     drop->oid = object_list_allocate(&map->objectList);
+    if (drop->oid == -1)
+        return; // TODO
+
     struct MapObject *object = object_list_get(&map->objectList, drop->oid);
     object->type = MAP_OBJECT_DROPPING;
     object->index = batch->index;
     object->index2 = batch->current;
 
     struct AnnounceItemDropContext ctx = {
-        .charId = batch->owner_id,
-        .dropperOid = batch->dropper_oid,
+        .charId = batch->ownerId,
+        .dropperOid = batch->dropperOid,
         .drop = drop
     };
     room_foreach(map->room, do_announce_item_drop, &ctx);
 
     batch->current++;
     if (batch->current < batch->count) {
+        if (batch->owner != NULL && client_is_auto_pickup_enabled(batch->owner->client)) {
+            // TODO: Check if this client is allowed to pick up the drop
+            bool success = false;
+            uint32_t id;
+            switch (drop->type) {
+            case DROP_TYPE_MESO:
+                client_gain_meso(batch->owner->client, drop->meso, true, false);
+                client_commit_stats(batch->owner->client);
+                map_remove_drop(map, client_get_character(batch->owner->client)->id, drop->oid);
+            break;
+
+            case DROP_TYPE_ITEM:
+                if (drop->item.item.itemId / 1000000 == 2 && wz_get_consumable_info(drop->item.item.itemId)->consumeOnPickup) {
+                    client_use_item_immediate(batch->owner->client, drop->item.item.itemId);
+                    map_remove_drop(map, client_get_character(batch->owner->client)->id, drop->oid);
+                } else if (!client_gain_inventory_item(batch->owner->client, &drop->item, &success)) {
+                    return;
+                }
+
+                id = drop->item.item.itemId;
+            break;
+
+            case DROP_TYPE_EQUIP:
+                if (!client_gain_equipment(batch->owner->client, &drop->equip, false, &success))
+                    return;
+
+                id = drop->equip.item.itemId;
+            break;
+            }
+
+            if (success) {
+                {
+                    uint8_t packet[ITEM_GAIN_PACKET_LENGTH];
+                    item_gain_packet(id, 1, packet);
+                    session_write(client_get_session(batch->owner->client), ITEM_GAIN_PACKET_LENGTH, packet);
+                }
+
+                {
+                    uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
+                    size_t len = stat_change_packet(true, 0, NULL, packet);
+                    session_write(client_get_session(batch->owner->client), len, packet);
+                }
+
+                map_remove_drop(map, client_get_character(batch->owner->client)->id, drop->oid);
+            } else {
+                {
+                    uint8_t packet[INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH];
+                    inventory_full_notification_packet(packet);
+                    session_write(client_get_session(batch->owner->client), INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH, packet);
+                }
+
+                {
+                    uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
+                    size_t len = modify_items_packet(0, NULL, packet);
+                    session_write(client_get_session(batch->owner->client), len, packet);
+                }
+            }
+        }
         batch->timer = room_add_timer(map->room, 300, on_next_drop, batch, true);
     } else {
         if (map->dropBatchEnd == map->dropBatchCapacity) {
@@ -1142,17 +1654,47 @@ static void on_next_drop(struct Room *room, struct TimerHandle *handle)
 
             map->dropBatches = temp;
             map->dropBatchCapacity *= 2;
+            for (size_t i = map->dropBatchStart; i < map->dropBatchEnd; i++) {
+                struct DropBatch *batch = &map->dropBatches[i];
+                if (batch->owner != NULL)
+                    batch->owner->drops[batch->indexInPlayer] = batch;
+            }
+        }
+
+        if (batch->owner != NULL) {
+            if (batch->owner->dropCount == batch->owner->dropCapacity) {
+                void *temp = realloc(batch->owner->drops, (batch->owner->dropCapacity * 2) * sizeof(struct DropBatch *));
+                if (temp == NULL)
+                    return;
+
+                batch->owner->drops = temp;
+                batch->owner->dropCapacity *= 2;
+            }
         }
 
         struct DropBatch *new = &map->dropBatches[map->dropBatchEnd];
         new->timer = room_add_timer(map->room, 15 * 1000, on_drop_time_expired, NULL, true);
         new->drops = malloc(batch->count * sizeof(struct Drop));
 
+        if (batch->owner != NULL) {
+            batch->owner->droppings[batch->indexInPlayer] = batch->owner->droppings[batch->owner->droppingCount - 1];
+            batch->owner->droppings[batch->indexInPlayer]->indexInPlayer = batch->indexInPlayer;
+
+            batch->owner->droppingCount--;
+            if (batch->owner->droppingCount < batch->owner->droppingCapacity / 4) {
+                void *temp = realloc(batch->owner->droppings, (batch->owner->droppingCapacity / 2) * sizeof(struct DroppingBatch *));
+                if (temp != NULL) {
+                    batch->owner->droppings = temp;
+                    batch->owner->droppingCapacity /= 2;
+                }
+            }
+        }
+
         map->droppingBatches[batch->index] = map->droppingBatches[map->droppingBatchCount - 1];
         map->droppingBatches[batch->index]->index = batch->index;
-        for (size_t i = 0; i < map->droppingBatches[batch->index]->current; i++) {
+        for (size_t i = 0; i < map->droppingBatches[batch->index]->current; i++)
             object_list_get(&map->objectList, map->droppingBatches[batch->index]->drops[i].oid)->index = batch->index;
-        }
+
         map->droppingBatchCount--;
         if (map->droppingBatchCount < map->droppingBatchCapacity / 4) {
             void *temp = realloc(map->droppingBatches, (map->droppingBatchCapacity / 2) * sizeof(struct DroppingBatch *));
@@ -1169,13 +1711,20 @@ static void on_next_drop(struct Room *room, struct TimerHandle *handle)
             new->drops[i] = batch->drops[i];
         }
         new->count = batch->count;
+        new->owner = batch->owner;
+        if (batch->owner != NULL) {
+            new->indexInPlayer = batch->owner->dropCount;
+            batch->owner->drops[batch->owner->dropCount] = new;
+            batch->owner->dropCount++;
+        }
+        new->ownerId = batch->ownerId;
         map->dropBatchEnd++;
 
-        object = object_list_get(&map->objectList, batch->dropper_oid);
+        object = object_list_get(&map->objectList, batch->dropperOid);
         if (object->type == MAP_OBJECT_MONSTER) {
-            map_kill_monster(map, batch->dropper_oid);
+            map_kill_monster(map, batch->dropperOid);
         } else {
-            map_destroy_reactor(map, batch->dropper_oid);
+            map_destroy_reactor(map, batch->dropperOid);
         }
 
         free(batch);
@@ -1200,6 +1749,19 @@ static void on_drop_time_expired(struct Room *room, struct TimerHandle *handle)
 
     free(batch->drops);
     batch->count = 0;
+    if (batch->owner != NULL) {
+        batch->owner->drops[batch->indexInPlayer] = batch->owner->drops[batch->owner->dropCount - 1];
+        batch->owner->drops[batch->indexInPlayer]->indexInPlayer = batch->indexInPlayer;
+        batch->owner->dropCount--;
+        if (batch->owner->dropCount < batch->owner->dropCapacity / 4) {
+            void *temp = realloc(batch->owner->drops, (batch->owner->dropCapacity / 2) * sizeof(struct DropBatch *));
+            if (temp == NULL)
+                ; // TODO
+
+            batch->owner->drops = temp;
+            batch->owner->dropCapacity /= 2;
+        }
+    }
     while (map->dropBatchStart < map->dropBatchEnd && map->dropBatches[map->dropBatchStart].count == 0) {
         map->dropBatchStart++;
 
@@ -1222,6 +1784,11 @@ static void on_drop_time_expired(struct Room *room, struct TimerHandle *handle)
             if (temp != NULL) {
                 map->dropBatches = temp;
                 map->dropBatchCapacity /= 2;
+                for (size_t i = map->dropBatchStart; i < map->dropBatchEnd; i++) {
+                    struct DropBatch *batch = &map->dropBatches[i];
+                    if (batch->owner != NULL)
+                        batch->owner->drops[batch->indexInPlayer] = batch;
+                }
             }
         }
     }
@@ -1254,13 +1821,13 @@ static void on_respawn(struct Room *room, struct TimerHandle *handle)
         map->monsters[map->monsterCount].id = map->spawners[map->dead[i]].id;
         map->monsters[map->monsterCount].spawnerIndex = map->dead[i];
         map->monsters[map->monsterCount].controller = next->controller;
-        map->monsters[map->monsterCount].indexInController = next->controller->count;
+        map->monsters[map->monsterCount].indexInController = next->controller->monsterCount;
         map->monsters[map->monsterCount].x = map->spawners[map->dead[i]].x;
         map->monsters[map->monsterCount].y = map->spawners[map->dead[i]].y;
         map->monsters[map->monsterCount].fh = map->spawners[map->dead[i]].fh;
         map->monsters[map->monsterCount].hp = wz_get_monster_stats(map->spawners[map->dead[i]].id)->hp;
-        next->controller->monsters[next->controller->count] = &map->monsters[map->monsterCount];
-        next->controller->count++;
+        next->controller->monsters[next->controller->monsterCount] = &map->monsters[map->monsterCount];
+        next->controller->monsterCount++;
         map->monsterCount++;
     }
 
@@ -1332,42 +1899,42 @@ static uint32_t object_list_allocate(struct ObjectList *list)
     if (list->objectCount == UINT32_MAX)
         return -1;
 
+    if (list->objectCount == list->objectCapacity) {
+        struct MapObject *new = malloc((list->objectCapacity * 2) * sizeof(struct MapObject));
+        if (new == NULL)
+            return -1;
+
+        void *temp = realloc(list->freeStack, (list->objectCapacity * 2) * sizeof(uint32_t));
+        if (temp == NULL) {
+            free(new);
+            return -1;
+        }
+
+        list->freeStack = temp;
+
+        for (size_t i = 0; i < list->objectCapacity * 2; i++)
+            new[i].type = MAP_OBJECT_NONE;
+
+        for (size_t i = 0; i < list->objectCapacity; i++) {
+            size_t new_i = XXH3_64bits(&list->objects[i].oid, sizeof(uint32_t)) % (list->objectCapacity * 2);
+            while (new[new_i].type != MAP_OBJECT_NONE) {
+                new_i++;
+                new_i %= list->objectCapacity * 2;
+            }
+
+            new[new_i] = list->objects[i];
+        }
+
+        free(list->objects);
+        list->objects = new;
+        list->objectCapacity *= 2;
+    }
+
     uint32_t oid;
     if (list->freeStackTop > 0) {
         list->freeStackTop--;
         oid = list->freeStack[list->freeStackTop];
     } else {
-        if (list->objectCount == list->objectCapacity) {
-            struct MapObject *new = malloc((list->objectCapacity * 2) * sizeof(struct MapObject));
-            if (new == NULL)
-                return -1;
-
-            void *temp = realloc(list->freeStack, (list->objectCapacity * 2) * sizeof(uint32_t));
-            if (temp == NULL) {
-                free(new);
-                return -1;
-            }
-
-            list->freeStack = temp;
-
-            for (size_t i = 0; i < list->objectCapacity * 2; i++)
-                new[i].type = MAP_OBJECT_NONE;
-
-            for (size_t i = 0; i < list->objectCapacity; i++) {
-                size_t new_i = XXH3_64bits(&list->objects[i].oid, sizeof(uint32_t)) % (list->objectCapacity * 2);
-                while (new[new_i].type != MAP_OBJECT_NONE) {
-                    new_i++;
-                    new_i %= list->objectCapacity * 2;
-                }
-
-                new[new_i] = list->objects[i];
-            }
-
-            free(list->objects);
-            list->objects = new;
-            list->objectCapacity *= 2;
-        }
-
         oid = list->objectCount;
     }
 

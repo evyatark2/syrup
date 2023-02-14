@@ -148,7 +148,9 @@ const struct Npc *map_get_npc(struct Map *map, uint32_t oid);
  */
 bool map_move_monster(struct Map *map, struct MapPlayer *controller, uint8_t activity, uint32_t oid, int16_t x, int16_t y, uint16_t fh, uint8_t stance, size_t len, uint8_t *raw_data);
 
-int map_drop_batch_from_map_object(struct Map *map, uint32_t owner_id, uint32_t dropper_oid, size_t count, struct Drop *drops);
+int map_drop_batch_from_map_object(struct Map *map, struct MapPlayer *player, uint32_t dropper_oid, size_t count, struct Drop *drops);
+
+void map_pick_up_all(struct Map *map, struct MapPlayer *player);
 
 /**
  * Add a drop to a map
@@ -157,7 +159,7 @@ int map_drop_batch_from_map_object(struct Map *map, uint32_t owner_id, uint32_t 
  * \param char_id The ID of the dropper
  * \param drop The drop
  */
-void map_add_player_drop(struct Map *map, uint32_t char_id, struct Drop *drop);
+void map_add_player_drop(struct Map *map, struct MapPlayer *player, struct Drop *drop);
 
 /**
  * Get a drop

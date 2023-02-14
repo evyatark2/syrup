@@ -124,6 +124,8 @@ void client_warp(struct Client *client, uint32_t map, uint8_t portal);
 void client_reset_stats(struct Client *client);
 struct ClientResult client_portal_script(struct Client *client, const char *portal);
 void client_enable_actions(struct Client *client);
+void client_toggle_auto_pickup(struct Client *client);
+bool client_is_auto_pickup_enabled(struct Client *client);
 
 #endif
 

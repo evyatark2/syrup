@@ -47,6 +47,7 @@ struct Client {
         };
     };
     enum Stat stats;
+    bool autoPickup;
 };
 
 static bool check_quest_requirements(struct Character *chr, size_t req_count, const struct QuestRequirement *reqs, uint32_t npc);
@@ -3306,6 +3307,16 @@ void client_enable_actions(struct Client *client)
     session_write(client->session, len, packet);
 }
 
+void client_toggle_auto_pickup(struct Client *client)
+{
+    client->autoPickup = !client->autoPickup;
+}
+
+bool client_is_auto_pickup_enabled(struct Client *client)
+{
+    return client->autoPickup;
+}
+
 static bool check_quest_requirements(struct Character *chr, size_t req_count, const struct QuestRequirement *reqs, uint32_t npc)
 {
     for (size_t i = 0; i < req_count; i++) {
@@ -3706,17 +3717,16 @@ static bool end_quest(struct Client *client, uint16_t qid, uint32_t npc, bool *s
 
     client_commit_stats(client);
 
-    if (!next_quest) {
-        uint8_t packet[UPDATE_QUEST_COMPLETION_TIME_PACKET_LENGTH];
-        end_quest_packet(qid, npc, 0, packet);
-        session_write(client->session, UPDATE_QUEST_COMPLETION_TIME_PACKET_LENGTH, packet);
-    }
+    uint8_t packet[UPDATE_QUEST_COMPLETION_TIME_PACKET_LENGTH];
+    end_quest_packet(qid, npc, next_quest, packet);
+    session_write(client->session, UPDATE_QUEST_COMPLETION_TIME_PACKET_LENGTH, packet);
 
     hash_set_u16_remove(chr->quests, qid);
 
-    if (hash_set_u16_get(chr->questInfos, qid) != NULL) {
+    // Sometimes a quest can have an infoNumber of itself, in this case we need to make sure to remove the info number
+    // or else in the next login the quest will be reported as active instead of finished
+    if (hash_set_u16_get(chr->questInfos, qid) != NULL)
         hash_set_u16_remove(chr->questInfos, qid);
-    }
 
     *success = true;
     return true;
