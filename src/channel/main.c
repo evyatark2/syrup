@@ -1059,14 +1059,14 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             READ_OR_ERROR(reader_array, 6, data);
             npc_action_packet(6, data, out);
             session_write(session, 8, out);
-        } else {
-            uint8_t *data = malloc(size - 9); // TODO: what if 6 < size < 9?
-            uint8_t *out = malloc(size - 7);
+        } else if (size > 9) {
+            uint8_t data[size - 9];
+            uint8_t out[size - 7];
             READ_OR_ERROR(reader_array, size - 9, data);
             npc_action_packet(size - 9, data, out);
-            free(data);
             session_write(session, size - 7, out);
-            free(out);
+        } else {
+            return (struct OnPacketResult) { .status = -1 };
         }
 
         READER_END();
