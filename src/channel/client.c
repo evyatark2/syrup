@@ -3624,7 +3624,7 @@ static bool end_quest(struct Client *client, uint16_t qid, uint32_t npc, bool *s
 
     *success = false;
     const struct QuestInfo *info = wz_get_quest_info(qid);
-    bool next_quest = false;
+    uint16_t next_quest = 0;
     for (size_t i = 0; i < info->endActCount; i++) {
         switch (info->endActs[i].type) {
         case QUEST_ACT_TYPE_EXP:
@@ -3709,10 +3709,7 @@ static bool end_quest(struct Client *client, uint16_t qid, uint32_t npc, bool *s
         break;
 
         case QUEST_ACT_TYPE_NEXT_QUEST: {
-            next_quest = true;
-            uint8_t packet[UPDATE_QUEST_COMPLETION_TIME_PACKET_LENGTH];
-            end_quest_packet(qid, npc, info->endActs[i].nextQuest.qid, packet);
-            session_write(client->session, UPDATE_QUEST_COMPLETION_TIME_PACKET_LENGTH, packet);
+            next_quest = info->endActs[i].nextQuest.qid;
         }
         break;
 
