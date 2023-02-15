@@ -1753,8 +1753,10 @@ bool client_gain_inventory_item(struct Client *client, const struct InventoryIte
             }
         }
 
-        if (j == inv.slotCount)
+        if (j == inv.slotCount) {
+            free(mods);
             return true;
+        }
     }
 
     chr->inventory[item->item.itemId / 1000000 - 2] = inv;
