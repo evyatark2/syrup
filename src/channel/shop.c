@@ -29,6 +29,13 @@ int shops_load_from_db(struct DatabaseConnection *conn)
         const struct Shop *shop = &res->getShops.shops[i];
         SHOP_INFOS[SHOP_INFO_COUNT].id = shop->id;
         SHOP_INFOS[SHOP_INFO_COUNT].info.items = malloc(shop->count * sizeof(struct ShopItemInfo));
+        if (SHOP_INFOS[SHOP_INFO_COUNT].info.items == NULL) {
+            for (size_t j = 0; j < i; j++)
+                free(SHOP_INFOS[j].info.items);
+            free(SHOP_INFOS);
+            database_request_destroy(req);
+            return -1;
+        }
         SHOP_INFOS[SHOP_INFO_COUNT].info.count = 0;
         for (size_t i = 0; i < shop->count; i++) {
             SHOP_INFOS[SHOP_INFO_COUNT].info.items[SHOP_INFOS[SHOP_INFO_COUNT].info.count].id = shop->items[i].id;

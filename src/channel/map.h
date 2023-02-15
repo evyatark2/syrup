@@ -148,7 +148,7 @@ const struct Npc *map_get_npc(struct Map *map, uint32_t oid);
  */
 bool map_move_monster(struct Map *map, struct MapPlayer *controller, uint8_t activity, uint32_t oid, int16_t x, int16_t y, uint16_t fh, uint8_t stance, size_t len, uint8_t *raw_data);
 
-int map_drop_batch_from_map_object(struct Map *map, struct MapPlayer *player, uint32_t dropper_oid, size_t count, struct Drop *drops);
+int map_drop_batch_from_reactor(struct Map *map, struct MapPlayer *player, uint32_t oid);
 
 void map_pick_up_all(struct Map *map, struct MapPlayer *player);
 

@@ -1538,7 +1538,8 @@ static struct Session *create_session(struct ChannelServer *server, int fd, stru
     };
 
     memcpy(&new.addr, addr, socklen);
-    hash_set_addr_insert(server->sessions, &new);
+    if (hash_set_addr_insert(server->sessions, &new) == -1)
+        goto destroy_event;
 
     session->token = 0;
     session->room = NULL;
@@ -1548,12 +1549,14 @@ static struct Session *create_session(struct ChannelServer *server, int fd, stru
 
     return session;
 
+destroy_event:
+    bufferevent_free(session->event);
 destroy_recieve_context:
     decryption_context_destroy(session->recieveContext);
 destroy_send_context:
     encryption_context_destroy(session->sendContext);
 free_slot:
-    hash_set_addr_remove(server->sessions, addr);
+    free(session);
     return NULL;
 }
 

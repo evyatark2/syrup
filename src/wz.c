@@ -674,7 +674,7 @@ int wz_init(void)
 
                         ctx.reactorCapacity = 1;
                         MAP_INFOS[ctx.currentMap].reactorCount = 0;
-                        MAP_INFOS[ctx.currentMap].reactors = malloc(sizeof(struct ReactorInfo));
+                        MAP_INFOS[ctx.currentMap].reactors = malloc(sizeof(struct MapReactorInfo));
 
                         XML_SetElementHandler(parser, on_map_start, on_map_end);
                         XML_SetUserData(parser, &ctx);
@@ -1303,7 +1303,7 @@ static void on_map_start(void *user_data, const XML_Char *name, const XML_Char *
 
         case MAP_ITEM_TYPE_INFO: {
             const XML_Char *key = NULL;
-            const XML_Char *value;
+            const XML_Char *value = NULL;
             for (size_t i = 0; attrs[i] != NULL; i += 2) {
                 if (!strcmp(attrs[i], "name"))
                     key = attrs[i+1];
@@ -1311,7 +1311,7 @@ static void on_map_start(void *user_data, const XML_Char *name, const XML_Char *
                     value = attrs[i+1];
             }
 
-            assert(key != NULL);
+            assert(key != NULL && value != NULL);
 
             ctx->skip++;
             if (!strcmp(name, "int")) {
@@ -1341,7 +1341,7 @@ static void on_map_start(void *user_data, const XML_Char *name, const XML_Char *
                 ctx->footholdLevel++;
             } else if (ctx->footholdLevel == 3) {
                 const XML_Char *key = NULL;
-                const XML_Char *value;
+                const XML_Char *value = NULL;
                 for (size_t i = 0; attrs[i] != NULL; i += 2) {
                     if (!strcmp(attrs[i], "name"))
                         key = attrs[i+1];
@@ -1349,7 +1349,7 @@ static void on_map_start(void *user_data, const XML_Char *name, const XML_Char *
                         value = attrs[i+1];
                 }
 
-                assert(key != NULL);
+                assert(key != NULL && value != NULL);
 
                 ctx->skip++;
                 if (!strcmp(key, "x1")) {
@@ -1384,7 +1384,7 @@ static void on_map_start(void *user_data, const XML_Char *name, const XML_Char *
 
         case MAP_ITEM_TYPE_LIFE: {
             const XML_Char *key = NULL;
-            const XML_Char *value;
+            const XML_Char *value = NULL;
             for (size_t i = 0; attrs[i] != NULL; i += 2) {
                 if (!strcmp(attrs[i], "name"))
                     key = attrs[i+1];
@@ -1392,7 +1392,7 @@ static void on_map_start(void *user_data, const XML_Char *name, const XML_Char *
                     value = attrs[i+1];
             }
 
-            assert(key != NULL);
+            assert(key != NULL && value != NULL);
 
             ctx->skip++;
             if (!strcmp(name, "int")) {
@@ -1446,7 +1446,7 @@ static void on_map_start(void *user_data, const XML_Char *name, const XML_Char *
 
         case MAP_ITEM_TYPE_PORTAL: {
             const XML_Char *key = NULL;
-            const XML_Char *value;
+            const XML_Char *value = NULL;
             for (size_t i = 0; attrs[i] != NULL; i += 2) {
                 if (!strcmp(attrs[i], "name"))
                     key = attrs[i+1];
@@ -1454,7 +1454,7 @@ static void on_map_start(void *user_data, const XML_Char *name, const XML_Char *
                     value = attrs[i+1];
             }
 
-            assert(key != NULL);
+            assert(key != NULL && value != NULL);
 
             ctx->skip++;
             if (!strcmp(name, "int")) {
@@ -1485,7 +1485,7 @@ static void on_map_start(void *user_data, const XML_Char *name, const XML_Char *
 
         case MAP_ITEM_TYPE_REACTORS: {
             if (ctx->reactorCapacity == MAP_INFOS[ctx->currentMap].reactorCount) {
-                MAP_INFOS[ctx->currentMap].reactors = realloc(MAP_INFOS[ctx->currentMap].reactors, (ctx->reactorCapacity * 2) * sizeof(struct ReactorInfo));
+                MAP_INFOS[ctx->currentMap].reactors = realloc(MAP_INFOS[ctx->currentMap].reactors, (ctx->reactorCapacity * 2) * sizeof(struct MapReactorInfo));
                 ctx->reactorCapacity *= 2;
             }
             MAP_INFOS[ctx->currentMap].reactors[MAP_INFOS[ctx->currentMap].reactorCount].id = MAP_INFOS[ctx->currentMap].reactorCount;
@@ -1499,7 +1499,7 @@ static void on_map_start(void *user_data, const XML_Char *name, const XML_Char *
 
         case MAP_ITEM_TYPE_REACTOR: {
             const XML_Char *key = NULL;
-            const XML_Char *value;
+            const XML_Char *value = NULL;
             for (size_t i = 0; attrs[i] != NULL; i += 2) {
                 if (!strcmp(attrs[i], "name"))
                     key = attrs[i+1];
@@ -1507,7 +1507,7 @@ static void on_map_start(void *user_data, const XML_Char *name, const XML_Char *
                     value = attrs[i+1];
             }
 
-            assert(key != NULL);
+            assert(key != NULL && value != NULL);
 
             ctx->skip++;
             if (!strcmp(name, "int")) {
@@ -1623,7 +1623,7 @@ static void on_mob_start(void *user_data, const XML_Char *name, const XML_Char *
 
             i++;
             if (!strcmp(attrs[i], "info")) {
-                struct MobParserStackNode *new = malloc(sizeof(struct MapParserStackNode));
+                struct MobParserStackNode *new = malloc(sizeof(struct MobParserStackNode));
                 new->next = ctx->head;
                 new->type = MOB_ITEM_TYPE_INFO;
                 ctx->head = new;
@@ -1634,7 +1634,7 @@ static void on_mob_start(void *user_data, const XML_Char *name, const XML_Char *
 
         case MOB_ITEM_TYPE_INFO: {
             const XML_Char *key = NULL;
-            const XML_Char *value;
+            const XML_Char *value = NULL;
             for (size_t i = 0; attrs[i] != NULL; i += 2) {
                 if (!strcmp(attrs[i], "name"))
                     key = attrs[i+1];
@@ -1642,7 +1642,7 @@ static void on_mob_start(void *user_data, const XML_Char *name, const XML_Char *
                     value = attrs[i+1];
             }
 
-            assert(key != NULL);
+            assert(key != NULL && value != NULL);
 
             ctx->skip++;
             if (!strcmp(name, "int")) {
@@ -1780,7 +1780,7 @@ static void on_quest_check_start(void *user_data, const XML_Char *name, const XM
             struct QuestInfo *quest = &QUEST_INFOS[QUEST_INFO_COUNT];
             if (!strcmp(name, "int")) {
                 const XML_Char *key = NULL;
-                const XML_Char *value;
+                const XML_Char *value = NULL;
                 for (size_t i = 0; attrs[i] != NULL; i += 2) {
                     if (!strcmp(attrs[i], "name"))
                         key = attrs[i+1];
@@ -1788,8 +1788,7 @@ static void on_quest_check_start(void *user_data, const XML_Char *name, const XM
                         value = attrs[i+1];
                 }
 
-                if (key == NULL)
-                    assert(0); // ERROR
+                assert(key != NULL && value != NULL);
 
                 if (quest->startRequirementCount == ctx->reqCapacity) {
                     quest->startRequirements = realloc(quest->startRequirements, (ctx->reqCapacity * 2) * sizeof(struct QuestRequirement));
@@ -1845,8 +1844,7 @@ static void on_quest_check_start(void *user_data, const XML_Char *name, const XM
                     }
                 }
 
-                if (key == NULL)
-                    assert(0); // ERROR
+                assert(key != NULL);
 
                 if (!strcmp(key, "startscript")) {
                     quest->startScript = true;
@@ -1919,7 +1917,7 @@ static void on_quest_check_start(void *user_data, const XML_Char *name, const XM
             struct QuestInfo *quest = &QUEST_INFOS[QUEST_INFO_COUNT];
             if (!strcmp(name, "int")) {
                 const XML_Char *key = NULL;
-                const XML_Char *value;
+                const XML_Char *value = NULL;
                 for (size_t i = 0; attrs[i] != NULL; i += 2) {
                     if (!strcmp(attrs[i], "name"))
                         key = attrs[i+1];
@@ -1927,8 +1925,7 @@ static void on_quest_check_start(void *user_data, const XML_Char *name, const XM
                         value = attrs[i+1];
                 }
 
-                if (key == NULL)
-                    assert(0); // ERROR
+                assert(key != NULL && value != NULL);
 
                 if (quest->endRequirementCount == ctx->reqCapacity) {
                     quest->endRequirements = realloc(quest->endRequirements, (ctx->reqCapacity * 2) * sizeof(struct QuestRequirement));
@@ -1984,8 +1981,7 @@ static void on_quest_check_start(void *user_data, const XML_Char *name, const XM
                     }
                 }
 
-                if (key == NULL)
-                    assert(0); // ERROR
+                assert(key != NULL);
 
                 if (!strcmp(key, "endscript"))
                     quest->endScript = true;
@@ -2099,7 +2095,7 @@ static void on_quest_check_start(void *user_data, const XML_Char *name, const XM
                 assert(0);
 
             const XML_Char *key = NULL;
-            const XML_Char *value;
+            const XML_Char *value = NULL;
             for (size_t i = 0; attrs[i] != NULL; i += 2) {
                 if (!strcmp(attrs[i], "name"))
                     key = attrs[i+1];
@@ -2107,8 +2103,7 @@ static void on_quest_check_start(void *user_data, const XML_Char *name, const XM
                     value = attrs[i+1];
             }
 
-            if (key == NULL)
-                assert(0); // ERROR
+            assert(key != NULL && value != NULL);
 
             ctx->skip++;
             if (!strcmp(key, "id")) {
@@ -2162,7 +2157,7 @@ static void on_quest_check_start(void *user_data, const XML_Char *name, const XM
                 assert(0);
 
             const XML_Char *key = NULL;
-            const XML_Char *value;
+            const XML_Char *value = NULL;
             for (size_t i = 0; attrs[i] != NULL; i += 2) {
                 if (!strcmp(attrs[i], "name"))
                     key = attrs[i+1];
@@ -2170,8 +2165,7 @@ static void on_quest_check_start(void *user_data, const XML_Char *name, const XM
                     value = attrs[i+1];
             }
 
-            if (key == NULL)
-                assert(0); // ERROR
+            assert(key != NULL && value != NULL);
 
             ctx->skip++;
             if (!strcmp(key, "id")) {
@@ -2213,7 +2207,7 @@ static void on_quest_check_start(void *user_data, const XML_Char *name, const XM
                 assert(0);
 
             const XML_Char *key = NULL;
-            const XML_Char *value;
+            const XML_Char *value = NULL;
             for (size_t i = 0; attrs[i] != NULL; i += 2) {
                 if (!strcmp(attrs[i], "name"))
                     key = attrs[i+1];
@@ -2221,8 +2215,7 @@ static void on_quest_check_start(void *user_data, const XML_Char *name, const XM
                     value = attrs[i+1];
             }
 
-            if (key == NULL)
-                assert(0); // ERROR
+            assert(key != NULL && value != NULL);
 
             struct QuestRequirement *req = ctx->head->next->type == QUEST_CHECK_ITEM_TYPE_START ?
                 &QUEST_INFOS[QUEST_INFO_COUNT].startRequirements[QUEST_INFOS[QUEST_INFO_COUNT].startRequirementCount] :
@@ -2240,7 +2233,7 @@ static void on_quest_check_start(void *user_data, const XML_Char *name, const XM
             if (strcmp(name, "int"))
                 assert(0);
 
-            const XML_Char *value;
+            const XML_Char *value = NULL;
             for (size_t i = 0; attrs[i] != NULL; i += 2) {
                 if (!strcmp(attrs[i], "value"))
                     value = attrs[i+1];
@@ -2281,7 +2274,7 @@ static void on_quest_check_start(void *user_data, const XML_Char *name, const XM
 
         case QUEST_CHECK_ITEM_TYPE_REQ_INFO: {
             const XML_Char *key = NULL;
-            const XML_Char *value;
+            const XML_Char *value = NULL;
             for (size_t i = 0; attrs[i] != NULL; i += 2) {
                 if (!strcmp(attrs[i], "name"))
                     key = attrs[i+1];
@@ -2289,8 +2282,7 @@ static void on_quest_check_start(void *user_data, const XML_Char *name, const XM
                     value = attrs[i+1];
             }
 
-            if (key == NULL)
-                assert(0); // ERROR
+            assert(key != NULL && value != NULL);
 
             struct QuestRequirement *req = ctx->infoReq;
 
@@ -2420,7 +2412,7 @@ static void on_quest_act_start(void *user_data, const XML_Char *name, const XML_
             struct QuestInfo *quest = &QUEST_INFOS[ctx->currentQuest];
             if (!strcmp(name, "int")) {
                 const XML_Char *key = NULL;
-                const XML_Char *value;
+                const XML_Char *value = NULL;
                 for (size_t i = 0; attrs[i] != NULL; i += 2) {
                     if (!strcmp(attrs[i], "name"))
                         key = attrs[i+1];
@@ -2428,8 +2420,7 @@ static void on_quest_act_start(void *user_data, const XML_Char *name, const XML_
                         value = attrs[i+1];
                 }
 
-                if (key == NULL)
-                    assert(0); // ERROR
+                assert(key != NULL && value != NULL);
 
                 if (quest->startActCount == ctx->actCapacity) {
                     quest->startActs = realloc(quest->startActs, (ctx->actCapacity * 2) * sizeof(struct QuestAct));
@@ -2490,7 +2481,7 @@ static void on_quest_act_start(void *user_data, const XML_Char *name, const XML_
             struct QuestInfo *quest = &QUEST_INFOS[ctx->currentQuest];
             if (!strcmp(name, "int")) {
                 const XML_Char *key = NULL;
-                const XML_Char *value;
+                const XML_Char *value = NULL;
                 for (size_t i = 0; attrs[i] != NULL; i += 2) {
                     if (!strcmp(attrs[i], "name"))
                         key = attrs[i+1];
@@ -2498,8 +2489,7 @@ static void on_quest_act_start(void *user_data, const XML_Char *name, const XML_
                         value = attrs[i+1];
                 }
 
-                if (key == NULL)
-                    assert(0); // ERROR
+                assert(key != NULL && value != NULL);
 
                 if (quest->endActCount == ctx->actCapacity) {
                     quest->endActs = realloc(quest->endActs, (ctx->actCapacity * 2) * sizeof(struct QuestAct));
@@ -2573,7 +2563,7 @@ static void on_quest_act_start(void *user_data, const XML_Char *name, const XML_
                 assert(0);
 
             const XML_Char *key = NULL;
-            const XML_Char *value;
+            const XML_Char *value = NULL;
             for (size_t i = 0; attrs[i] != NULL; i += 2) {
                 if (!strcmp(attrs[i], "name"))
                     key = attrs[i+1];
@@ -2581,8 +2571,7 @@ static void on_quest_act_start(void *user_data, const XML_Char *name, const XML_
                     value = attrs[i+1];
             }
 
-            if (key == NULL)
-                assert(0); // ERROR
+            assert(key != NULL && value != NULL);
 
             struct QuestAct *act = ctx->head->next->next->type == QUEST_ACT_ITEM_TYPE_START ?
                 &quest->startActs[quest->startActCount] :
@@ -2625,7 +2614,7 @@ static void on_quest_act_start(void *user_data, const XML_Char *name, const XML_
 
         case QUEST_ACT_ITEM_TYPE_ACT_ITEM: {
             const XML_Char *key = NULL;
-            const XML_Char *value;
+            const XML_Char *value = NULL;
             for (size_t i = 0; attrs[i] != NULL; i += 2) {
                 if (!strcmp(attrs[i], "name"))
                     key = attrs[i+1];
@@ -2633,8 +2622,7 @@ static void on_quest_act_start(void *user_data, const XML_Char *name, const XML_
                     value = attrs[i+1];
             }
 
-            if (key == NULL)
-                assert(0); // ERROR
+            assert(key != NULL && value != NULL);
 
             struct QuestAct *act = ctx->head->next->next->type == QUEST_ACT_ITEM_TYPE_START ?
                 &QUEST_INFOS[ctx->currentQuest].startActs[QUEST_INFOS[ctx->currentQuest].startActCount] :
@@ -2750,7 +2738,7 @@ static void on_item_start(void *user_data, const XML_Char *name, const XML_Char 
             ctx->skip++;
             if (!strcmp(name, "int")) {
                 const XML_Char *key = NULL;
-                const XML_Char *value;
+                const XML_Char *value = NULL;
                 for (size_t i = 0; attrs[i] != NULL; i += 2) {
                     if (!strcmp(attrs[i], "name"))
                         key = attrs[i+1];
@@ -2758,8 +2746,7 @@ static void on_item_start(void *user_data, const XML_Char *name, const XML_Char 
                         value = attrs[i+1];
                 }
 
-                if (key == NULL)
-                    assert(0); // ERROR
+                assert(key != NULL && value != NULL);
 
                 if (!strcmp(key, "slotMax"))
                     ITEM_INFOS[ITEM_INFO_COUNT].slotMax = strtol(value, NULL, 10);
@@ -2773,7 +2760,7 @@ static void on_item_start(void *user_data, const XML_Char *name, const XML_Char 
                     ITEM_INFOS[ITEM_INFO_COUNT].monsterBook = strtol(value, NULL, 10) > 0;
             } else if (!strcmp(name, "double")) {
                 const XML_Char *key = NULL;
-                const XML_Char *value;
+                const XML_Char *value = NULL;
                 for (size_t i = 0; attrs[i] != NULL; i += 2) {
                     if (!strcmp(attrs[i], "name"))
                         key = attrs[i+1];
@@ -2781,8 +2768,7 @@ static void on_item_start(void *user_data, const XML_Char *name, const XML_Char 
                         value = attrs[i+1];
                 }
 
-                if (key == NULL)
-                    assert(0); // ERROR
+                assert(key != NULL && value != NULL);
 
                 if (!strcmp(key, "unitPrice")) {
                     XML_Char *dup = strdup(value);
@@ -2858,7 +2844,7 @@ static void on_equip_item_start(void *user_data, const XML_Char *name, const XML
             ctx->skip++;
             if (!strcmp(name, "int")) {
                 const XML_Char *key = NULL;
-                const XML_Char *value;
+                const XML_Char *value = NULL;
                 for (size_t i = 0; attrs[i] != NULL; i += 2) {
                     if (!strcmp(attrs[i], "name"))
                         key = attrs[i+1];
@@ -2866,8 +2852,7 @@ static void on_equip_item_start(void *user_data, const XML_Char *name, const XML
                         value = attrs[i+1];
                 }
 
-                if (key == NULL)
-                    assert(0); // ERROR
+                assert(key != NULL && value != NULL);
 
                 if (!strcmp(key, "slotMax"))
                     ITEM_INFOS[ITEM_INFO_COUNT].slotMax = strtol(value, NULL, 10);
@@ -2881,7 +2866,7 @@ static void on_equip_item_start(void *user_data, const XML_Char *name, const XML
                     ITEM_INFOS[ITEM_INFO_COUNT].monsterBook = strtol(value, NULL, 10) > 0;
             } else if (!strcmp(name, "double")) {
                 const XML_Char *key = NULL;
-                const XML_Char *value;
+                const XML_Char *value = NULL;
                 for (size_t i = 0; attrs[i] != NULL; i += 2) {
                     if (!strcmp(attrs[i], "name"))
                         key = attrs[i+1];
@@ -2889,8 +2874,7 @@ static void on_equip_item_start(void *user_data, const XML_Char *name, const XML
                         value = attrs[i+1];
                 }
 
-                if (key == NULL)
-                    assert(0); // ERROR
+                assert(key != NULL && value != NULL);
 
                 if (!strcmp(key, "unitPrice")) {
                     XML_Char *dup = strdup(value);
@@ -2987,7 +2971,7 @@ static void on_equip_start(void *user_data, const XML_Char *name, const XML_Char
             ctx->skip++;
             if (!strcmp(name, "int")) {
                 const XML_Char *key = NULL;
-                const XML_Char *value;
+                const XML_Char *value = NULL;
                 for (size_t i = 0; attrs[i] != NULL; i += 2) {
                     if (!strcmp(attrs[i], "name"))
                         key = attrs[i+1];
@@ -2995,7 +2979,7 @@ static void on_equip_start(void *user_data, const XML_Char *name, const XML_Char
                         value = attrs[i+1];
                 }
 
-                assert(key != NULL);
+                assert(key != NULL && value != NULL);
 
                 if (!strcmp(key, "reqJob"))
                     EQUIP_INFOS[ctx->currentEquip].reqJob = strtol(value, NULL, 10);
@@ -3135,7 +3119,7 @@ static void on_consumable_start(void *user_data, const XML_Char *name, const XML
             ctx->skip++;
             if (!strcmp(name, "int")) {
                 const XML_Char *key = NULL;
-                const XML_Char *value;
+                const XML_Char *value = NULL;
                 for (size_t i = 0; attrs[i] != NULL; i += 2) {
                     if (!strcmp(attrs[i], "name"))
                         key = attrs[i+1];
@@ -3143,7 +3127,7 @@ static void on_consumable_start(void *user_data, const XML_Char *name, const XML
                         value = attrs[i+1];
                 }
 
-                assert(key != NULL);
+                assert(key != NULL && value != NULL);
 
                 if (!strcmp(key, "hp"))
                     CONSUMABLE_INFOS[CONSUMABLE_INFO_COUNT].hp = strtol(value, NULL, 10);
@@ -3257,6 +3241,8 @@ static void on_reactor_start(void *user_data, const XML_Char *name, const XML_Ch
                         key = attrs[i+1];
                 }
 
+                assert(key != NULL);
+
                 ctx->skip++;
                 if (!strcmp(key, "link")) {
                     struct ReactorInfo *reactor = &REACTOR_INFOS[REACTOR_INFO_COUNT];
@@ -3335,7 +3321,7 @@ static void on_reactor_start(void *user_data, const XML_Char *name, const XML_Ch
 
             if (!strcmp(name, "int")) {
                 const XML_Char *key = NULL;
-                const XML_Char *value;
+                const XML_Char *value = NULL;
                 for (size_t i = 0; attrs[i] != NULL; i += 2) {
                     if (!strcmp(attrs[i], "name"))
                         key = attrs[i+1];
@@ -3343,7 +3329,7 @@ static void on_reactor_start(void *user_data, const XML_Char *name, const XML_Ch
                         value = attrs[i+1];
                 }
 
-                assert(key != NULL);
+                assert(key != NULL && value != NULL);
 
                 ctx->skip++;
                 if (!strcmp(key, "type")) {
@@ -3394,7 +3380,7 @@ static void on_reactor_start(void *user_data, const XML_Char *name, const XML_Ch
 
             if (!strcmp(name, "int")) {
                 const XML_Char *key = NULL;
-                const XML_Char *value;
+                const XML_Char *value = NULL;
                 for (size_t i = 0; attrs[i] != NULL; i += 2) {
                     if (!strcmp(attrs[i], "name"))
                         key = attrs[i+1];
@@ -3402,7 +3388,7 @@ static void on_reactor_start(void *user_data, const XML_Char *name, const XML_Ch
                         value = attrs[i+1];
                 }
 
-                assert(key != NULL);
+                assert(key != NULL && value != NULL);
 
                 ctx->skip++;
                 event->skills[event->skillCount] = strtol(value, NULL, 10);
@@ -3488,6 +3474,8 @@ static void on_reactor_second_pass_start(void *user_data, const XML_Char *name, 
                     if (!strcmp(attrs[i], "value"))
                         value = attrs[i+1];
                 }
+
+                assert(key != NULL && value != NULL);
 
                 ctx->skip++;
                 if (!strcmp(key, "link")) {
