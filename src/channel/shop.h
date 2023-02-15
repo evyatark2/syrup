@@ -17,7 +17,7 @@ struct ShopInfo {
 };
 
 int shops_load_from_db(struct DatabaseConnection *conn);
-void shops_unload();
+void shops_unload(void);
 const struct ShopInfo *shop_info_find(uint32_t id);
 
 #endif

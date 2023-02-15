@@ -156,6 +156,7 @@ int main(void)
     script_manager_destroy(ctx.portalManager);
     script_manager_destroy(ctx.questManager);
     wz_terminate();
+    shops_unload();
     drops_unload();
 }
 

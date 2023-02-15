@@ -63,7 +63,7 @@ int shops_load_from_db(struct DatabaseConnection *conn)
     return 0;
 }
 
-void shops_unload()
+void shops_unload(void)
 {
     cmph_destroy(SHOP_INFO_MPH);
     for (size_t i = 0; i < SHOP_INFO_COUNT; i++) {
