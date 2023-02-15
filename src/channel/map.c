@@ -163,6 +163,7 @@ struct Map {
 static void map_kill_monster(struct Map *map, uint32_t oid);
 static bool map_calculate_drop_position(struct Map *map, struct Point *p);
 static void map_destroy_reactor(struct Map *map, uint32_t oid);
+static bool do_client_auto_pickup(struct Map *map, struct Client *client, struct Drop *drop);
 
 static void on_next_drop(struct Room *room, struct TimerHandle *handle);
 static void on_drop_time_expired(struct Room *room, struct TimerHandle *handle);
@@ -999,63 +1000,7 @@ int map_drop_batch_from_map_object(struct Map *map, struct MapPlayer *player, ui
             map->reactors[obj->index].keepAlive = true;
 
         if (client_is_auto_pickup_enabled(player->client)) {
-            // TODO: Check if this client is allowed to pick up the drop
-            bool success = false;
-            uint32_t id;
-            switch (drop->type) {
-            case DROP_TYPE_MESO:
-                client_gain_meso(player->client, drop->meso, true, false);
-                client_commit_stats(player->client);
-                map_remove_drop(map, client_get_character(player->client)->id, drop->oid);
-            break;
-
-            case DROP_TYPE_ITEM:
-                if (drop->item.item.itemId / 1000000 == 2 && wz_get_consumable_info(drop->item.item.itemId)->consumeOnPickup) {
-                    client_use_item_immediate(player->client, drop->item.item.itemId);
-                    map_remove_drop(map, client_get_character(player->client)->id, drop->oid);
-                } else if (!client_gain_inventory_item(player->client, &drop->item, &success)) {
-                    return 0;
-                }
-
-                id = drop->item.item.itemId;
-            break;
-
-            case DROP_TYPE_EQUIP:
-                if (!client_gain_equipment(player->client, &drop->equip, false, &success))
-                    return 0;
-
-                id = drop->equip.item.itemId;
-            break;
-            }
-
-            if (success) {
-                {
-                    uint8_t packet[ITEM_GAIN_PACKET_LENGTH];
-                    item_gain_packet(id, 1, packet);
-                    session_write(client_get_session(player->client), ITEM_GAIN_PACKET_LENGTH, packet);
-                }
-
-                {
-                    uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
-                    size_t len = stat_change_packet(true, 0, NULL, packet);
-                    session_write(client_get_session(player->client), len, packet);
-                }
-
-                map_remove_drop(map, client_get_character(player->client)->id, drop->oid);
-            } else {
-                {
-                    uint8_t packet[INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH];
-                    inventory_full_notification_packet(packet);
-                    session_write(client_get_session(player->client), INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH, packet);
-                }
-
-                {
-                    uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
-                    size_t len = modify_items_packet(0, NULL, packet);
-                    session_write(client_get_session(player->client), len, packet);
-                }
-            }
-
+            do_client_auto_pickup(map, player->client, drop);
         }
     } else if (count == 1) {
         if (map->dropBatchEnd == map->dropBatchCapacity) {
@@ -1128,61 +1073,7 @@ int map_drop_batch_from_map_object(struct Map *map, struct MapPlayer *player, ui
 
         if (client_is_auto_pickup_enabled(player->client)) {
             // TODO: Check if this client is allowed to pick up the drop
-            bool success = false;
-            uint32_t id;
-            switch (drop->type) {
-            case DROP_TYPE_MESO:
-                client_gain_meso(player->client, drop->meso, true, false);
-                client_commit_stats(player->client);
-                map_remove_drop(map, client_get_character(player->client)->id, drop->oid);
-            break;
-
-            case DROP_TYPE_ITEM:
-                if (drop->item.item.itemId / 1000000 == 2 && wz_get_consumable_info(drop->item.item.itemId)->consumeOnPickup) {
-                    client_use_item_immediate(player->client, drop->item.item.itemId);
-                    map_remove_drop(map, client_get_character(player->client)->id, drop->oid);
-                } else if (!client_gain_inventory_item(player->client, &drop->item, &success)) {
-                    return 0;
-                }
-
-                id = drop->item.item.itemId;
-            break;
-
-            case DROP_TYPE_EQUIP:
-                if (!client_gain_equipment(player->client, &drop->equip, false, &success))
-                    return 0;
-
-                id = drop->equip.item.itemId;
-            break;
-            }
-
-            if (success) {
-                {
-                    uint8_t packet[ITEM_GAIN_PACKET_LENGTH];
-                    item_gain_packet(id, 1, packet);
-                    session_write(client_get_session(player->client), ITEM_GAIN_PACKET_LENGTH, packet);
-                }
-
-                {
-                    uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
-                    size_t len = stat_change_packet(true, 0, NULL, packet);
-                    session_write(client_get_session(player->client), len, packet);
-                }
-
-                map_remove_drop(map, client_get_character(player->client)->id, drop->oid);
-            } else {
-                {
-                    uint8_t packet[INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH];
-                    inventory_full_notification_packet(packet);
-                    session_write(client_get_session(player->client), INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH, packet);
-                }
-
-                {
-                    uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
-                    size_t len = modify_items_packet(0, NULL, packet);
-                    session_write(client_get_session(player->client), len, packet);
-                }
-            }
+            do_client_auto_pickup(map, player->client, drop);
         }
     }
 
@@ -1201,73 +1092,14 @@ void map_pick_up_all(struct Map *map, struct MapPlayer *player)
         size_t count = batch->count;
         for (size_t j = 0; j < count; j++) {
             struct Drop *drop = &batch->drops[j];
-            // TODO: Check if this client is allowed to pick up the drop
-            bool success = false;
-            uint32_t id;
-            switch (drop->type) {
-            case DROP_TYPE_MESO:
-                client_gain_meso(player->client, drop->meso, true, false);
-                client_commit_stats(player->client);
-                if (batch->count == 1)
-                    i--;
-                map_remove_drop(map, client_get_character(player->client)->id, drop->oid);
+            if (batch->count == 1)
+                i--;
+
+            if (do_client_auto_pickup(map, player->client, drop)) {
                 count--;
                 j--;
-            break;
-
-            case DROP_TYPE_ITEM:
-                if (drop->item.item.itemId / 1000000 == 2 && wz_get_consumable_info(drop->item.item.itemId)->consumeOnPickup) {
-                    client_use_item_immediate(player->client, drop->item.item.itemId);
-                    if (batch->count == 1)
-                        i--;
-                    map_remove_drop(map, client_get_character(player->client)->id, drop->oid);
-                    count--;
-                    j--;
-                } else if (!client_gain_inventory_item(player->client, &drop->item, &success)) {
-                    continue;
-                }
-
-                id = drop->item.item.itemId;
-            break;
-
-            case DROP_TYPE_EQUIP:
-                if (!client_gain_equipment(player->client, &drop->equip, false, &success))
-                    continue;
-
-                id = drop->equip.item.itemId;
-            break;
-            }
-
-            if (success) {
-                {
-                    uint8_t packet[ITEM_GAIN_PACKET_LENGTH];
-                    item_gain_packet(id, 1, packet);
-                    session_write(client_get_session(player->client), ITEM_GAIN_PACKET_LENGTH, packet);
-                }
-
-                {
-                    uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
-                    size_t len = stat_change_packet(true, 0, NULL, packet);
-                    session_write(client_get_session(player->client), len, packet);
-                }
-
-                if (batch->count == 1)
-                    i--;
-                map_remove_drop(map, client_get_character(player->client)->id, drop->oid);
-                count--;
-                j--;
-            } else {
-                {
-                    uint8_t packet[INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH];
-                    inventory_full_notification_packet(packet);
-                    session_write(client_get_session(player->client), INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH, packet);
-                }
-
-                {
-                    uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
-                    size_t len = modify_items_packet(0, NULL, packet);
-                    session_write(client_get_session(player->client), len, packet);
-                }
+            } else if (batch->count == 1) {
+                i++;
             }
         }
     }
@@ -1278,67 +1110,9 @@ void map_pick_up_all(struct Map *map, struct MapPlayer *player)
         size_t current = batch->current;
         for (size_t j = 0; j < current; j++) {
             struct Drop *drop = &batch->drops[j];
-            // TODO: Check if this client is allowed to pick up the drop
-            bool success = false;
-            uint32_t id;
-            switch (drop->type) {
-            case DROP_TYPE_MESO:
-                client_gain_meso(player->client, drop->meso, true, false);
-                client_commit_stats(player->client);
-                map_remove_drop(map, client_get_character(player->client)->id, drop->oid);
-                j--;
+            if (do_client_auto_pickup(map, player->client, drop)) {
                 current--;
-            break;
-
-            case DROP_TYPE_ITEM:
-                if (drop->item.item.itemId / 1000000 == 2 && wz_get_consumable_info(drop->item.item.itemId)->consumeOnPickup) {
-                    client_use_item_immediate(player->client, drop->item.item.itemId);
-                    map_remove_drop(map, client_get_character(player->client)->id, drop->oid);
-                    j--;
-                    current--;
-                } else if (!client_gain_inventory_item(player->client, &drop->item, &success)) {
-                    continue;
-                }
-
-                id = drop->item.item.itemId;
-            break;
-
-            case DROP_TYPE_EQUIP:
-                if (!client_gain_equipment(player->client, &drop->equip, false, &success))
-                    continue;
-
-                id = drop->equip.item.itemId;
-            break;
-            }
-
-            if (success) {
-                {
-                    uint8_t packet[ITEM_GAIN_PACKET_LENGTH];
-                    item_gain_packet(id, 1, packet);
-                    session_write(client_get_session(player->client), ITEM_GAIN_PACKET_LENGTH, packet);
-                }
-
-                {
-                    uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
-                    size_t len = stat_change_packet(true, 0, NULL, packet);
-                    session_write(client_get_session(player->client), len, packet);
-                }
-
-                map_remove_drop(map, client_get_character(player->client)->id, drop->oid);
                 j--;
-                current--;
-            } else {
-                {
-                    uint8_t packet[INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH];
-                    inventory_full_notification_packet(packet);
-                    session_write(client_get_session(player->client), INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH, packet);
-                }
-
-                {
-                    uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
-                    size_t len = modify_items_packet(0, NULL, packet);
-                    session_write(client_get_session(player->client), len, packet);
-                }
             }
         }
     }
@@ -1564,6 +1338,71 @@ static bool map_calculate_drop_position(struct Map *map, struct Point *p)
     return true;
 }
 
+static bool do_client_auto_pickup(struct Map *map, struct Client *client, struct Drop *drop)
+{
+    // TODO: Check if this client is allowed to pick up the drop
+    bool success = false;
+    uint32_t id;
+    switch (drop->type) {
+    case DROP_TYPE_MESO:
+        client_gain_meso(client, drop->meso, true, false);
+        client_commit_stats(client);
+        map_remove_drop(map, client_get_character(client)->id, drop->oid);
+        return true;
+    break;
+
+    case DROP_TYPE_ITEM:
+        if (drop->item.item.itemId / 1000000 == 2 && wz_get_consumable_info(drop->item.item.itemId)->consumeOnPickup) {
+            client_use_item_immediate(client, drop->item.item.itemId);
+            map_remove_drop(map, client_get_character(client)->id, drop->oid);
+            return true;
+        } else if (!client_gain_inventory_item(client, &drop->item, &success)) {
+            return false;
+        }
+
+        id = drop->item.item.itemId;
+    break;
+
+    case DROP_TYPE_EQUIP:
+        if (!client_gain_equipment(client, &drop->equip, false, &success))
+            return false;
+
+        id = drop->equip.item.itemId;
+    break;
+    }
+
+    if (success) {
+        {
+            uint8_t packet[ITEM_GAIN_PACKET_LENGTH];
+            item_gain_packet(id, 1, packet);
+            session_write(client_get_session(client), ITEM_GAIN_PACKET_LENGTH, packet);
+        }
+
+        {
+            uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
+            size_t len = stat_change_packet(true, 0, NULL, packet);
+            session_write(client_get_session(client), len, packet);
+        }
+
+        map_remove_drop(map, client_get_character(client)->id, drop->oid);
+        return true;
+    } else {
+        {
+            uint8_t packet[INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH];
+            inventory_full_notification_packet(packet);
+            session_write(client_get_session(client), INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH, packet);
+        }
+
+        {
+            uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
+            size_t len = modify_items_packet(0, NULL, packet);
+            session_write(client_get_session(client), len, packet);
+        }
+
+        return false;
+    }
+}
+
 static void on_next_drop(struct Room *room, struct TimerHandle *handle)
 {
     struct Map *map = room_get_context(room);
@@ -1587,64 +1426,8 @@ static void on_next_drop(struct Room *room, struct TimerHandle *handle)
 
     batch->current++;
     if (batch->current < batch->count) {
-        if (batch->owner != NULL && client_is_auto_pickup_enabled(batch->owner->client)) {
-            // TODO: Check if this client is allowed to pick up the drop
-            bool success = false;
-            uint32_t id;
-            switch (drop->type) {
-            case DROP_TYPE_MESO:
-                client_gain_meso(batch->owner->client, drop->meso, true, false);
-                client_commit_stats(batch->owner->client);
-                map_remove_drop(map, client_get_character(batch->owner->client)->id, drop->oid);
-            break;
-
-            case DROP_TYPE_ITEM:
-                if (drop->item.item.itemId / 1000000 == 2 && wz_get_consumable_info(drop->item.item.itemId)->consumeOnPickup) {
-                    client_use_item_immediate(batch->owner->client, drop->item.item.itemId);
-                    map_remove_drop(map, client_get_character(batch->owner->client)->id, drop->oid);
-                } else if (!client_gain_inventory_item(batch->owner->client, &drop->item, &success)) {
-                    return;
-                }
-
-                id = drop->item.item.itemId;
-            break;
-
-            case DROP_TYPE_EQUIP:
-                if (!client_gain_equipment(batch->owner->client, &drop->equip, false, &success))
-                    return;
-
-                id = drop->equip.item.itemId;
-            break;
-            }
-
-            if (success) {
-                {
-                    uint8_t packet[ITEM_GAIN_PACKET_LENGTH];
-                    item_gain_packet(id, 1, packet);
-                    session_write(client_get_session(batch->owner->client), ITEM_GAIN_PACKET_LENGTH, packet);
-                }
-
-                {
-                    uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
-                    size_t len = stat_change_packet(true, 0, NULL, packet);
-                    session_write(client_get_session(batch->owner->client), len, packet);
-                }
-
-                map_remove_drop(map, client_get_character(batch->owner->client)->id, drop->oid);
-            } else {
-                {
-                    uint8_t packet[INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH];
-                    inventory_full_notification_packet(packet);
-                    session_write(client_get_session(batch->owner->client), INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH, packet);
-                }
-
-                {
-                    uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
-                    size_t len = modify_items_packet(0, NULL, packet);
-                    session_write(client_get_session(batch->owner->client), len, packet);
-                }
-            }
-        }
+        if (batch->owner != NULL && client_is_auto_pickup_enabled(batch->owner->client))
+            do_client_auto_pickup(map, batch->owner->client, drop);
         batch->timer = room_add_timer(map->room, 300, on_next_drop, batch, true);
     } else {
         if (map->dropBatchEnd == map->dropBatchCapacity) {

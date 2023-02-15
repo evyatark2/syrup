@@ -124,6 +124,7 @@ struct Client *client_create(struct Session *session, struct DatabaseConnection 
     client->script = NULL;
     client->shop = -1;
     client->stats = 0;
+    client->autoPickup = false;
 
     return client;
 }
