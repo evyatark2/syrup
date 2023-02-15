@@ -159,6 +159,12 @@ int drops_load_from_db(struct DatabaseConnection *conn)
 
 void drops_unload(void)
 {
+    cmph_destroy(REACTOR_DROP_INFO_MPH);
+    for (size_t i = 0; i < REACTOR_DROP_INFO_COUNT; i++) {
+        free(REACTOR_DROP_INFOS[i].info.drops);
+    }
+    free(REACTOR_DROP_INFOS);
+
     cmph_destroy(DROP_INFO_MPH);
     for (size_t i = 0; i < DROP_INFO_COUNT; i++) {
         free(DROP_INFOS[i].info.drops);
