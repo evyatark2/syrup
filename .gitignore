@@ -7,3 +7,4 @@
 /.gdbinit
 /compile_commands.json
 /vgcore.*
+/out.txt

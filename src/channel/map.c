@@ -1006,10 +1006,10 @@ static int map_drop_batch_from_map_object(struct Map *map, struct MapPlayer *pla
         // Also can't be player drop as they come in 1's
         struct Drop *drop = &drops[0];
         drop->oid = object_list_allocate(&map->objectList);
-        struct MapObject *object = object_list_get(&map->objectList, drop->oid);
-        object->type = MAP_OBJECT_DROPPING;
-        object->index = map->droppingBatchCount;
-        object->index2 = 0;
+        struct MapObject *drop_object = object_list_get(&map->objectList, drop->oid);
+        drop_object->type = MAP_OBJECT_DROPPING;
+        drop_object->index = map->droppingBatchCount;
+        drop_object->index2 = 0;
 
         struct AnnounceItemDropContext ctx = {
             .charId = client_get_character(player->client)->id,
@@ -1037,9 +1037,8 @@ static int map_drop_batch_from_map_object(struct Map *map, struct MapPlayer *pla
         // during the reactor's script which should destroy the
         // reactor after the script if finished.
         // This prevents this from happening until all drops have been dropped
-        struct MapObject *obj = object_list_get(&map->objectList, object->oid);
-        if (obj->type == MAP_OBJECT_REACTOR)
-            map->reactors[obj->index].keepAlive = true;
+        if (object->type == MAP_OBJECT_REACTOR)
+            map->reactors[object->index].keepAlive = true;
 
         if (client_is_auto_pickup_enabled(player->client)) {
             do_client_auto_pickup(map, player->client, drop);
