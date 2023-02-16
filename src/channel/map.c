@@ -1040,9 +1040,8 @@ static int map_drop_batch_from_map_object(struct Map *map, struct MapPlayer *pla
         if (object->type == MAP_OBJECT_REACTOR)
             map->reactors[object->index].keepAlive = true;
 
-        if (client_is_auto_pickup_enabled(player->client)) {
+        if (client_is_auto_pickup_enabled(player->client))
             do_client_auto_pickup(map, player->client, drop);
-        }
     } else if (count == 1) {
         if (map->dropBatchEnd == map->dropBatchCapacity) {
             void *temp = realloc(map->dropBatches, (map->dropBatchCapacity * 2) * sizeof(struct DropBatch));
@@ -1545,12 +1544,13 @@ static void on_next_drop(struct Room *room, struct TimerHandle *handle)
         map->dropBatchEnd++;
 
         object = object_list_get(&map->objectList, batch->dropperOid);
-        if (object->type == MAP_OBJECT_MONSTER) {
+        if (object->type == MAP_OBJECT_MONSTER)
             map_kill_monster(map, batch->dropperOid);
-        } else {
+        else
             map_destroy_reactor(map, batch->dropperOid);
-        }
 
+        if (batch->owner != NULL && client_is_auto_pickup_enabled(batch->owner->client))
+            do_client_auto_pickup(map, batch->owner->client, drop);
         free(batch);
     }
 }
