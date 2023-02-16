@@ -22,7 +22,7 @@ struct Account account_get_default_account(uint8_t name_len, char *name)
     };
 }
 
-int accounts_init()
+int accounts_init(void)
 {
     return mtx_init(&LOCK, mtx_plain);
 }

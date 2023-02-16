@@ -29,7 +29,7 @@ struct Account account_get_default_account(uint8_t name_len, char *name);
 
 struct AccountNode;
 
-int accounts_init();
+int accounts_init(void);
 struct AccountNode *account_login(uint32_t id);
 uint32_t account_get_id(struct AccountNode *account);
 void account_logout(struct AccountNode **account);
