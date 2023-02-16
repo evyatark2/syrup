@@ -1302,19 +1302,19 @@ static void on_map_start(void *user_data, const XML_Char *name, const XML_Char *
         break;
 
         case MAP_ITEM_TYPE_INFO: {
-            const XML_Char *key = NULL;
-            const XML_Char *value = NULL;
-            for (size_t i = 0; attrs[i] != NULL; i += 2) {
-                if (!strcmp(attrs[i], "name"))
-                    key = attrs[i+1];
-                else if (!strcmp(attrs[i], "value"))
-                    value = attrs[i+1];
-            }
-
-            assert(key != NULL && value != NULL);
-
             ctx->skip++;
             if (!strcmp(name, "int")) {
+                const XML_Char *key = NULL;
+                const XML_Char *value = NULL;
+                for (size_t i = 0; attrs[i] != NULL; i += 2) {
+                    if (!strcmp(attrs[i], "name"))
+                        key = attrs[i+1];
+                    else if (!strcmp(attrs[i], "value"))
+                        value = attrs[i+1];
+                }
+
+                assert(key != NULL && value != NULL);
+
                 if (!strcmp(key, "returnMap")) {
                     MAP_INFOS[ctx->currentMap].returnMap = strtol(value, NULL, 10);
                 } else if (!strcmp(key, "fieldLimit")) {
@@ -1324,10 +1324,32 @@ static void on_map_start(void *user_data, const XML_Char *name, const XML_Char *
                 } else if (!strcmp(key, "VRRight")) {
                 }
             } else if (!strcmp(name, "float")) {
+                const XML_Char *key = NULL;
+                const XML_Char *value = NULL;
+                for (size_t i = 0; attrs[i] != NULL; i += 2) {
+                    if (!strcmp(attrs[i], "name"))
+                        key = attrs[i+1];
+                    else if (!strcmp(attrs[i], "value"))
+                        value = attrs[i+1];
+                }
+
+                assert(key != NULL && value != NULL);
+
                 if (!strcmp(key, "mobRate")) {
                     MAP_INFOS[ctx->currentMap].mobRate = strtof(value, NULL);
                 }
             } else if (!strcmp(name, "string")) {
+                const XML_Char *key = NULL;
+                const XML_Char *value = NULL;
+                for (size_t i = 0; attrs[i] != NULL; i += 2) {
+                    if (!strcmp(attrs[i], "name"))
+                        key = attrs[i+1];
+                    else if (!strcmp(attrs[i], "value"))
+                        value = attrs[i+1];
+                }
+
+                assert(key != NULL && value != NULL);
+
                 if (!strcmp(key, "onFirstUserEnter")) {
                 } else if (!strcmp(key, "onUserEnter")) {
                 }
@@ -1633,19 +1655,19 @@ static void on_mob_start(void *user_data, const XML_Char *name, const XML_Char *
         break;
 
         case MOB_ITEM_TYPE_INFO: {
-            const XML_Char *key = NULL;
-            const XML_Char *value = NULL;
-            for (size_t i = 0; attrs[i] != NULL; i += 2) {
-                if (!strcmp(attrs[i], "name"))
-                    key = attrs[i+1];
-                else if (!strcmp(attrs[i], "value"))
-                    value = attrs[i+1];
-            }
-
-            assert(key != NULL && value != NULL);
-
             ctx->skip++;
             if (!strcmp(name, "int")) {
+                const XML_Char *key = NULL;
+                const XML_Char *value = NULL;
+                for (size_t i = 0; attrs[i] != NULL; i += 2) {
+                    if (!strcmp(attrs[i], "name"))
+                        key = attrs[i+1];
+                    else if (!strcmp(attrs[i], "value"))
+                        value = attrs[i+1];
+                }
+
+                assert(key != NULL && value != NULL);
+
                 if (!strcmp(key, "bodyAttack")) {
                     MOB_INFOS[MOB_INFO_COUNT].bodyAttack = strtol(value, NULL, 10);
                 } else if (!strcmp(key, "level")) {
