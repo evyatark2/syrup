@@ -117,6 +117,7 @@ struct Client *client_create(struct Session *session, struct DatabaseConnection 
     client->managers.npc = npc_manager;
     client->character.quests = NULL;
     client->character.monsterQuests = NULL;
+    client->character.itemQuests = NULL;
     client->character.questInfos = NULL;
     client->character.completedQuests = NULL;
     client->character.skills = NULL;
@@ -132,6 +133,7 @@ struct Client *client_create(struct Session *session, struct DatabaseConnection 
 void client_destroy(struct Client *client)
 {
     hash_set_u16_destroy(client->character.quests);
+    hash_set_u32_destroy(client->character.itemQuests);
     hash_set_u32_destroy(client->character.monsterQuests);
     hash_set_u16_destroy(client->character.questInfos);
     hash_set_u16_destroy(client->character.completedQuests);
@@ -409,12 +411,53 @@ struct ClientContResult client_cont(struct Client *client, int status)
                 return (struct ClientContResult) { -1 };
             }
 
+            chr->itemQuests = hash_set_u32_create(sizeof(uint32_t), 0);
+            if (chr->itemQuests == NULL) {
+                hash_set_u32_destroy(chr->monsterQuests);
+                chr->monsterQuests = NULL;
+                hash_set_u16_destroy(chr->quests);
+                chr->quests = NULL;
+                database_request_destroy(client->request);
+                database_connection_unlock(client->conn);
+                return (struct ClientContResult) { -1 };
+            }
+
             for (size_t i = 0; i < res->getCharacter.questCount; i++) {
                 struct Quest quest = {
                     .id = res->getCharacter.quests[i],
                     .progressCount = 0,
                 };
                 hash_set_u16_insert(chr->quests, &quest); // TODO: Check
+
+                const struct QuestInfo *quest_info = wz_get_quest_info(res->getCharacter.quests[i]);
+                for (size_t i = 0; i < quest_info->endRequirementCount; i++) {
+                    if (quest_info->endRequirements[i].type == QUEST_REQUIREMENT_TYPE_ITEM) {
+                        const struct ItemInfo *item_info = wz_get_item_info(quest_info->endRequirements[i].item.id);
+                        if (item_info->quest) {
+                            int32_t total = 0;
+                            uint8_t inv = quest_info->endRequirements[i].item.id / 1000000;
+                            if (inv == 1) {
+                                for (uint8_t j = 0; j < chr->equipmentInventory.slotCount; j++) {
+                                    if (!chr->equipmentInventory.items[j].isEmpty &&
+                                            chr->equipmentInventory.items[j].equip.item.itemId == quest_info->endRequirements[i].item.id) {
+                                        total += 1;
+                                    }
+                                }
+                            } else {
+                                inv -= 2;
+                                for (uint8_t j = 0; j < chr->inventory[inv].slotCount; j++) {
+                                    if (!chr->inventory[inv].items[j].isEmpty &&
+                                            chr->inventory[inv].items[j].item.item.itemId == quest_info->endRequirements[i].item.id) {
+                                        total += chr->inventory[inv].items[j].item.quantity;
+                                    }
+                                }
+                            }
+
+                            if (total < quest_info->endRequirements[i].item.count)
+                                hash_set_u32_insert(chr->itemQuests, &quest_info->endRequirements[i].item.id);
+                        }
+                    }
+                }
             }
 
 
@@ -456,6 +499,8 @@ struct ClientContResult client_cont(struct Client *client, int status)
 
             chr->questInfos = hash_set_u16_create(sizeof(struct QuestInfoProgress), offsetof(struct QuestInfoProgress, id));
             if (chr->questInfos == NULL) {
+                hash_set_u32_destroy(chr->itemQuests);
+                chr->itemQuests = NULL;
                 hash_set_u32_destroy(chr->monsterQuests);
                 chr->monsterQuests = NULL;
                 hash_set_u16_destroy(chr->quests);
@@ -480,6 +525,8 @@ struct ClientContResult client_cont(struct Client *client, int status)
             if (chr->completedQuests == NULL) {
                 hash_set_u16_destroy(chr->questInfos);
                 chr->questInfos = NULL;
+                hash_set_u32_destroy(chr->itemQuests);
+                chr->itemQuests = NULL;
                 hash_set_u32_destroy(chr->monsterQuests);
                 chr->monsterQuests = NULL;
                 hash_set_u16_destroy(chr->quests);
@@ -513,6 +560,8 @@ struct ClientContResult client_cont(struct Client *client, int status)
                 chr->completedQuests = NULL;
                 hash_set_u16_destroy(chr->questInfos);
                 chr->questInfos = NULL;
+                hash_set_u32_destroy(chr->itemQuests);
+                chr->itemQuests = NULL;
                 hash_set_u32_destroy(chr->monsterQuests);
                 chr->monsterQuests = NULL;
                 hash_set_u16_destroy(chr->quests);
@@ -539,6 +588,8 @@ struct ClientContResult client_cont(struct Client *client, int status)
                 chr->completedQuests = NULL;
                 hash_set_u16_destroy(chr->questInfos);
                 chr->questInfos = NULL;
+                hash_set_u32_destroy(chr->itemQuests);
+                chr->itemQuests = NULL;
                 hash_set_u32_destroy(chr->monsterQuests);
                 chr->monsterQuests = NULL;
                 hash_set_u16_destroy(chr->quests);
@@ -902,13 +953,15 @@ struct MapHandleContainer *client_get_map(struct Client *client)
 
 bool client_announce_drop(struct Client *client, uint32_t owner_id, uint32_t dropper_oid, bool player_drop, const struct Drop *drop)
 {
+    struct Character *chr = &client->character;
     if (hash_set_u32_insert(client->visibleMapObjects, &drop->oid) == -1)
         return false;
 
     switch (drop->type) {
     case DROP_TYPE_MESO: {
         uint8_t packet[DROP_MESO_FROM_OBJECT_PACKET_LENGTH];
-        drop_meso_from_object_packet(drop->oid, drop->meso, owner_id, drop->x, drop->y, drop->x, drop->y, dropper_oid, player_drop, packet);
+        drop_meso_from_object_packet(drop->oid, drop->meso, owner_id,
+                drop->x, drop->y, drop->x, drop->y, dropper_oid, player_drop, packet);
         session_write(client->session, DROP_MESO_FROM_OBJECT_PACKET_LENGTH, packet);
     }
     break;
@@ -916,14 +969,16 @@ bool client_announce_drop(struct Client *client, uint32_t owner_id, uint32_t dro
     case DROP_TYPE_ITEM: {
         if (drop->qid != 0) {
             struct Quest *quest = hash_set_u16_get(client->character.quests, drop->qid);
-            if (quest != NULL) {
+            if (quest != NULL && hash_set_u32_get(chr->itemQuests, drop->item.item.itemId) != NULL) {
                 uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
-                drop_item_from_object_packet(drop->oid, drop->item.item.itemId, owner_id, drop->x, drop->y, drop->x, drop->y, dropper_oid, player_drop, packet);
+                drop_item_from_object_packet(drop->oid, drop->item.item.itemId, owner_id,
+                    drop->x, drop->y, drop->x, drop->y, dropper_oid, player_drop, packet);
                 session_write(client->session, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet);
             }
         } else {
             uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
-            drop_item_from_object_packet(drop->oid, drop->item.item.itemId, owner_id, drop->x, drop->y, drop->x, drop->y, dropper_oid, player_drop, packet);
+            drop_item_from_object_packet(drop->oid, drop->item.item.itemId, owner_id,
+                    drop->x, drop->y, drop->x, drop->y, dropper_oid, player_drop, packet);
             session_write(client->session, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet);
         }
     }
@@ -931,7 +986,8 @@ bool client_announce_drop(struct Client *client, uint32_t owner_id, uint32_t dro
 
     case DROP_TYPE_EQUIP: {
             uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
-            drop_item_from_object_packet(drop->oid, drop->equip.item.itemId, owner_id, drop->x, drop->y, drop->x, drop->y, dropper_oid, player_drop, packet);
+            drop_item_from_object_packet(drop->oid, drop->equip.item.itemId, owner_id,
+                    drop->x, drop->y, drop->x, drop->y, dropper_oid, player_drop, packet);
             session_write(client->session, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet);
     }
     break;
@@ -942,6 +998,7 @@ bool client_announce_drop(struct Client *client, uint32_t owner_id, uint32_t dro
 
 bool client_announce_spawn_drop(struct Client *client, uint32_t owner_id, uint32_t dropper_oid, bool player_drop, const struct Drop *drop)
 {
+    struct Character *chr = &client->character;
     if (hash_set_u32_insert(client->visibleMapObjects, &drop->oid) == -1)
         return false;
 
@@ -956,7 +1013,7 @@ bool client_announce_spawn_drop(struct Client *client, uint32_t owner_id, uint32
     case DROP_TYPE_ITEM: {
         if (drop->qid != 0) {
             struct Quest *quest = hash_set_u16_get(client->character.quests, drop->qid);
-            if (quest != NULL) {
+            if (quest != NULL && hash_set_u32_get(chr->itemQuests, drop->item.item.itemId) != NULL) {
                 uint8_t packet[SPAWN_ITEM_DROP_PACKET_LENGTH];
                 spawn_item_drop_packet(drop->oid, drop->item.item.itemId, owner_id, drop->x, drop->y, dropper_oid, player_drop, packet);
                 session_write(client->session, SPAWN_ITEM_DROP_PACKET_LENGTH, packet);
@@ -1654,9 +1711,37 @@ bool client_gain_items(struct Client *client, size_t len, const uint32_t *ids, c
     return true;
 }
 
-bool client_gain_inventory_item(struct Client *client, const struct InventoryItem *item, bool *success)
+struct CheckQuestItemContext {
+    uint32_t id;
+    int16_t max;
+};
+
+static void check_quest_item(void *data, void *ctx_)
+{
+    struct CheckQuestItemContext *ctx = ctx_;
+    struct Quest *quest = data;
+
+    const struct QuestInfo *info = wz_get_quest_info(quest->id);
+    for (size_t i = 0; i < info->endRequirementCount; i++) {
+        if (info->endRequirements[i].type == QUEST_REQUIREMENT_TYPE_ITEM &&
+                info->endRequirements[i].item.id == ctx->id) {
+            ctx->max = info->endRequirements[i].item.count;
+            break;
+        }
+    }
+
+}
+
+bool client_gain_inventory_item(struct Client *client, const struct InventoryItem *item, enum InventoryGainResult *result)
 {
     struct Character *chr = &client->character;
+
+    const struct ItemInfo *info = wz_get_item_info(item->item.itemId);
+
+    if (info->quest && hash_set_u32_get(chr->itemQuests, item->item.itemId) == NULL) {
+        *result = INVENTORY_GAIN_RESULT_UNAVAILABLE;
+        return true;
+    }
 
     struct InventoryModify *mods = malloc(sizeof(struct InventoryModify));
     if (mods == NULL)
@@ -1671,9 +1756,16 @@ bool client_gain_inventory_item(struct Client *client, const struct InventoryIte
     int16_t quantity = item->quantity;
 
     // First try to fill up existing stacks
-    *success = false;
     for (size_t j = 0; j < inv.slotCount; j++) {
         if (!inv.items[j].isEmpty && inv.items[j].item.item.itemId == item->item.itemId) {
+            struct CheckQuestItemContext ctx = {
+                .id = item->item.itemId
+            };
+            hash_set_u16_foreach(chr->quests, check_quest_item, &ctx);
+            if (info->quest && inv.items[j].item.quantity + item->quantity == ctx.max) {
+                hash_set_u32_remove(chr->itemQuests, item->item.itemId);
+            }
+
             if (inv.items[j].item.quantity > wz_get_item_info(item->item.itemId)->slotMax - quantity) {
                 quantity -= wz_get_item_info(item->item.itemId)->slotMax - inv.items[j].item.quantity;
                 inv.items[j].item.quantity = wz_get_item_info(item->item.itemId)->slotMax;
@@ -1710,6 +1802,13 @@ bool client_gain_inventory_item(struct Client *client, const struct InventoryIte
         uint8_t j;
         for (j = 0; j < inv.slotCount; j++) {
             if (inv.items[j].isEmpty) {
+                struct CheckQuestItemContext ctx = {
+                    .id = item->item.itemId
+                };
+                hash_set_u16_foreach(chr->quests, check_quest_item, &ctx);
+                if (info->quest && item->quantity == ctx.max)
+                    hash_set_u32_remove(chr->itemQuests, item->item.itemId);
+
                 inv.items[j].isEmpty = false;
                 inv.items[j].item.item = item->item;
                 inv.items[j].item.quantity = quantity;
@@ -1753,8 +1852,21 @@ bool client_gain_inventory_item(struct Client *client, const struct InventoryIte
             }
         }
 
+        // Inventory is full
         if (j == inv.slotCount) {
+            {
+                uint8_t packet[INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH];
+                inventory_full_notification_packet(packet);
+                session_write(client_get_session(client), INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH, packet);
+            }
+
+            {
+                uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
+                size_t len = modify_items_packet(0, NULL, packet);
+                session_write(client_get_session(client), len, packet);
+            }
             free(mods);
+            *result = INVENTORY_GAIN_RESULT_FULL;
             return true;
         }
     }
@@ -1775,16 +1887,27 @@ bool client_gain_inventory_item(struct Client *client, const struct InventoryIte
     }
 
     free(mods);
-    *success = true;
+    *result = INVENTORY_GAIN_RESULT_SUCCESS;
     return true;
 }
 
-bool client_gain_equipment(struct Client *client, const struct Equipment *item, bool equip, bool *success)
+bool client_gain_equipment(struct Client *client, const struct Equipment *item, bool equip, enum InventoryGainResult *result)
 {
     struct Character *chr = &client->character;
+    const struct ItemInfo *info = wz_get_item_info(item->item.itemId);
+
+    if (info->quest && hash_set_u32_get(chr->itemQuests, item->item.itemId) == NULL) {
+        *result = INVENTORY_GAIN_RESULT_UNAVAILABLE;
+        return true;
+    }
+
     if (!equip) {
         for (size_t j = 0; j < chr->equipmentInventory.slotCount; j++) {
             if (chr->equipmentInventory.items[j].isEmpty) {
+                // TODO: This is assuming that a quest can't have more than one equipment of the same kind as a quest item
+                if (info->quest)
+                    hash_set_u32_remove(chr->itemQuests, item->item.itemId);
+
                 chr->equipmentInventory.items[j].isEmpty = false;
                 chr->equipmentInventory.items[j].equip = *item;
 
@@ -1801,14 +1924,14 @@ bool client_gain_equipment(struct Client *client, const struct Equipment *item, 
                     session_write(client->session, len, packet);
                 }
 
-                *success = true;
+                *result = INVENTORY_GAIN_RESULT_SUCCESS;
                 return true;
             }
         }
     }
 
     // TODO: Handle immediate equip
-    *success = false;
+    *result = INVENTORY_GAIN_RESULT_FULL;
     return true;
 }
 
@@ -1883,7 +2006,11 @@ bool client_remove_item(struct Client *client, uint8_t inv, uint8_t src, int16_t
                 }
             }
         }
+    }
 
+    const struct ItemInfo *item_info = wz_get_item_info(item->item.itemId);
+    if (item_info->quest && hash_set_u32_get(chr->itemQuests, item->item.itemId) == NULL) {
+        hash_set_u32_insert(chr->itemQuests, &item->item.itemId);
     }
 
     {
@@ -2660,6 +2787,15 @@ struct ClientResult client_start_quest(struct Client *client, uint16_t qid, uint
 
     if (!check_quest_requirements(chr, info->startRequirementCount, info->startRequirements, npc))
         return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
+
+    for (size_t i = 0; i < info->endRequirementCount; i++) {
+        if (info->endRequirements[i].type == QUEST_REQUIREMENT_TYPE_ITEM) {
+            const struct ItemInfo *item_info = wz_get_item_info(info->endRequirements[i].item.id);
+            if (item_info->quest) {
+                hash_set_u32_insert(chr->itemQuests, &info->endRequirements[i].item.id);
+            }
+        }
+    }
 
     if (info->startScript) {
         client->npc = npc;

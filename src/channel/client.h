@@ -87,8 +87,15 @@ void client_adjust_fame(struct Client *client, int16_t fame);
 void client_commit_stats(struct Client *client);
 bool client_has_item(struct Client *client, uint32_t id);
 bool client_gain_items(struct Client *client, size_t len, const uint32_t *ids, const int16_t *counts, bool reward, bool *success);
-bool client_gain_inventory_item(struct Client *client, const struct InventoryItem *item, bool *success);
-bool client_gain_equipment(struct Client *client, const struct Equipment *item, bool equip, bool *success);
+
+enum InventoryGainResult {
+    INVENTORY_GAIN_RESULT_SUCCESS,
+    INVENTORY_GAIN_RESULT_FULL,
+    INVENTORY_GAIN_RESULT_UNAVAILABLE
+};
+
+bool client_gain_inventory_item(struct Client *client, const struct InventoryItem *item, enum InventoryGainResult *success);
+bool client_gain_equipment(struct Client *client, const struct Equipment *item, bool equip, enum InventoryGainResult *success);
 bool client_remove_item(struct Client *client, uint8_t inventory, uint8_t src, int16_t amount, bool *success, struct InventoryItem *item);
 bool client_remove_equip(struct Client *client, bool equipped, uint8_t src, bool *success, struct Equipment *equip);
 bool client_move_item(struct Client *client, uint8_t inventory, uint8_t src, uint8_t dst);

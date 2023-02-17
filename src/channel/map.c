@@ -1143,7 +1143,7 @@ void map_pick_up_all(struct Map *map, struct MapPlayer *player)
             }
         }
     }
-    
+
     for (size_t i = 0; i < player->droppingCount; i++) {
         struct DroppingBatch *batch = player->droppings[i];
         // We need to cache this `count` as `batch` can be invalidated during a call to map_remove_drop()
@@ -1381,7 +1381,7 @@ static bool map_calculate_drop_position(struct Map *map, struct Point *p)
 static bool do_client_auto_pickup(struct Map *map, struct Client *client, struct Drop *drop)
 {
     // TODO: Check if this client is allowed to pick up the drop
-    bool success = false;
+    enum InventoryGainResult result;
     uint32_t id;
     switch (drop->type) {
     case DROP_TYPE_MESO:
@@ -1396,7 +1396,7 @@ static bool do_client_auto_pickup(struct Map *map, struct Client *client, struct
             client_use_item_immediate(client, drop->item.item.itemId);
             map_remove_drop(map, client_get_character(client)->id, drop->oid);
             return true;
-        } else if (!client_gain_inventory_item(client, &drop->item, &success)) {
+        } else if (!client_gain_inventory_item(client, &drop->item, &result)) {
             return false;
         }
 
@@ -1404,14 +1404,14 @@ static bool do_client_auto_pickup(struct Map *map, struct Client *client, struct
     break;
 
     case DROP_TYPE_EQUIP:
-        if (!client_gain_equipment(client, &drop->equip, false, &success))
+        if (!client_gain_equipment(client, &drop->equip, false, &result))
             return false;
 
         id = drop->equip.item.itemId;
     break;
     }
 
-    if (success) {
+    if (result == INVENTORY_GAIN_RESULT_SUCCESS) {
         {
             uint8_t packet[ITEM_GAIN_PACKET_LENGTH];
             item_gain_packet(id, 1, packet);
@@ -1426,7 +1426,7 @@ static bool do_client_auto_pickup(struct Map *map, struct Client *client, struct
 
         map_remove_drop(map, client_get_character(client)->id, drop->oid);
         return true;
-    } else {
+    } else if (result == INVENTORY_GAIN_RESULT_FULL) {
         {
             uint8_t packet[INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH];
             inventory_full_notification_packet(packet);
@@ -1440,7 +1440,23 @@ static bool do_client_auto_pickup(struct Map *map, struct Client *client, struct
         }
 
         return false;
+    } else if (result == INVENTORY_GAIN_RESULT_FULL) {
+        {
+            uint8_t packet[ITEM_UNAVAILABLE_NOTIFICATION_PACKET_LENGTH];
+            item_unavailable_notification_packet(packet);
+            session_write(client_get_session(client), ITEM_UNAVAILABLE_NOTIFICATION_PACKET_LENGTH, packet);
+        }
+
+        {
+            uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
+            size_t len = stat_change_packet(true, 0, NULL, packet);
+            session_write(client_get_session(client), len, packet);
+        }
+
+        return false;
     }
+
+    return false;
 }
 
 static void on_next_drop(struct Room *room, struct TimerHandle *handle)

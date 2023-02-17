@@ -2735,6 +2735,7 @@ static void on_item_start(void *user_data, const XML_Char *name, const XML_Char 
             ITEM_INFOS[ITEM_INFO_COUNT].untradable = false;
             ITEM_INFOS[ITEM_INFO_COUNT].oneOfAKind = false;
             ITEM_INFOS[ITEM_INFO_COUNT].monsterBook = false;
+            ITEM_INFOS[ITEM_INFO_COUNT].quest = false;
             struct ItemParserStackNode *new = malloc(sizeof(struct ItemParserStackNode));
             new->next = ctx->head;
             new->type = ITEM_ITEM_TYPE_ITEM;
@@ -2780,6 +2781,8 @@ static void on_item_start(void *user_data, const XML_Char *name, const XML_Char 
                     ITEM_INFOS[ITEM_INFO_COUNT].oneOfAKind = strtol(value, NULL, 10) > 0;
                 else if (!strcmp(key, "monsterBook"))
                     ITEM_INFOS[ITEM_INFO_COUNT].monsterBook = strtol(value, NULL, 10) > 0;
+                else if (!strcmp(key, "quest"))
+                    ITEM_INFOS[ITEM_INFO_COUNT].quest = strtol(value, NULL, 10) > 0;
             } else if (!strcmp(name, "double")) {
                 const XML_Char *key = NULL;
                 const XML_Char *value = NULL;
@@ -2843,6 +2846,7 @@ static void on_equip_item_start(void *user_data, const XML_Char *name, const XML
         ITEM_INFOS[ITEM_INFO_COUNT].untradable = false;
         ITEM_INFOS[ITEM_INFO_COUNT].oneOfAKind = false;
         ITEM_INFOS[ITEM_INFO_COUNT].monsterBook = false;
+        ITEM_INFOS[ITEM_INFO_COUNT].quest = false;
 
         ctx->head2 = malloc(sizeof(struct EquipItemParserStackNode));
         ctx->head2->next = NULL;
@@ -2885,6 +2889,8 @@ static void on_equip_item_start(void *user_data, const XML_Char *name, const XML
                 else if (!strcmp(key, "only"))
                     ITEM_INFOS[ITEM_INFO_COUNT].oneOfAKind = strtol(value, NULL, 10) > 0;
                 else if (!strcmp(key, "monsterBook"))
+                    ITEM_INFOS[ITEM_INFO_COUNT].monsterBook = strtol(value, NULL, 10) > 0;
+                else if (!strcmp(key, "quest"))
                     ITEM_INFOS[ITEM_INFO_COUNT].monsterBook = strtol(value, NULL, 10) > 0;
             } else if (!strcmp(name, "double")) {
                 const XML_Char *key = NULL;

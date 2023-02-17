@@ -466,8 +466,13 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         SKIP(4);
         READER_END();
 
-        bool success;
-        client_remove_item(client, 2, chr->activeProjectile + 1, 1, &success, NULL);
+        if (skill == 0) {
+            bool success;
+            client_remove_item(client, 2, chr->activeProjectile + 1, 1, &success, NULL);
+        } else {
+            if (!client_apply_skill(client, skill))
+                return (struct OnPacketResult) { .status = -1 };
+        }
 
         {
             uint8_t packet[RANGED_ATTACK_PACKET_MAX_LENGTH];
@@ -888,7 +893,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
                 READ_OR_ERROR(reader_i16, &x);
                 READ_OR_ERROR(reader_i16, &y);
             }
-            uint8_t selection;
+            //uint8_t selection;
             struct ClientResult res = client_end_quest(client, qid, npc, false);
             switch (res.type) {
             case CLIENT_RESULT_TYPE_BAN:
@@ -1094,7 +1099,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             }
         } else {
             // TODO: Check if this client is allowed to pick up the drop
-            bool success = false;
+            enum InventoryGainResult result = false;
             uint32_t id;
             switch (drop->type) {
             case DROP_TYPE_MESO:
@@ -1109,7 +1114,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
                     client_use_item_immediate(client, drop->item.item.itemId);
                     map_remove_drop(room_get_context(session_get_room(session)), chr->id, oid);
                     return (struct OnPacketResult) { .status = 0, .room = -1 };
-                } else if (!client_gain_inventory_item(client, &drop->item, &success)) {
+                } else if (!client_gain_inventory_item(client, &drop->item, &result)) {
                     return (struct OnPacketResult) { .status = -1 };
                 }
 
@@ -1117,14 +1122,14 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             break;
 
             case DROP_TYPE_EQUIP:
-                if (!client_gain_equipment(client, &drop->equip, false, &success))
+                if (!client_gain_equipment(client, &drop->equip, false, &result))
                     return (struct OnPacketResult) { .status = -1 };
 
                 id = drop->equip.item.itemId;
             break;
             }
 
-            if (success) {
+            if (result == INVENTORY_GAIN_RESULT_SUCCESS) {
                 {
                     uint8_t packet[ITEM_GAIN_PACKET_LENGTH];
                     item_gain_packet(id, 1, packet);
@@ -1138,7 +1143,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
                 }
 
                 map_remove_drop(room_get_context(session_get_room(session)), chr->id, oid);
-            } else {
+            } else if (result == INVENTORY_GAIN_RESULT_FULL) {
                 {
                     uint8_t packet[INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH];
                     inventory_full_notification_packet(packet);
@@ -1148,6 +1153,18 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
                 {
                     uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
                     size_t len = modify_items_packet(0, NULL, packet);
+                    session_write(session, len, packet);
+                }
+            } else if (result == INVENTORY_GAIN_RESULT_UNAVAILABLE) {
+                {
+                    uint8_t packet[ITEM_UNAVAILABLE_NOTIFICATION_PACKET_LENGTH];
+                    item_unavailable_notification_packet(packet);
+                    session_write(session, ITEM_UNAVAILABLE_NOTIFICATION_PACKET_LENGTH, packet);
+                }
+
+                {
+                    uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
+                    size_t len = stat_change_packet(true, 0, NULL, packet);
                     session_write(session, len, packet);
                 }
             }

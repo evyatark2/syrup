@@ -240,6 +240,7 @@ struct ItemInfo {
     bool untradable;
     bool oneOfAKind;
     bool monsterBook;
+    bool quest;
 };
 
 struct EquipInfo {
