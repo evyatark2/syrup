@@ -412,6 +412,11 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         SKIP(4);
         READER_END();
 
+        if (skill != 0) {
+            if (!client_apply_skill(client, skill))
+                return (struct OnPacketResult) { .status = -1 };
+        }
+
         {
             uint8_t packet[CLOSE_RANGE_ATTACK_PACKET_MAX_LENGTH];
             size_t len = close_range_attack_packet(chr->id, skill, 0, monster_count, hit_count, oids, damage, display, direction, stance, speed, packet);

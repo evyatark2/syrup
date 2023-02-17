@@ -1959,15 +1959,19 @@ bool client_remove_item(struct Client *client, uint8_t inv, uint8_t src, int16_t
 
     *item = chr->inventory[inv].items[src].item;
     item->quantity = amount;
-    if (chr->inventory[inv].items[src].item.quantity == amount) {
-        chr->inventory[inv].items[src].isEmpty = true;
+    if (chr->inventory[inv].items[src].item.item.itemId / 10000 != 207 && chr->inventory[inv].items[src].item.item.itemId / 10000 != 233) {
+        if (chr->inventory[inv].items[src].item.quantity == amount) {
+            chr->inventory[inv].items[src].isEmpty = true;
+        } else {
+            item->item.id = 0;
+            chr->inventory[inv].items[src].item.quantity -= amount;
+        }
     } else {
-        item->item.id = 0;
         chr->inventory[inv].items[src].item.quantity -= amount;
     }
 
     // Update the active projectile if we removed the currently active one
-    if (inv == 0 && chr->activeProjectile == src && chr->inventory[0].items[src].isEmpty) {
+    if (inv == 0 && chr->activeProjectile == src && (chr->inventory[0].items[src].isEmpty || chr->inventory[0].items[src].item.quantity == 0)) {
         uint32_t wid = chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].equip.item.itemId;
         if (wid / 10000 == 145) {
             // Bow
@@ -2330,6 +2334,24 @@ bool client_move_item(struct Client *client, uint8_t inventory, uint8_t src, uin
                             }
                         }
                     }
+                }
+            } else {
+                if (chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].equip.item.itemId / 10000 == 145) {
+                    // Bow
+                    if (chr->inventory[0].items[dst].item.item.itemId / 1000 == 2060 && dst < chr->activeProjectile)
+                        chr->activeProjectile = dst;
+                } else if (chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].equip.item.itemId / 10000 == 146) {
+                    // Crossbow
+                    if (chr->inventory[0].items[dst].item.item.itemId / 1000 == 2061 && dst < chr->activeProjectile)
+                        chr->activeProjectile = dst;
+                } else if (chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].equip.item.itemId / 10000 == 147) {
+                    // Claw
+                    if (chr->inventory[0].items[dst].item.item.itemId / 10000 == 207 && chr->inventory[0].items[dst].item.quantity > 0)
+                        chr->activeProjectile = dst;
+                } else if (chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].equip.item.itemId / 10000 == 149) {
+                    // Gun
+                    if (chr->inventory[0].items[dst].item.item.itemId / 1000 == 2330 && chr->inventory[0].items[dst].item.quantity > 0)
+                        chr->activeProjectile = dst;
                 }
             }
 
@@ -3456,6 +3478,53 @@ void client_toggle_auto_pickup(struct Client *client)
 bool client_is_auto_pickup_enabled(struct Client *client)
 {
     return client->autoPickup;
+}
+
+bool client_apply_skill(struct Client *client, uint32_t skill_id)
+{
+    struct Character *chr = &client->character;
+    struct Skill *skill = hash_set_u32_get(chr->skills, skill_id);
+    if (skill == NULL)
+        return false; // Packet-edit
+
+    const struct SkillInfo *info = wz_get_skill_info(skill_id);
+    if (info == NULL)
+        return false; // Packet-edit
+
+    if (info->levels[skill->level].bulletCount > 0) {
+        if (chr->activeProjectile == (uint8_t)-1)
+            return true;
+
+        uint8_t slot;
+        for (slot = chr->activeProjectile; slot < chr->inventory[0].slotCount; slot++) {
+            bool success;
+            if (!client_remove_item(client, 2, slot + 1, info->levels[skill->level].bulletCount, &success, NULL))
+                return false;
+
+            if (success)
+                break;
+
+            // 2060 - Arrows for Bow; 2061 - Arrows for Crossbow; 2070 - Throwing Stars; 2330 - Bullets
+            uint16_t family = chr->inventory[0].items[chr->activeProjectile].item.item.itemId / 1000;
+            uint8_t slot2;
+            for (slot2 = slot + 1; slot2 < chr->inventory[0].slotCount; slot2++) {
+                if (!chr->inventory[0].items[slot2].isEmpty && chr->inventory[0].items[slot2].item.item.itemId / 1000 == family) {
+                    slot = slot2 - 1; // slot gets increased
+                    break;
+                }
+            }
+
+            if (slot2 == chr->inventory[0].slotCount)
+                return true;
+        }
+
+        if (slot < chr->inventory[0].slotCount)
+            return true;
+    }
+
+    client_adjust_mp_now(client, -info->levels[skill->level].mpCon);
+
+    return true;
 }
 
 static bool check_quest_requirements(struct Character *chr, size_t req_count, const struct QuestRequirement *reqs, uint32_t npc)

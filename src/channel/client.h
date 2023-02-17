@@ -133,6 +133,7 @@ struct ClientResult client_portal_script(struct Client *client, const char *port
 void client_enable_actions(struct Client *client);
 void client_toggle_auto_pickup(struct Client *client);
 bool client_is_auto_pickup_enabled(struct Client *client);
+bool client_apply_skill(struct Client *client, uint32_t skill_id);
 
 #endif
 

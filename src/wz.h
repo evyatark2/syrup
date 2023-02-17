@@ -328,6 +328,26 @@ struct ReactorInfo {
     char action[SCRIPT_NAME_MAX_LENGTH];
 };
 
+struct SkillRequirementInfo {
+    uint32_t id;
+    int16_t level;
+};
+
+struct SkillLevelInfo {
+    int16_t mpCon;
+    int16_t time;
+    int16_t damage;
+    int16_t bulletCount;
+};
+
+struct SkillInfo {
+    uint32_t id;
+    size_t levelCount;
+    struct SkillLevelInfo *levels;
+    size_t reqCount; // Maybe each skill has only 1 pre-requisite?
+    struct SkillRequirementInfo *reqs;
+};
+
 int wz_init(void);
 int wz_init_equipment(void);
 void wz_terminate(void);
@@ -346,6 +366,7 @@ const struct MobInfo *wz_get_monster_stats(uint32_t id);
 const struct QuestInfo *wz_get_quest_info(uint16_t id);
 const struct ItemInfo *wz_get_item_info(uint32_t id);
 const struct ReactorInfo *wz_get_reactor_info(uint32_t id);
+const struct SkillInfo *wz_get_skill_info(uint32_t id);
 
 #endif
 

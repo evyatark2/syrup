@@ -72,6 +72,10 @@ cmph_t *REACTOR_INFO_MPH;
 static size_t REACTOR_INFO_COUNT;
 static struct ReactorInfo *REACTOR_INFOS;
 
+cmph_t *SKILL_INFO_MPH;
+static size_t SKILL_INFO_COUNT;
+static struct SkillInfo *SKILL_INFOS;
+
 enum MapItemType {
     MAP_ITEM_TYPE_TOP_LEVEL,
     MAP_ITEM_TYPE_INFO,
@@ -265,6 +269,27 @@ struct ReactorParserContext {
     bool isLink;
 };
 
+enum SkillItemType {
+    SKILL_ITEM_TYPE_TOP_LEVEL,
+    SKILL_ITEM_TYPE_SECOND_LEVEL,
+    SKILL_ITEM_TYPE_SKILL,
+    SKILL_ITEM_TYPE_LEVELS,
+    SKILL_ITEM_TYPE_LEVEL,
+    SKILL_ITEM_TYPE_REQ,
+};
+
+struct SkillParserStackNode {
+    struct SkillParserStackNode *next;
+    enum SkillItemType type;
+};
+
+struct SkillParserContext {
+    struct SkillParserStackNode *head;
+    size_t skillCapacity;
+    size_t capacity;
+    uint32_t skip;
+};
+
 static void on_map_start(void *user_data, const XML_Char *name, const XML_Char **attrs);
 static void on_map_end(void *user_data, const XML_Char *name);
 static void on_mob_start(void *user_data, const XML_Char *name, const XML_Char **attrs);
@@ -285,6 +310,8 @@ static void on_reactor_start(void *user_data, const XML_Char *name, const XML_Ch
 static void on_reactor_end(void *user_data, const XML_Char *name);
 static void on_reactor_second_pass_start(void *user_data, const XML_Char *name, const XML_Char **attrs);
 static void on_reactor_second_pass_end(void *user_data, const XML_Char *name);
+static void on_skill_start(void *user_data, const XML_Char *name, const XML_Char **attrs);
+static void on_skill_end(void *user_data, const XML_Char *name);
 
 int wz_init(void)
 {
@@ -316,6 +343,55 @@ int wz_init(void)
     WRITER = true;
     if (WRITER) {
         XML_Parser parser = XML_ParserCreate(NULL);
+
+        {
+            struct SkillParserContext ctx = {
+                .head = NULL,
+                .skillCapacity = 1,
+            };
+            DIR *skill_dir = opendir("wz/Skill.wz");
+
+            SKILL_INFOS = malloc(sizeof(struct SkillInfo));
+
+            struct dirent *entry;
+            while ((entry = readdir(skill_dir)) != NULL) {
+                if (entry->d_name[0] == '.' || entry->d_type != DT_REG)
+                    continue;
+                int fd = openat(dirfd(skill_dir), entry->d_name, O_RDONLY);
+                off_t len = lseek(fd, 0, SEEK_END);
+                lseek(fd, 0, SEEK_SET);
+                char *data = malloc(len);
+                read(fd, data, len);
+                close(fd);
+
+                XML_SetElementHandler(parser, on_skill_start, on_skill_end);
+                XML_SetUserData(parser, &ctx);
+                XML_Parse(parser, data, len, true);
+                free(data);
+                XML_ParserReset(parser, NULL);
+            }
+            closedir(skill_dir);
+
+            cmph_io_adapter_t *adapter = cmph_io_struct_vector_adapter(SKILL_INFOS, sizeof(struct SkillInfo), offsetof(struct SkillInfo, id), sizeof(uint32_t), SKILL_INFO_COUNT);
+            cmph_config_t *config = cmph_config_new(adapter);
+            cmph_config_set_algo(config, CMPH_BDZ);
+            SKILL_INFO_MPH = cmph_new(config);
+            cmph_config_destroy(config);
+            cmph_io_struct_vector_adapter_destroy(adapter);
+            size_t i = 0;
+            while (i < SKILL_INFO_COUNT) {
+                uint32_t j = cmph_search(SKILL_INFO_MPH, (void *)&SKILL_INFOS[i].id, sizeof(uint32_t));
+                if (i != j) {
+                    struct SkillInfo temp = SKILL_INFOS[j];
+                    SKILL_INFOS[j] = SKILL_INFOS[i];
+                    SKILL_INFOS[i] = temp;
+                } else {
+                    i++;
+                }
+            }
+
+            fprintf(stderr, "Loaded skills\n");
+        }
 
         {
             struct ReactorParserContext ctx = {
@@ -1231,6 +1307,14 @@ const struct ItemInfo *wz_get_item_info(uint32_t id)
 const struct ReactorInfo *wz_get_reactor_info(uint32_t id)
 {
     struct ReactorInfo *info = &REACTOR_INFOS[cmph_search(REACTOR_INFO_MPH, (void *)&id, sizeof(uint32_t))];
+    if (info->id != id)
+        return NULL;
+    return info;
+}
+
+const struct SkillInfo *wz_get_skill_info(uint32_t id)
+{
+    struct SkillInfo *info = &SKILL_INFOS[cmph_search(SKILL_INFO_MPH, (void *)&id, sizeof(uint32_t))];
     if (info->id != id)
         return NULL;
     return info;
@@ -3561,6 +3645,140 @@ static void on_reactor_second_pass_end(void *user_data, const XML_Char *name)
     free(ctx->head);
     ctx->head = next;
 
+}
+
+static void on_skill_start(void *user_data, const XML_Char *name, const XML_Char **attrs)
+{
+    struct SkillParserContext *ctx = user_data;
+    if (ctx->skip > 0) {
+        ctx->skip++;
+        return;
+    }
+
+    if (ctx->head == NULL) {
+        ctx->head = malloc(sizeof(struct SkillParserStackNode));
+        ctx->head->next = NULL;
+        ctx->head->type = SKILL_ITEM_TYPE_TOP_LEVEL;
+        if (strcmp(name, "imgdir"))
+            assert(0); // ERROR
+    } else {
+        switch (ctx->head->type) {
+        case SKILL_ITEM_TYPE_TOP_LEVEL:
+            if (!strcmp(name, "imgdir") && !strcmp(attrs[1], "skill")) {
+                struct SkillParserStackNode *new = malloc(sizeof(struct SkillParserStackNode));
+                new->next = ctx->head;
+                new->type = SKILL_ITEM_TYPE_SECOND_LEVEL;
+                ctx->head = new;
+            } else {
+                ctx->skip++;
+            }
+        break;
+
+        case SKILL_ITEM_TYPE_SECOND_LEVEL:
+            if (strcmp(name, "imgdir"))
+                assert(0); // ERROR
+
+            if (SKILL_INFO_COUNT == ctx->skillCapacity) {
+                SKILL_INFOS = realloc(SKILL_INFOS, (ctx->skillCapacity * 2) * sizeof(struct SkillInfo));
+                ctx->skillCapacity *= 2;
+            }
+
+            SKILL_INFOS[SKILL_INFO_COUNT].id = strtol(attrs[1], NULL, 10);
+            SKILL_INFOS[SKILL_INFO_COUNT].levelCount = 0;
+            SKILL_INFOS[SKILL_INFO_COUNT].reqCount = 0;
+            struct SkillParserStackNode *new = malloc(sizeof(struct SkillParserStackNode));
+            new->next = ctx->head;
+            new->type = SKILL_ITEM_TYPE_SKILL;
+            ctx->head = new;
+        break;
+
+        case SKILL_ITEM_TYPE_SKILL:
+            if (!strcmp(name, "imgdir")) {
+                if (!strcmp(attrs[1], "level")) {
+                    struct SkillParserStackNode *new = malloc(sizeof(struct SkillParserStackNode));
+                    new->next = ctx->head;
+                    new->type = SKILL_ITEM_TYPE_LEVELS;
+                    ctx->head = new;
+
+                    ctx->capacity = 1;
+                    SKILL_INFOS[SKILL_INFO_COUNT].levels = malloc(sizeof(struct SkillLevelInfo));
+                } else if (!strcmp(attrs[1], "req")) {
+                    ctx->skip++;
+                    //struct SkillParserStackNode *new = malloc(sizeof(struct SkillParserStackNode));
+                    //new->next = ctx->head;
+                    //new->type = SKILL_ITEM_TYPE_REQ;
+                    //ctx->head = new;
+                } else {
+                    ctx->skip++;
+                }
+            } else {
+                ctx->skip++;
+            }
+        break;
+
+        case SKILL_ITEM_TYPE_LEVELS: {
+            if (SKILL_INFOS[SKILL_INFO_COUNT].levelCount == ctx->capacity) {
+                SKILL_INFOS[SKILL_INFO_COUNT].levels = realloc(SKILL_INFOS[SKILL_INFO_COUNT].levels,
+                        (ctx->capacity * 2) * sizeof(struct SkillLevelInfo));
+                ctx->capacity *= 2;
+            }
+
+            SKILL_INFOS[SKILL_INFO_COUNT].levels[SKILL_INFOS[SKILL_INFO_COUNT].levelCount].mpCon = 0;
+            SKILL_INFOS[SKILL_INFO_COUNT].levels[SKILL_INFOS[SKILL_INFO_COUNT].levelCount].time = 0;
+            SKILL_INFOS[SKILL_INFO_COUNT].levels[SKILL_INFOS[SKILL_INFO_COUNT].levelCount].damage = 0;
+            SKILL_INFOS[SKILL_INFO_COUNT].levels[SKILL_INFOS[SKILL_INFO_COUNT].levelCount].bulletCount = 0;
+
+            struct SkillParserStackNode *new = malloc(sizeof(struct SkillParserStackNode));
+            new->next = ctx->head;
+            new->type = SKILL_ITEM_TYPE_LEVEL;
+            ctx->head = new;
+        }
+        break;
+
+
+        case SKILL_ITEM_TYPE_LEVEL:
+            ctx->skip++;
+            if (!strcmp(name, "int")) {
+                const XML_Char *key = NULL;
+                const XML_Char *value = NULL;
+                for (size_t i = 0; attrs[i] != NULL; i += 2) {
+                    if (!strcmp(attrs[i], "name"))
+                        key = attrs[i+1];
+                    else if (!strcmp(attrs[i], "value"))
+                        value = attrs[i+1];
+                }
+
+                assert(key != NULL && value != NULL);
+
+                if (!strcmp(key, "mpCon"))
+                    SKILL_INFOS[SKILL_INFO_COUNT].levels[SKILL_INFOS[SKILL_INFO_COUNT].levelCount].mpCon = strtol(value, NULL, 10);
+                else if (!strcmp(key, "time"))
+                    SKILL_INFOS[SKILL_INFO_COUNT].levels[SKILL_INFOS[SKILL_INFO_COUNT].levelCount].time = strtol(value, NULL, 10);
+                else if (!strcmp(key, "damage"))
+                    SKILL_INFOS[SKILL_INFO_COUNT].levels[SKILL_INFOS[SKILL_INFO_COUNT].levelCount].damage = strtol(value, NULL, 10);
+                else if (!strcmp(key, "bulletCount"))
+                    SKILL_INFOS[SKILL_INFO_COUNT].levels[SKILL_INFOS[SKILL_INFO_COUNT].levelCount].bulletCount = strtol(value, NULL, 10);
+            }
+        }
+    }
+}
+
+static void on_skill_end(void *user_data, const XML_Char *name)
+{
+    struct SkillParserContext *ctx = user_data;
+    if (ctx->skip > 0) {
+        ctx->skip--;
+        return;
+    }
+
+    if (ctx->head->type == SKILL_ITEM_TYPE_LEVEL)
+        SKILL_INFOS[SKILL_INFO_COUNT].levelCount++;
+    else if (ctx->head->type == SKILL_ITEM_TYPE_SKILL)
+        SKILL_INFO_COUNT++;
+
+    struct SkillParserStackNode *next = ctx->head->next;
+    free(ctx->head);
+    ctx->head = next;
 }
 
 static struct Rectangle foothold_mbr(struct Foothold *fh)
