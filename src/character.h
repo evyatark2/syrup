@@ -183,9 +183,9 @@ struct Character {
     struct HashSetU32 *monsterBook;
 };
 
-struct CharacterStats character_to_character_stats(struct Character *chr);
+struct CharacterStats character_to_character_stats(const struct Character *chr);
 
-struct CharacterAppearance character_to_character_appearance(struct Character *chr);
+struct CharacterAppearance character_to_character_appearance(const struct Character *chr);
 
 void character_set_job(struct Character *chr, uint16_t job);
 void character_set_max_hp(struct Character *chr, int16_t hp);

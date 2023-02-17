@@ -16,7 +16,7 @@ size_t quest_get_progress_string(struct Quest *quest, char *out)
     return quest->progressCount * 3;
 }
 
-struct CharacterStats character_to_character_stats(struct Character *chr)
+struct CharacterStats character_to_character_stats(const struct Character *chr)
 {
     struct CharacterStats stats;
     stats.info.appearance = character_to_character_appearance(chr);
@@ -41,7 +41,7 @@ struct CharacterStats character_to_character_stats(struct Character *chr)
     return stats;
 }
 
-struct CharacterAppearance character_to_character_appearance(struct Character *chr)
+struct CharacterAppearance character_to_character_appearance(const struct Character *chr)
 {
     struct CharacterAppearance appearance;
     appearance.nameLength = chr->nameLength;
