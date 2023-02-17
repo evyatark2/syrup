@@ -3987,7 +3987,7 @@ static void insert_foothold(struct FootholdRTree *tree, struct Foothold *fh)
                         }
                     }
 
-                    for (uint8_t l = k + 1; l < 4; l++) {
+                    for (uint8_t l = k + 1; ; l++) {
                         if (l != i && l != j) {
                             r4 = l == 3 ? &fh_rect : &child_rects[l];
                             break;
@@ -4120,7 +4120,7 @@ static void insert_foothold(struct FootholdRTree *tree, struct Foothold *fh)
                                 }
                             }
 
-                            for (uint8_t l = k + 1; l < 4; l++) {
+                            for (uint8_t l = k + 1; ; l++) {
                                 if (l != i && l != j) {
                                     r4 = l == 3 ? &new->bound : &node->children[l]->bound;
                                     break;
