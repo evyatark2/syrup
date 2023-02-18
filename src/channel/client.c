@@ -3244,59 +3244,59 @@ bool client_is_in_shop(struct Client *client)
     return client->shop != -1;
 }
 
-void client_send_ok(struct Client *client, size_t msg_len, const char *msg)
+void client_send_ok(struct Client *client, size_t msg_len, const char *msg, uint8_t speaker)
 {
     client->scriptState = SCRIPT_STATE_OK;
     uint8_t packet[NPC_DIALOGUE_PACKET_MAX_LENGTH];
-    size_t len = npc_dialogue_packet(client->npc, NPC_DIALOGUE_TYPE_OK, msg_len, msg, packet);
+    size_t len = npc_dialogue_packet(client->npc, NPC_DIALOGUE_TYPE_OK, msg_len, msg, speaker, packet);
     session_write(client->session, len, packet);
 }
 
-void client_send_yes_no(struct Client *client, size_t msg_len, const char *msg)
+void client_send_yes_no(struct Client *client, size_t msg_len, const char *msg, uint8_t speaker)
 {
     client->scriptState = SCRIPT_STATE_YES_NO;
     uint8_t packet[NPC_DIALOGUE_PACKET_MAX_LENGTH];
-    size_t len = npc_dialogue_packet(client->npc, NPC_DIALOGUE_TYPE_YES_NO, msg_len, msg, packet);
+    size_t len = npc_dialogue_packet(client->npc, NPC_DIALOGUE_TYPE_YES_NO, msg_len, msg, speaker, packet);
     session_write(client->session, len, packet);
 }
 
-void client_send_simple(struct Client *client, size_t msg_len, const char *msg)
+void client_send_simple(struct Client *client, size_t msg_len, const char *msg, uint8_t speaker)
 {
     client->scriptState = SCRIPT_STATE_SIMPLE;
     uint8_t packet[NPC_DIALOGUE_PACKET_MAX_LENGTH];
-    size_t len = npc_dialogue_packet(client->npc, NPC_DIALOGUE_TYPE_SIMPLE, msg_len, msg, packet);
+    size_t len = npc_dialogue_packet(client->npc, NPC_DIALOGUE_TYPE_SIMPLE, msg_len, msg, speaker, packet);
     session_write(client->session, len, packet);
 }
 
-void client_send_next(struct Client *client, size_t msg_len, const char *msg)
+void client_send_next(struct Client *client, size_t msg_len, const char *msg, uint8_t speaker)
 {
     client->scriptState = SCRIPT_STATE_NEXT;
     uint8_t packet[NPC_DIALOGUE_PACKET_MAX_LENGTH];
-    size_t len = npc_dialogue_packet(client->npc, NPC_DIALOGUE_TYPE_NEXT, msg_len, msg, packet);
+    size_t len = npc_dialogue_packet(client->npc, NPC_DIALOGUE_TYPE_NEXT, msg_len, msg, speaker, packet);
     session_write(client->session, len, packet);
 }
 
-void client_send_prev_next(struct Client *client, size_t msg_len, const char *msg)
+void client_send_prev_next(struct Client *client, size_t msg_len, const char *msg, uint8_t speaker)
 {
     client->scriptState = SCRIPT_STATE_PREV_NEXT;
     uint8_t packet[NPC_DIALOGUE_PACKET_MAX_LENGTH];
-    size_t len = npc_dialogue_packet(client->npc, NPC_DIALOGUE_TYPE_PREV_NEXT, msg_len, msg, packet);
+    size_t len = npc_dialogue_packet(client->npc, NPC_DIALOGUE_TYPE_PREV_NEXT, msg_len, msg, speaker, packet);
     session_write(client->session, len, packet);
 }
 
-void client_send_prev(struct Client *client, size_t msg_len, const char *msg)
+void client_send_prev(struct Client *client, size_t msg_len, const char *msg, uint8_t speaker)
 {
     client->scriptState = SCRIPT_STATE_PREV;
     uint8_t packet[NPC_DIALOGUE_PACKET_MAX_LENGTH];
-    size_t len = npc_dialogue_packet(client->npc, NPC_DIALOGUE_TYPE_PREV, msg_len, msg, packet);
+    size_t len = npc_dialogue_packet(client->npc, NPC_DIALOGUE_TYPE_PREV, msg_len, msg, speaker, packet);
     session_write(client->session, len, packet);
 }
 
-void client_send_accept_decline(struct Client *client, size_t msg_len, const char *msg)
+void client_send_accept_decline(struct Client *client, size_t msg_len, const char *msg, uint8_t speaker)
 {
     client->scriptState = SCRIPT_STATE_ACCEPT_DECILNE;
     uint8_t packet[NPC_DIALOGUE_PACKET_MAX_LENGTH];
-    size_t len = npc_dialogue_packet(client->npc, NPC_DIALOGUE_TYPE_ACCEPT_DECILNE, msg_len, msg, packet);
+    size_t len = npc_dialogue_packet(client->npc, NPC_DIALOGUE_TYPE_ACCEPT_DECILNE, msg_len, msg, speaker, packet);
     session_write(client->session, len, packet);
 }
 

@@ -1348,7 +1348,7 @@ size_t modify_items_packet(uint8_t mod_count, struct InventoryModify *mods, uint
     return writer.pos;
 }
 
-size_t npc_dialogue_packet(uint32_t npc, enum NpcDialogueType type, uint16_t message_len, const char *message, uint8_t *packet)
+size_t npc_dialogue_packet(uint32_t npc, enum NpcDialogueType type, uint16_t message_len, const char *message, uint8_t speaker, uint8_t *packet)
 {
     struct Writer writer;
     writer_init(&writer, NPC_DIALOGUE_PACKET_MAX_LENGTH, packet);
@@ -1362,7 +1362,7 @@ size_t npc_dialogue_packet(uint32_t npc, enum NpcDialogueType type, uint16_t mes
     else
         writer_u8(&writer, type);
 
-    writer_u8(&writer, 0); // Speaker
+    writer_u8(&writer, speaker); // Speaker
     writer_sized_string(&writer, message_len, message);
     switch (type) {
     case NPC_DIALOGUE_TYPE_OK:
