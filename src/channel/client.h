@@ -104,6 +104,7 @@ bool client_unequip(struct Client *client, enum EquipSlot src, uint8_t dst);
 bool client_use_item(struct Client *client, uint8_t slot, uint32_t id);
 bool client_use_item_immediate(struct Client *client, uint32_t id);
 bool client_is_quest_started(struct Client *client, uint16_t qid);
+bool client_is_quest_complete(struct Client *client, uint16_t qid);
 struct ClientResult client_npc_talk(struct Client *client, uint32_t npc);
 struct ClientResult client_start_quest(struct Client *client, uint16_t qid, uint32_t npc, bool scripted);
 int client_set_quest_info(struct Client *client, uint16_t info, const char *value);

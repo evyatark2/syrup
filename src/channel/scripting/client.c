@@ -24,6 +24,7 @@ static int l_client_open_shop(lua_State *L);
 static int l_client_job(lua_State *L);
 static int l_client_has_item(lua_State *L);
 static int l_client_is_quest_started(lua_State *L);
+static int l_client_is_quest_complete(lua_State *L);
 static int l_client_level(lua_State *L);
 static int l_client_meso(lua_State *L);
 static int l_client_send_accept_decline(lua_State *L);
@@ -56,6 +57,7 @@ static const struct luaL_Reg clientlib[] = {
     { "hasItem", l_client_has_item },
     { "hp", l_client_hp },
     { "isQuestStarted", l_client_is_quest_started },
+    { "isQuestComplete", l_client_is_quest_started },
     { "job", l_client_job },
     { "level", l_client_level },
     { "maxHp", l_client_max_hp },
@@ -280,6 +282,14 @@ static int l_client_is_quest_started(lua_State *L)
     struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
     uint16_t qid = luaL_checkinteger(L, 2);
     lua_pushboolean(L, client_is_quest_started(client, qid));
+    return 1;
+}
+
+static int l_client_is_quest_complete(lua_State *L)
+{
+    struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
+    uint16_t qid = luaL_checkinteger(L, 2);
+    lua_pushboolean(L, client_is_quest_complete(client, qid));
     return 1;
 }
 

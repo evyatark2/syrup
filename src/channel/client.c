@@ -2786,6 +2786,11 @@ bool client_is_quest_started(struct Client *client, uint16_t qid)
     return hash_set_u16_get(client->character.quests, qid) != NULL;
 }
 
+bool client_is_quest_complete(struct Client *client, uint16_t qid)
+{
+    return hash_set_u16_get(client->character.completedQuests, qid) != NULL;
+}
+
 struct ClientResult client_npc_talk(struct Client *client, uint32_t npc)
 {
     if (client->script != NULL)
