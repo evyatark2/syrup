@@ -158,7 +158,8 @@ void client_login_start(struct Client *client, uint32_t id)
 void client_logout_start(struct Client *client)
 {
     script_manager_free(client->script);
-    map_leave(room_get_context(session_get_room(client->session)), client->map.player);
+    if (client->map.player != NULL)
+        map_leave(room_get_context(session_get_room(client->session)), client->map.player);
     client->handlerType = PACKET_TYPE_LOGOUT;
     client->databaseState = 0;
 }
