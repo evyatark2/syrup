@@ -91,6 +91,12 @@ struct DatabaseMonsterBookEntry {
     int8_t quantity;
 };
 
+struct DatabaseKeyMapEntry {
+    uint32_t key;
+    uint8_t type;
+    uint32_t action;
+};
+
 struct RequestParams {
     enum DatabaseRequestType type;
     union {
@@ -198,6 +204,8 @@ struct RequestParams {
             struct DatabaseSkill *skills;
             size_t monsterBookEntryCount;
             struct DatabaseMonsterBookEntry *monsterBook;
+            size_t keyMapEntryCount;
+            struct DatabaseKeyMapEntry *keyMap;
         } updateCharacter;
     };
 };
@@ -384,6 +392,8 @@ union DatabaseResult {
         struct DatabaseSkill *skills;
         size_t monsterBookEntryCount;
         struct DatabaseMonsterBookEntry *monsterBook;
+        size_t keyMapEntryCount;
+        struct DatabaseKeyMapEntry *keyMap;
     } getCharacter;
     struct {
         size_t count;

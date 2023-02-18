@@ -14,6 +14,8 @@
 #include <errmsg.h>
 #include <mysql.h>
 
+#include "constants.h"
+
 struct LockQueueNode {
     struct LockQueueNode *next;
     int value;
@@ -76,6 +78,11 @@ struct DatabaseRequest {
                 struct {
                     uint32_t cardId;
                     int8_t quantity;
+                };
+                struct {
+                    uint32_t key;
+                    uint8_t type;
+                    uint32_t action;
                 };
             };
         } getCharacter;
@@ -1002,6 +1009,25 @@ static int do_try_create_character(struct DatabaseRequest *req, int status)
 
     INPUT_BINDER_FINALIZE(req->stmt);
     DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
+
+    DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
+
+    char query[49];
+    int len = sprintf(query,
+            "INSERT INTO Keymaps VALUES (%" PRIu32 ", ?, ?, ?)",
+            req->res.tryCreateCharacter.id);
+    DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
+
+    INPUT_BINDER_INIT(3);
+    INPUT_BINDER_u32(DEFAULT_KEY);
+    INPUT_BINDER_u8(DEFAULT_TYPE);
+    INPUT_BINDER_u32(DEFAULT_ACTION);
+    INPUT_BINDER_FINALIZE(req->stmt);
+
+    mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { DEFAULT_KEY_COUNT });
+
+    DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
+
     END_ASYNC()
 
     return 0;
@@ -1387,6 +1413,43 @@ static int do_get_character(struct DatabaseRequest *req, int status)
         req->res.getCharacter.monsterBook[req->res.getCharacter.monsterBookEntryCount].quantity =
             req->temp.getCharacter.quantity;
         req->res.getCharacter.monsterBookEntryCount++;
+
+        DO_ASYNC(ret, ret == 1, mysql_stmt_fetch, req, status);
+    }
+
+    DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
+
+    query = "SELECT `key`, type, action FROM Keymaps WHERE character_id = ?";
+    DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
+
+    INPUT_BINDER_INIT(1);
+    INPUT_BINDER_u32(&req->params.getCharacter.id);
+    INPUT_BINDER_FINALIZE(req->stmt);
+
+    OUTPUT_BINDER_INIT(3);
+    OUTPUT_BINDER_u32(&req->temp.getCharacter.key);
+    OUTPUT_BINDER_u8(&req->temp.getCharacter.type);
+    OUTPUT_BINDER_u32(&req->temp.getCharacter.action);
+    OUTPUT_BINDER_FINALIZE(req->stmt);
+
+    DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
+
+    DO_ASYNC(ret, ret != 0, mysql_stmt_store_result, req, status);
+
+    req->res.getCharacter.keyMap = malloc(mysql_stmt_num_rows(req->stmt) * sizeof(struct DatabaseKeyMapEntry));
+    if (req->res.getCharacter.keyMap == NULL)
+        return -1;
+
+    DO_ASYNC(ret, ret == 1, mysql_stmt_fetch, req, status);
+    req->res.getCharacter.keyMapEntryCount = 0;
+    while (ret != MYSQL_NO_DATA) {
+        req->res.getCharacter.keyMap[req->res.getCharacter.keyMapEntryCount].key =
+            req->temp.getCharacter.key;
+        req->res.getCharacter.keyMap[req->res.getCharacter.keyMapEntryCount].type =
+            req->temp.getCharacter.type;
+        req->res.getCharacter.keyMap[req->res.getCharacter.keyMapEntryCount].action =
+            req->temp.getCharacter.action;
+        req->res.getCharacter.keyMapEntryCount++;
 
         DO_ASYNC(ret, ret == 1, mysql_stmt_fetch, req, status);
     }
@@ -2161,6 +2224,35 @@ static int do_update_character(struct DatabaseRequest *req, int status)
 
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { sizeof(struct DatabaseMonsterBookEntry) });
         mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { req->params.updateCharacter.monsterBookEntryCount });
+
+        DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
+    }
+
+    query = "DELETE FROM Keymaps WHERE character_id = ?";
+    DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
+    INPUT_BINDER_INIT(1);
+    INPUT_BINDER_u32(&req->params.updateCharacter.id);
+    INPUT_BINDER_FINALIZE(req->stmt);
+
+    DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
+
+    DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
+
+    if (req->params.updateCharacter.keyMapEntryCount > 0) {
+        char query[86];
+        int len = sprintf(query,
+                "INSERT INTO Keymaps VALUES (%" PRIu32 ", ?, ?, ?)",
+                req->params.updateCharacter.id);
+        DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, len);
+
+        INPUT_BINDER_INIT(3);
+        INPUT_BINDER_u32(&req->params.updateCharacter.keyMap->key);
+        INPUT_BINDER_u8(&req->params.updateCharacter.keyMap->type);
+        INPUT_BINDER_u32(&req->params.updateCharacter.keyMap->action);
+        INPUT_BINDER_FINALIZE(req->stmt);
+
+        mysql_stmt_attr_set(req->stmt, STMT_ATTR_ROW_SIZE, (size_t[]) { sizeof(struct DatabaseKeyMapEntry) });
+        mysql_stmt_attr_set(req->stmt, STMT_ATTR_ARRAY_SIZE, (unsigned int[]) { req->params.updateCharacter.keyMapEntryCount });
 
         DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
     }

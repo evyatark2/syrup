@@ -963,6 +963,46 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
     }
     break;
 
+    case 0x0087: {
+        if (client_get_map(client)->player == NULL)
+            return (struct OnPacketResult) { .status = 0, .room = -1 };
+
+        uint32_t mode;
+        READER_BEGIN(size, packet);
+        READ_OR_ERROR(reader_u32, &mode);
+        if (mode == 0) {
+            uint32_t changeCount;
+            READ_OR_ERROR(reader_u32, &changeCount);
+            for (size_t i = 0; i < changeCount; i++) {
+                uint32_t key;
+                uint8_t type;
+                uint32_t action;
+                READ_OR_ERROR(reader_u32, &key);
+                READ_OR_ERROR(reader_u8, &type);
+                READ_OR_ERROR(reader_u32, &action);
+                if (type > 0) {
+                    if (type == 1) {
+                        if (!client_add_skill_key(client, key, action))
+                            return (struct OnPacketResult) { .status = 0, .room = -1 };
+                    } else {
+                        if (!client_add_key(client, key, type, action))
+                            return (struct OnPacketResult) { .status = 0, .room = -1 };
+                    }
+                } else {
+                    if (!client_remove_key(client, key, action))
+                        return (struct OnPacketResult) { .status = 0, .room = -1 };
+                }
+            }
+        } else if (mode == 1) { // Auto-HP
+        } else if (mode == 2) { // Auto-MP
+        } else {
+            // Illegal mode
+            return (struct OnPacketResult) { .status = 0, .room = -1 };
+        }
+        READER_END();
+    }
+    break;
+
     case 0x00B7: {
     }
     break;
@@ -1266,8 +1306,14 @@ static struct OnPacketResult on_unassigned_client_packet(struct Session *session
     client_login_start(client, id);
     struct ClientContResult res = client_cont(client, 0);
 
-    if (res.status > 0)
+    if (res.status > 0) {
         session_set_event(session, res.status, res.fd, on_client_resume);
+    } else if (res.status == 0) {
+        uint8_t packet[KEYMAP_PACKET_LENGTH];
+        keymap_packet(chr->keyMap, packet);
+        session_write(session, KEYMAP_PACKET_LENGTH, packet);
+    }
+
 
     return (struct OnPacketResult) { .status = res.status, .room = chr->map };
 }
@@ -1275,10 +1321,16 @@ static struct OnPacketResult on_unassigned_client_packet(struct Session *session
 static struct OnResumeResult on_client_resume(struct Session *session, int fd, int status)
 {
     struct Client *client = session_get_context(session);
+    const struct Character *chr = client_get_character(client);
 
     struct ClientContResult res = client_cont(client, status);
-    if (res.status > 0 && (res.fd != session_get_event_fd(session) || res.status != session_get_event_disposition(session)))
+    if (res.status > 0 && (res.fd != session_get_event_fd(session) || res.status != session_get_event_disposition(session))) {
         session_set_event(session, res.status, res.fd, on_client_resume);
+    } else if (res.status == 0) {
+        uint8_t packet[KEYMAP_PACKET_LENGTH];
+        keymap_packet(chr->keyMap, packet);
+        session_write(session, KEYMAP_PACKET_LENGTH, packet);
+    }
 
     return (struct OnResumeResult) { .status = res.status, .room = res.map };
 }

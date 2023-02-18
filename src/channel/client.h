@@ -134,6 +134,9 @@ void client_enable_actions(struct Client *client);
 void client_toggle_auto_pickup(struct Client *client);
 bool client_is_auto_pickup_enabled(struct Client *client);
 bool client_apply_skill(struct Client *client, uint32_t skill_id);
+bool client_add_key(struct Client *client, uint32_t key, uint8_t type, uint32_t action);
+bool client_add_skill_key(struct Client *client, uint32_t key, uint32_t skill_id);
+bool client_remove_key(struct Client *client, uint32_t key, uint32_t action);
 
 #endif
 

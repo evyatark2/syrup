@@ -132,13 +132,13 @@ struct Client *client_create(struct Session *session, struct DatabaseConnection 
 
 void client_destroy(struct Client *client)
 {
-    hash_set_u16_destroy(client->character.quests);
+    hash_set_u32_destroy(client->character.monsterBook);
+    hash_set_u32_destroy(client->character.skills);
+    hash_set_u16_destroy(client->character.completedQuests);
+    hash_set_u16_destroy(client->character.questInfos);
     hash_set_u32_destroy(client->character.itemQuests);
     hash_set_u32_destroy(client->character.monsterQuests);
-    hash_set_u16_destroy(client->character.questInfos);
-    hash_set_u16_destroy(client->character.completedQuests);
-    hash_set_u32_destroy(client->character.skills);
-    hash_set_u32_destroy(client->character.monsterBook);
+    hash_set_u16_destroy(client->character.quests);
     hash_set_u32_destroy(client->visibleMapObjects);
     free(client);
 }
@@ -607,6 +607,12 @@ struct ClientContResult client_cont(struct Client *client, int status)
                 hash_set_u32_insert(chr->monsterBook, &entry);
             }
 
+            memset(chr->keyMap, 0, KEYMAP_MAX_KEYS * sizeof(struct KeyMapEntry));
+            for (size_t i = 0; i < res->getCharacter.keyMapEntryCount; i++) {
+                chr->keyMap[res->getCharacter.keyMap[i].key].type = res->getCharacter.keyMap[i].type;
+                chr->keyMap[res->getCharacter.keyMap[i].key].action = res->getCharacter.keyMap[i].action;
+            }
+
             database_request_destroy(client->request);
             database_connection_unlock(client->conn);
 
@@ -879,6 +885,33 @@ struct ClientContResult client_cont(struct Client *client, int status)
             hash_set_u32_foreach(chr->monsterBook, add_monster_book_entry, &ctx6);
 
             params.updateCharacter.monsterBookEntryCount = ctx6.currentEntry;
+
+            uint8_t key_count = 0;
+            for (uint8_t i = 0; i < KEYMAP_MAX_KEYS; i++) {
+                if (chr->keyMap[i].type != 0)
+                    key_count++;
+            }
+
+            params.updateCharacter.keyMap = malloc(key_count * sizeof(struct DatabaseKeyMapEntry));
+            if (params.updateCharacter.keyMap == NULL) {
+                free(client->monsterBook);
+                free(client->skills);
+                free(client->completedQuests);
+                free(client->progresses);
+                free(client->quests);
+                client_destroy(client);
+                return (struct ClientContResult) { .status = -1 };
+            }
+
+            params.updateCharacter.keyMapEntryCount = 0;
+            for (uint8_t i = 0; i < KEYMAP_MAX_KEYS; i++) {
+                if (chr->keyMap[i].type != 0) {
+                    params.updateCharacter.keyMap[params.updateCharacter.keyMapEntryCount].key = i;
+                    params.updateCharacter.keyMap[params.updateCharacter.keyMapEntryCount].type = chr->keyMap[i].type;
+                    params.updateCharacter.keyMap[params.updateCharacter.keyMapEntryCount].action = chr->keyMap[i].action;
+                    params.updateCharacter.keyMapEntryCount++;
+                }
+            }
 
             client->request = database_request_create(client->conn, &params);
             if (client->request == NULL) {
@@ -3524,6 +3557,43 @@ bool client_apply_skill(struct Client *client, uint32_t skill_id)
 
     client_adjust_mp_now(client, -info->levels[skill->level].mpCon);
 
+    return true;
+}
+
+bool client_add_key(struct Client *client, uint32_t key, uint8_t type, uint32_t action)
+{
+    struct Character *chr = &client->character;
+
+    if (key >= KEYMAP_MAX_KEYS)
+        return false;
+
+    chr->keyMap[key].type = type;
+    chr->keyMap[key].action = action;
+    return true;
+}
+
+bool client_add_skill_key(struct Client *client, uint32_t key, uint32_t skill_id)
+{
+    // TODO: Check if skill is allowed to be bound
+    struct Character *chr = &client->character;
+
+    if (key >= KEYMAP_MAX_KEYS)
+        return false;
+
+    chr->keyMap[key].type = 1;
+    chr->keyMap[key].action = skill_id;
+    return true;
+}
+
+bool client_remove_key(struct Client *client, uint32_t key, uint32_t action)
+{
+    struct Character *chr = &client->character;
+
+    if (key >= KEYMAP_MAX_KEYS || chr->keyMap[key].type == 0)
+        return false;
+
+    chr->keyMap[key].type = 0;
+    chr->keyMap[key].action = 0;
     return true;
 }
 

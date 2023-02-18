@@ -110,6 +110,13 @@ struct MonsterBookEntry {
     int8_t count;
 };
 
+struct KeyMapEntry {
+    uint8_t type;
+    uint32_t action;
+};
+
+#define KEYMAP_MAX_KEYS 90
+
 size_t quest_get_progress_string(struct Quest *quest, char *out);
 
 struct Character {
@@ -173,14 +180,16 @@ struct Character {
     struct HashSetU16 *quests;
     // For each monster ID in this set, there is a reference count of the number of quests that have this monster as a requirement.
     // This is used in client_kill_monster() to quickly check if the monster has a quest before starting to iterate over the elements of \p quests
-    struct HashSetU32 *monsterQuests; 
-    struct HashSetU32 *itemQuests; 
+    struct HashSetU32 *monsterQuests;
+    struct HashSetU32 *itemQuests;
     struct HashSetU16 *questInfos;
     struct HashSetU16 *completedQuests;
 
     struct HashSetU32 *skills;
 
     struct HashSetU32 *monsterBook;
+
+    struct KeyMapEntry keyMap[KEYMAP_MAX_KEYS];
 };
 
 struct CharacterStats character_to_character_stats(const struct Character *chr);

@@ -1415,6 +1415,20 @@ size_t popup_message_packet(uint16_t len, const char *message, uint8_t *packet)
     return writer.pos;
 }
 
+void keymap_packet(const struct KeyMapEntry *keymap, uint8_t *packet)
+{
+    struct Writer writer;
+    writer_init(&writer, KEYMAP_PACKET_LENGTH, packet);
+
+    writer_u16(&writer, 0x014F);
+    writer_u8(&writer, 0);
+
+    for (uint8_t i = 0; i < KEYMAP_MAX_KEYS; i++) {
+        writer_u8(&writer, keymap[i].type);
+        writer_u32(&writer, keymap[i].action);
+    }
+}
+
 static void exp_gain_packet_internal(struct Writer *writer, int32_t exp, int32_t equip_bonus, int32_t party_bonus, bool white, bool in_chat)
 {
     writer_u16(writer, 0x0027);

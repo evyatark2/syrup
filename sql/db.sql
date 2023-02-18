@@ -38418,3 +38418,13 @@ INSERT INTO temp_shop_item_data VALUES
 INSERT INTO ShopItems SELECT shopid, RANK() OVER (PARTITION BY shopid ORDER BY position), item_id, price + pitch FROM temp_shop_item_data;
 
 DROP TABLE temp_shop_item_data;
+
+CREATE TABLE IF NOT EXISTS Keymaps (
+    character_id INT UNSIGNED,
+    `key` INT UNSIGNED,
+    type TINYINT UNSIGNED NOT NULL,
+    action INT UNSIGNED NOT NULL,
+    PRIMARY KEY (character_id, `key`),
+    FOREIGN KEY (character_id) REFERENCES Characters (id)
+);
+
