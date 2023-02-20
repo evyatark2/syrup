@@ -1083,6 +1083,9 @@ void client_update_player_pos(struct Client *client, int16_t x, int16_t y, uint1
 void client_set_hp(struct Client *client, int16_t hp)
 {
     struct Character *chr = &client->character;
+    if (hp == chr->hp)
+        return;
+
     character_set_hp(chr, hp);
     client->stats |= STAT_HP;
 }
@@ -1120,6 +1123,9 @@ void client_adjust_hp_now(struct Client *client, int32_t hp)
 void client_set_mp(struct Client *client, int16_t mp)
 {
     struct Character *chr = &client->character;
+    if (mp == chr->mp)
+        return;
+
     character_set_mp(chr, mp);
     client->stats |= STAT_MP;
 }

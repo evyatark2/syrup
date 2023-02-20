@@ -796,6 +796,23 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
     }
     break;
 
+    // 59 00 70 FC 02 00 00 14 00 00 00 00 03 00 00
+    case 0x0059: {
+        int16_t hp, mp;
+        READER_BEGIN(size, packet);
+        SKIP(8);
+        READ_OR_ERROR(reader_i16, &hp);
+        READ_OR_ERROR(reader_i16, &mp);
+        SKIP(1);
+        READER_END();
+
+        // TODO: Check if the client is allowed to heal this much HP/MP
+        client_adjust_hp(client, hp);
+        client_adjust_mp(client, mp);
+        client_commit_stats(client);
+    }
+    break;
+
     case 0x005A: {
         uint32_t id;
         READER_BEGIN(size, packet);
