@@ -968,6 +968,9 @@ static int map_drop_batch_from_map_object(struct Map *map, struct MapPlayer *pla
         pos.y = map->npcs[object->index].y;
     }
 
+    // We need to make a copy because object_list_allocate() can invalidate `object`
+    struct MapObject object_copy = *object;
+
     for (size_t i = 0; i < count; i++) {
         drops[i].x = pos.x + (i - count / 2) * 25;
         drops[i].y = pos.y - 85;
@@ -1013,7 +1016,7 @@ static int map_drop_batch_from_map_object(struct Map *map, struct MapPlayer *pla
 
         struct AnnounceItemDropContext ctx = {
             .charId = client_get_character(player->client)->id,
-            .dropperOid = object->oid,
+            .dropperOid = object_copy.oid,
             .drop = drop
         };
         room_foreach(map->room, do_announce_item_drop, &ctx);
@@ -1030,15 +1033,15 @@ static int map_drop_batch_from_map_object(struct Map *map, struct MapPlayer *pla
         batch->ownerId = client_get_character(player->client)->id;
         player->droppings[player->droppingCount] = batch;
         player->droppingCount++;
-        batch->dropperOid = object->oid;
+        batch->dropperOid = object_copy.oid;
         map->droppingBatchCount++;
 
         // If the dropper is a reactor then it was triggered
         // during the reactor's script which should destroy the
-        // reactor after the script if finished.
+        // reactor after the script is finished.
         // This prevents this from happening until all drops have been dropped
-        if (object->type == MAP_OBJECT_REACTOR)
-            map->reactors[object->index].keepAlive = true;
+        if (object_copy.type == MAP_OBJECT_REACTOR)
+            map->reactors[object_copy.index].keepAlive = true;
 
         if (client_is_auto_pickup_enabled(player->client))
             do_client_auto_pickup(map, player->client, drop);
@@ -1088,7 +1091,7 @@ static int map_drop_batch_from_map_object(struct Map *map, struct MapPlayer *pla
         switch (drop->type) {
         case DROP_TYPE_MESO: {
             uint8_t packet[DROP_MESO_FROM_OBJECT_PACKET_LENGTH];
-            drop_meso_from_object_packet(drop->oid, drop->meso, batch->ownerId, drop->x, drop->y, drop->x, drop->y, object->oid, false, packet);
+            drop_meso_from_object_packet(drop->oid, drop->meso, batch->ownerId, drop->x, drop->y, drop->x, drop->y, object_copy.oid, false, packet);
             room_broadcast(map->room, DROP_MESO_FROM_OBJECT_PACKET_LENGTH, packet);
         }
             break;
@@ -1096,7 +1099,7 @@ static int map_drop_batch_from_map_object(struct Map *map, struct MapPlayer *pla
         case DROP_TYPE_ITEM: {
             struct AnnounceItemDropContext ctx = {
                 .charId = batch->ownerId,
-                .dropperOid = object->oid,
+                .dropperOid = object_copy.oid,
                 .drop = drop
             };
             room_foreach(map->room, do_announce_item_drop, &ctx);
@@ -1105,7 +1108,7 @@ static int map_drop_batch_from_map_object(struct Map *map, struct MapPlayer *pla
 
         case DROP_TYPE_EQUIP: {
             uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
-            drop_item_from_object_packet(drop->oid, drop->equip.item.itemId, batch->ownerId, drop->x, drop->y, drop->x, drop->y, object->oid, false, packet);
+            drop_item_from_object_packet(drop->oid, drop->equip.item.itemId, batch->ownerId, drop->x, drop->y, drop->x, drop->y, object_copy.oid, false, packet);
             room_broadcast(map->room, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet);
         }
         break;
