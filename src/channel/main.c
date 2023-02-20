@@ -887,7 +887,22 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         READ_OR_ERROR(reader_u8, &action);
         READ_OR_ERROR(reader_u16, &qid);
         switch (action) {
-        case 0:
+        case 0: {
+            uint32_t item_id;
+            SKIP(4);
+            READ_OR_ERROR(reader_u32, &item_id);
+            struct ClientResult res = client_regain_quest_item(client, qid, item_id);
+            switch (res.type) {
+            case CLIENT_RESULT_TYPE_BAN:
+            case CLIENT_RESULT_TYPE_ERROR:
+                return (struct OnPacketResult) { .status = -1 };
+            case CLIENT_RESULT_TYPE_SUCCESS:
+                return (struct OnPacketResult) { .status = 0, .room = -1 };
+            case CLIENT_RESULT_TYPE_WARP:
+                return (struct OnPacketResult) { .status = 0, .room = res.map };
+            break;
+            }
+        }
         break;
 
         case 1: {

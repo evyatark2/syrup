@@ -2905,6 +2905,55 @@ struct ClientResult client_start_quest(struct Client *client, uint16_t qid, uint
     return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
 }
 
+struct ClientResult client_regain_quest_item(struct Client *client, uint16_t qid, uint32_t item_id)
+{
+    struct Character *chr = &client->character;
+    const struct QuestInfo *info = wz_get_quest_info(qid);
+    if (info == NULL)
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
+
+    if (hash_set_u16_get(chr->quests, qid) == NULL)
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
+
+    size_t i;
+    for (i = 0; i < info->startActCount; i++) {
+        if (info->startActs[i].type == QUEST_ACT_TYPE_ITEM) {
+            size_t j;
+            for (j = 0; j < info->startActs[i].item.count; j++) {
+                if (info->startActs[i].item.items[j].id == item_id)  {
+                    bool success;
+                    if (!client_gain_items(client, 1, &item_id, (int16_t[]) { 1 }, true, &success))
+                        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_ERROR };
+
+                    if (!success) {
+                        uint8_t packet[POPUP_MESSAGE_PACKET_MAX_LENGTH];
+                        char *message = "Please check if you have enough space in your inventory.";
+                        size_t len = popup_message_packet(strlen(message), message, packet);
+                        session_write(client->session, len, packet);
+                    }
+                    break;
+                }
+            }
+
+            if (j == info->startActs[i].item.count)
+                return (struct ClientResult) {
+                    .type = CLIENT_RESULT_TYPE_BAN,
+                    .reason = "Client tried to regain an item from a quest that doesn't give it out"
+                };
+
+            break;
+        }
+    }
+
+    if (i == info->startActCount)
+        return (struct ClientResult) {
+            .type = CLIENT_RESULT_TYPE_BAN,
+            .reason = "Client tried to regain an item from a quest that doesn't have any item acts"
+        };
+
+    return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
+}
+
 int client_set_quest_info(struct Client *client, uint16_t info, const char *value)
 {
     struct Character *chr = &client->character;
