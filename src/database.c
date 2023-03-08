@@ -232,6 +232,7 @@ void database_request_destroy(struct DatabaseRequest *req)
         }
         free(req->res.getShops.shops);
     } else if (req->params.type == DATABASE_REQUEST_TYPE_GET_CHARACTER) {
+        free(req->res.getCharacter.keyMap);
         free(req->res.getCharacter.monsterBook);
         free(req->res.getCharacter.skills);
         free(req->res.getCharacter.completedQuests);
