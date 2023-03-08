@@ -1370,6 +1370,18 @@ static struct OnResumeResult on_client_resume(struct Session *session, int fd, i
     return (struct OnResumeResult) { .status = res.status, .room = res.map };
 }
 
+static struct OnResumeResult on_client_resume_disconnect(struct Session *session, int fd, int status)
+{
+    struct Client *client = session_get_context(session);
+
+    struct ClientContResult res = client_cont(client, status);
+    if (res.status > 0 && (res.fd != session_get_event_fd(session) || res.status != session_get_event_disposition(session))) {
+        session_set_event(session, res.status, res.fd, on_client_resume);
+    }
+
+    return (struct OnResumeResult) { .status = res.status, .room = res.map };
+}
+
 static void on_client_disconnect(struct Session *session)
 {
     struct Client *client = session_get_context(session);
@@ -1383,7 +1395,7 @@ static void on_client_disconnect(struct Session *session)
     client_logout_start(client);
     struct ClientContResult res = client_cont(client, 0);
     if (res.status > 0) {
-        session_set_event(session, res.status, res.fd, on_client_resume);
+        session_set_event(session, res.status, res.fd, on_client_resume_disconnect);
         return;
     }
 }
