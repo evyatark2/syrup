@@ -38425,6 +38425,6 @@ CREATE TABLE IF NOT EXISTS Keymaps (
     type TINYINT UNSIGNED NOT NULL,
     action INT UNSIGNED NOT NULL,
     PRIMARY KEY (character_id, `key`),
-    FOREIGN KEY (character_id) REFERENCES Characters (id)
+    FOREIGN KEY (character_id) REFERENCES Characters (id) ON DELETE CASCADE
 );
 
