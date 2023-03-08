@@ -79,6 +79,7 @@ void *session_get_context(struct Session *session);
 int session_get_event_disposition(struct Session *session);
 int session_get_event_fd(struct Session *session);
 int session_set_event(struct Session *session, int status, int fd, OnResume *on_resume);
+void session_close_event(struct Session *session);
 struct Room *session_get_room(struct Session *session);
 void session_broadcast_to_room(struct Session *session, size_t len, uint8_t *packet);
 void session_foreach_in_room(struct Session *session, void (*f)(struct Session *src, struct Session *dst, void *ctx), void *ctx);

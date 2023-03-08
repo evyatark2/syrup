@@ -184,6 +184,9 @@ struct ClientContResult client_cont(struct Client *client, int status)
         }
 
         if (client->databaseState == 1) {
+            if (status != 0)
+                session_close_event(client->session);
+
             struct RequestParams params = {
                 .type = DATABASE_REQUEST_TYPE_GET_CHARACTER,
                 .getCharacter = {
@@ -659,6 +662,9 @@ struct ClientContResult client_cont(struct Client *client, int status)
         }
 
         if (client->databaseState == 1) {
+            if (status != 0)
+                session_close_event(client->session);
+
             struct RequestParams params = {
                 .type = DATABASE_REQUEST_TYPE_UPDATE_CHARACTER,
                 .updateCharacter = {

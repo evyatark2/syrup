@@ -340,7 +340,6 @@ struct Map *map_create(struct Room *room, struct ScriptManager *reactor_manager)
         object_list_destroy(&map->objectList);
         free(map);
         return NULL;
-        return NULL;
     }
 
     for (size_t i = 0; i < map->spawnerCount; i++) {

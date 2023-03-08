@@ -661,6 +661,14 @@ int session_set_event(struct Session *session, int status, int fd, OnResume *on_
     return 0;
 }
 
+void session_close_event(struct Session *session)
+{
+    int fd = event_get_fd(session->userEvent);
+    event_free(session->userEvent);
+    session->userEvent = NULL;
+    close(fd);
+}
+
 struct Room *session_get_room(struct Session *session)
 {
     return session->room;
