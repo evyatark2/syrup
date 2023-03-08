@@ -1281,14 +1281,17 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         struct Map *map = room_get_context(session_get_room(session));
         session_enable_write(session);
 
-        uint8_t packet[ADD_PLAYER_TO_MAP_PACKET_MAX_LENGTH];
-        size_t len = add_player_to_map_packet(chr, packet);
-        session_broadcast_to_room(session, len, packet);
+        //uint8_t packet[ADD_PLAYER_TO_MAP_PACKET_MAX_LENGTH];
+        //size_t len = add_player_to_map_packet(chr, packet);
+        //session_broadcast_to_room(session, len, packet);
 
         map_join(map, client, client_get_map(client));
         session_foreach_in_room(session, notify_player_on_map, NULL);
-        session_write(session, 2, (uint8_t[]) { 0x23, 0x00 }); // Force stat reset
         map_for_each_npc(map, notify_npc_on_map, session);
+
+        // Forced stat reset
+        session_write(session, 2, (uint8_t[]) { 0x23, 0x00 }); // Forced stat reset
+
 
         struct ClientResult res = client_script_cont(client, 0);
         switch (res.type) {
