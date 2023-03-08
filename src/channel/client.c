@@ -44,6 +44,7 @@ struct Client {
             void *completedQuests;
             void *skills;
             void *monsterBook;
+            void *keyMap;
         };
     };
     enum Stat stats;
@@ -851,6 +852,7 @@ struct ClientContResult client_cont(struct Client *client, int status)
             params.updateCharacter.skills = malloc(hash_set_u32_size(chr->skills) * sizeof(struct DatabaseSkill));
             if (params.updateCharacter.completedQuests == NULL) {
                 free(client->completedQuests);
+                free(client->questInfos);
                 free(client->progresses);
                 free(client->quests);
                 client_destroy(client);
@@ -871,6 +873,7 @@ struct ClientContResult client_cont(struct Client *client, int status)
             if (params.updateCharacter.monsterBook == NULL) {
                 free(client->skills);
                 free(client->completedQuests);
+                free(client->questInfos);
                 free(client->progresses);
                 free(client->quests);
                 client_destroy(client);
@@ -898,11 +901,14 @@ struct ClientContResult client_cont(struct Client *client, int status)
                 free(client->monsterBook);
                 free(client->skills);
                 free(client->completedQuests);
+                free(client->questInfos);
                 free(client->progresses);
                 free(client->quests);
                 client_destroy(client);
                 return (struct ClientContResult) { .status = -1 };
             }
+
+            client->keyMap = params.updateCharacter.keyMap;
 
             params.updateCharacter.keyMapEntryCount = 0;
             for (uint8_t i = 0; i < KEYMAP_MAX_KEYS; i++) {
@@ -916,9 +922,11 @@ struct ClientContResult client_cont(struct Client *client, int status)
 
             client->request = database_request_create(client->conn, &params);
             if (client->request == NULL) {
+                free(client->keyMap);
                 free(client->monsterBook);
                 free(client->skills);
                 free(client->completedQuests);
+                free(client->questInfos);
                 free(client->progresses);
                 free(client->quests);
                 client_destroy(client);
@@ -928,9 +936,11 @@ struct ClientContResult client_cont(struct Client *client, int status)
             client->databaseState++;
             status = database_request_execute(client->request, 0);
             if (status <= 0) {
+                free(client->keyMap);
                 free(client->monsterBook);
                 free(client->skills);
                 free(client->completedQuests);
+                free(client->questInfos);
                 free(client->progresses);
                 free(client->quests);
                 database_request_destroy(client->request);
@@ -946,9 +956,11 @@ struct ClientContResult client_cont(struct Client *client, int status)
         if (client->databaseState == 2) {
             status = database_request_execute(client->request, status);
             if (status <= 0) {
+                free(client->keyMap);
                 free(client->monsterBook);
                 free(client->skills);
                 free(client->completedQuests);
+                free(client->questInfos);
                 free(client->progresses);
                 free(client->quests);
                 database_request_destroy(client->request);
