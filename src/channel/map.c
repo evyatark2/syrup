@@ -218,7 +218,7 @@ struct Map *map_create(struct Room *room, struct ScriptManager *reactor_manager)
     }
 
     map->spawners = malloc(map->spawnerCount * sizeof(struct Spawner));
-    if (map->spawners == NULL) {
+    if (map->spawners == NULL && map->spawnerCount != 0) {
         free(map->npcs);
         object_list_destroy(&map->objectList);
         free(map);
@@ -226,7 +226,7 @@ struct Map *map_create(struct Room *room, struct ScriptManager *reactor_manager)
     }
 
     map->dead = malloc(map->spawnerCount * sizeof(size_t));
-    if (map->dead == NULL) {
+    if (map->dead == NULL && map->spawnerCount != 0) {
         free(map->spawners);
         free(map->npcs);
         object_list_destroy(&map->objectList);
@@ -258,7 +258,7 @@ struct Map *map_create(struct Room *room, struct ScriptManager *reactor_manager)
     const struct MapReactorInfo *reactors_info = wz_get_reactors_for_map(room_get_id(room), &map->reactorCount);
 
     map->reactors = malloc(map->reactorCount * sizeof(struct Reactor));
-    if (map->reactors == NULL) {
+    if (map->reactors == NULL && map->reactorCount != 0) {
         free(map->dropBatches);
         free(map->droppingBatches);
         free(map->dead);
@@ -328,7 +328,7 @@ struct Map *map_create(struct Room *room, struct ScriptManager *reactor_manager)
     }
 
     map->monsters = malloc(map->spawnerCount * sizeof(struct Monster));
-    if (map->monsters == NULL) {
+    if (map->monsters == NULL && map->spawnerCount != 0) {
         heap_destroy(&map->heap);
         free(map->players);
         free(map->reactors);
