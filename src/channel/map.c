@@ -575,6 +575,17 @@ void map_leave(struct Map *map, struct MapPlayer *player)
                 spawn_monster_controller_packet(monster->oid, false, monster->id, monster->x, monster->y, monster->fh, false, packet);
                 session_write(client_get_session(next->controller->client), SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH, packet);
             }
+
+            for (size_t i = 0; i < player->dropCount; i++)
+                player->drops[i]->owner = NULL;
+
+            free(player->drops);
+
+            for (size_t i = 0; i < player->droppingCount; i++)
+                player->droppings[i]->owner = NULL;
+
+            free(player->droppings);
+
             if (player - map->players != map->playerCount - 1) {
                 map->players[player - map->players] = map->players[map->playerCount - 1];
                 map->players[player - map->players].container->player = &map->players[player - map->players];
@@ -586,18 +597,19 @@ void map_leave(struct Map *map, struct MapPlayer *player)
             for (size_t i = 0; i < player->monsterCount; i++)
                 player->monsters[i]->controller = NULL;
             free(player->monsters);
+
+            for (size_t i = 0; i < player->dropCount; i++)
+                player->drops[i]->owner = NULL;
+
+            free(player->drops);
+
+            for (size_t i = 0; i < player->droppingCount; i++)
+                player->droppings[i]->owner = NULL;
+
+            free(player->droppings);
             room_stop_timer(map->respawnHandle);
         }
 
-        for (size_t i = 0; i < player->dropCount; i++)
-            player->drops[i]->owner = NULL;
-
-        free(player->drops);
-
-        for (size_t i = 0; i < player->droppingCount; i++)
-            player->droppings[i]->owner = NULL;
-
-        free(player->droppings);
         map->playerCount--;
     }
 }
