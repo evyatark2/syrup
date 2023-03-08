@@ -609,11 +609,6 @@ void session_write(struct Session *session, size_t len, uint8_t *packet)
     if (len == 0)
         return;
 
-    printf("Sending packet with opcode %hd\n", ((uint16_t *)packet)[0]);
-    for (uint16_t i = 0; i < len; i++)
-        printf("%02X ", packet[i]);
-    printf("\n\n");
-
     uint16_t packet_len = len;
     if (bufferevent_write(session->event, &packet_len, 2) == -1)
         return;
@@ -1303,6 +1298,11 @@ static enum bufferevent_filter_result output_filter(struct evbuffer *src, struct
     encryption_context_header(session->sendContext, packet_len, header);
 
     evbuffer_remove(src, data, packet_len);
+
+    printf("Sending packet with opcode %hd\n", ((uint16_t *)data)[0]);
+    for (uint16_t i = 0; i < packet_len; i++)
+        printf("%02X ", data[i]);
+    printf("\n\n");
 
     encryption_context_encrypt(session->sendContext, packet_len, data);
 
