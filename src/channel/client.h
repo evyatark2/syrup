@@ -97,6 +97,7 @@ enum InventoryGainResult {
 bool client_gain_inventory_item(struct Client *client, const struct InventoryItem *item, enum InventoryGainResult *success);
 bool client_gain_equipment(struct Client *client, const struct Equipment *item, bool equip, enum InventoryGainResult *success);
 bool client_remove_item(struct Client *client, uint8_t inventory, uint8_t src, int16_t amount, bool *success, struct InventoryItem *item);
+bool client_use_projectile(struct Client *client, int16_t amount, bool *success);
 bool client_remove_equip(struct Client *client, bool equipped, uint8_t src, bool *success, struct Equipment *equip);
 bool client_move_item(struct Client *client, uint8_t inventory, uint8_t src, uint8_t dst);
 bool client_equip(struct Client *client, uint8_t src, enum EquipSlot dst);

@@ -1819,65 +1819,56 @@ bool client_gain_inventory_item(struct Client *client, const struct InventoryIte
     struct Inventory inv;
     inv = chr->inventory[item->item.itemId / 1000000 - 2];
 
-    int16_t quantity = item->quantity;
+    if (item->item.itemId / 10000 == 207 || item->item.itemId / 10000 == 233) {
+        // Rechargeables don't stack like other items
+        for (size_t i = 0; i < inv.slotCount; i++) {
+            if (inv.items[i].isEmpty) {
+                inv.items[i].isEmpty = false;
+                inv.items[i].item = *item;
 
-    // First try to fill up existing stacks
-    for (size_t j = 0; j < inv.slotCount; j++) {
-        if (!inv.items[j].isEmpty && inv.items[j].item.item.itemId == item->item.itemId) {
-            struct CheckQuestItemContext ctx = {
-                .id = item->item.itemId
-            };
-            hash_set_u16_foreach(chr->quests, check_quest_item, &ctx);
-            if (info->quest && inv.items[j].item.quantity + item->quantity == ctx.max) {
-                hash_set_u32_remove(chr->itemQuests, item->item.itemId);
-            }
+                mods[0].mode = INVENTORY_MODIFY_TYPE_ADD;
+                mods[0].inventory = 2;
+                mods[0].slot = i + 1;
+                mods[0].item = *item;
+                mod_count++;
 
-            if (inv.items[j].item.quantity > wz_get_item_info(item->item.itemId)->slotMax - quantity) {
-                quantity -= wz_get_item_info(item->item.itemId)->slotMax - inv.items[j].item.quantity;
-                inv.items[j].item.quantity = wz_get_item_info(item->item.itemId)->slotMax;
-            } else {
-                inv.items[j].item.item.id = item->item.id;
-                inv.items[j].item.quantity += quantity;
-                quantity = 0;
-            }
-
-            if (mod_count == mod_capacity) {
-                void *temp = realloc(mods, (mod_capacity * 2) * sizeof(struct InventoryModify));
-                if (temp == NULL) {
-                    free(mods);
-                    return false;
+                uint32_t wid = chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].equip.item.itemId;
+                if (!chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].isEmpty && i < chr->activeProjectile) {
+                    if (wid / 10000 == 147 && item->item.itemId / 10000 == 207 && item->quantity > 0) {
+                        // Claw
+                        chr->activeProjectile = i;
+                    } else if (wid / 10000 == 149 && item->item.itemId / 1000 == 2330 && item->quantity > 0) {
+                        // Gun
+                        chr->activeProjectile = i;
+                    }
                 }
 
-                mods = temp;
-                mod_capacity *= 2;
+                break;
             }
-
-            mods[mod_count].mode = INVENTORY_MODIFY_TYPE_MODIFY;
-            mods[mod_count].inventory = item->item.itemId / 1000000;
-            mods[mod_count].slot = j + 1;
-            mods[mod_count].quantity = inv.items[j].item.quantity;
-            mod_count++;
         }
 
-        if (quantity == 0)
-            break;
-    }
+    } else {
+        int16_t quantity = item->quantity;
 
-    // Then fill up *an* empty slot
-    if (quantity != 0) {
-        uint8_t j;
-        for (j = 0; j < inv.slotCount; j++) {
-            if (inv.items[j].isEmpty) {
+        // First try to fill up existing stacks
+        for (size_t i = 0; i < inv.slotCount; i++) {
+            if (!inv.items[i].isEmpty && inv.items[i].item.item.itemId == item->item.itemId) {
                 struct CheckQuestItemContext ctx = {
                     .id = item->item.itemId
                 };
                 hash_set_u16_foreach(chr->quests, check_quest_item, &ctx);
-                if (info->quest && item->quantity == ctx.max)
+                if (info->quest && inv.items[i].item.quantity + item->quantity == ctx.max) {
                     hash_set_u32_remove(chr->itemQuests, item->item.itemId);
+                }
 
-                inv.items[j].isEmpty = false;
-                inv.items[j].item.item = item->item;
-                inv.items[j].item.quantity = quantity;
+                if (inv.items[i].item.quantity > wz_get_item_info(item->item.itemId)->slotMax - quantity) {
+                    quantity -= wz_get_item_info(item->item.itemId)->slotMax - inv.items[i].item.quantity;
+                    inv.items[i].item.quantity = wz_get_item_info(item->item.itemId)->slotMax;
+                } else {
+                    inv.items[i].item.item.id = item->item.id;
+                    inv.items[i].item.quantity += quantity;
+                    quantity = 0;
+                }
 
                 if (mod_count == mod_capacity) {
                     void *temp = realloc(mods, (mod_capacity * 2) * sizeof(struct InventoryModify));
@@ -1890,50 +1881,84 @@ bool client_gain_inventory_item(struct Client *client, const struct InventoryIte
                     mod_capacity *= 2;
                 }
 
-                // Do it after the possiblity of failure from realloc()
-                if (!chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].isEmpty && j < chr->activeProjectile) {
-                    uint32_t wid = chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].equip.item.itemId;
-                    if (wid / 10000 == 145 && item->item.itemId / 1000 == 2060) {
-                        // Bow
-                        chr->activeProjectile = j;
-                    } else if (wid / 10000 == 146 && item->item.itemId / 1000 == 2061) {
-                        // Crossbow
-                        chr->activeProjectile = j;
-                    } else if (wid / 10000 == 147 && item->item.itemId / 10000 == 207) {
-                        // Claw
-                        chr->activeProjectile = j;
-                    } else if (wid / 10000 == 149 && item->item.itemId / 1000 == 2330) {
-                        // Gun
-                        chr->activeProjectile = j;
-                    }
-                }
-
-                mods[mod_count].mode = INVENTORY_MODIFY_TYPE_ADD;
+                mods[mod_count].mode = INVENTORY_MODIFY_TYPE_MODIFY;
                 mods[mod_count].inventory = item->item.itemId / 1000000;
-                mods[mod_count].slot = j + 1;
-                mods[mod_count].item = inv.items[j].item;
+                mods[mod_count].slot = i + 1;
+                mods[mod_count].quantity = inv.items[i].item.quantity;
                 mod_count++;
-
-                break;
             }
+
+            if (quantity == 0)
+                break;
         }
 
-        // Inventory is full
-        if (j == inv.slotCount) {
-            {
-                uint8_t packet[INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH];
-                inventory_full_notification_packet(packet);
-                session_write(client_get_session(client), INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH, packet);
+        // Then fill up *an* empty slot
+        if (quantity != 0) {
+            uint8_t j;
+            for (j = 0; j < inv.slotCount; j++) {
+                if (inv.items[j].isEmpty) {
+                    struct CheckQuestItemContext ctx = {
+                        .id = item->item.itemId
+                    };
+                    hash_set_u16_foreach(chr->quests, check_quest_item, &ctx);
+                    if (info->quest && item->quantity == ctx.max)
+                        hash_set_u32_remove(chr->itemQuests, item->item.itemId);
+
+                    inv.items[j].isEmpty = false;
+                    inv.items[j].item.item = item->item;
+                    inv.items[j].item.quantity = quantity;
+
+                    if (mod_count == mod_capacity) {
+                        void *temp = realloc(mods, (mod_capacity * 2) * sizeof(struct InventoryModify));
+                        if (temp == NULL) {
+                            free(mods);
+                            return false;
+                        }
+
+                        mods = temp;
+                        mod_capacity *= 2;
+                    }
+
+                    // Do it after the possiblity of failure from realloc()
+                    // This should still work even when chr->activeProjectile == -1
+                    if (!chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].isEmpty && j < chr->activeProjectile) {
+                        uint32_t wid = chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].equip.item.itemId;
+                        if (wid / 10000 == 145 && item->item.itemId / 1000 == 2060) {
+                            // Bow
+                            chr->activeProjectile = j;
+                        } else if (wid / 10000 == 146 && item->item.itemId / 1000 == 2061) {
+                            // Crossbow
+                            chr->activeProjectile = j;
+                        }
+                    }
+
+                    mods[mod_count].mode = INVENTORY_MODIFY_TYPE_ADD;
+                    mods[mod_count].inventory = item->item.itemId / 1000000;
+                    mods[mod_count].slot = j + 1;
+                    mods[mod_count].item = inv.items[j].item;
+                    mod_count++;
+
+                    break;
+                }
             }
 
-            {
-                uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
-                size_t len = modify_items_packet(0, NULL, packet);
-                session_write(client_get_session(client), len, packet);
+            // Inventory is full
+            if (j == inv.slotCount) {
+                {
+                    uint8_t packet[INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH];
+                    inventory_full_notification_packet(packet);
+                    session_write(client_get_session(client), INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH, packet);
+                }
+
+                {
+                    uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
+                    size_t len = modify_items_packet(0, NULL, packet);
+                    session_write(client_get_session(client), len, packet);
+                }
+                free(mods);
+                *result = INVENTORY_GAIN_RESULT_FULL;
+                return true;
             }
-            free(mods);
-            *result = INVENTORY_GAIN_RESULT_FULL;
-            return true;
         }
     }
 
@@ -2020,20 +2045,20 @@ bool client_remove_item(struct Client *client, uint8_t inv, uint8_t src, int16_t
     if (chr->inventory[inv].items[src].isEmpty)
         return true;
 
-    if (chr->inventory[inv].items[src].item.quantity < amount)
-        return true;
-
     *item = chr->inventory[inv].items[src].item;
-    item->quantity = amount;
-    if (chr->inventory[inv].items[src].item.item.itemId / 10000 != 207 && chr->inventory[inv].items[src].item.item.itemId / 10000 != 233) {
+    if (chr->inventory[inv].items[src].item.item.itemId / 10000 == 207 || chr->inventory[inv].items[src].item.item.itemId / 10000 == 233) {
+        chr->inventory[inv].items[src].isEmpty = true;
+    } else {
+        if (chr->inventory[inv].items[src].item.quantity < amount)
+            return true;
+
+        item->quantity = amount;
         if (chr->inventory[inv].items[src].item.quantity == amount) {
             chr->inventory[inv].items[src].isEmpty = true;
         } else {
             item->item.id = 0;
             chr->inventory[inv].items[src].item.quantity -= amount;
         }
-    } else {
-        chr->inventory[inv].items[src].item.quantity -= amount;
     }
 
     // Update the active projectile if we removed the currently active one
@@ -2101,6 +2126,115 @@ bool client_remove_item(struct Client *client, uint8_t inv, uint8_t src, int16_t
 
     *success = true;
     return true;
+}
+
+bool client_use_projectile(struct Client *client, int16_t amount, bool *success)
+{
+    struct Character *chr = &client->character;
+
+    *success = false;
+    if (chr->activeProjectile == (uint8_t)-1)
+        return true;
+
+    uint8_t slot;
+    for (slot = chr->activeProjectile; slot < chr->inventory[0].slotCount; slot++) {
+        if (chr->inventory[0].items[slot].item.quantity >= amount) {
+            if (chr->inventory[0].items[slot].item.item.itemId / 10000 == 207 || chr->inventory[0].items[slot].item.item.itemId / 10000 == 233) {
+                chr->inventory[0].items[slot].item.quantity -= amount;
+            } else {
+                if (chr->inventory[0].items[slot].item.quantity == amount) {
+                    chr->inventory[0].items[slot].isEmpty = true;
+                } else {
+                    chr->inventory[0].items[slot].item.quantity -= amount;
+                }
+            }
+
+            break;
+        }
+    }
+
+    if (slot == chr->inventory[0].slotCount)
+        return true;
+
+    // Update the active projectile
+    if ((chr->inventory[0].items[chr->activeProjectile].isEmpty || chr->inventory[0].items[chr->activeProjectile].item.quantity == 0)) {
+        uint32_t wid = chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].equip.item.itemId;
+        if (wid / 10000 == 145) {
+            // Bow
+            uint8_t i;
+            for (i = chr->activeProjectile + 1; i < chr->inventory[0].slotCount; i++) {
+                if (!chr->inventory[0].items[i].isEmpty && chr->inventory[0].items[i].item.item.itemId / 1000 == 2060) {
+                    chr->activeProjectile = i;
+                    break;
+                }
+            }
+
+            if (i == chr->inventory[0].slotCount)
+                chr->activeProjectile = -1;
+        } else if (wid / 10000 == 146) {
+            // Crossbow
+            uint8_t i;
+            for (i = chr->activeProjectile + 1; i < chr->inventory[0].slotCount; i++) {
+                if (!chr->inventory[0].items[i].isEmpty && chr->inventory[0].items[i].item.item.itemId / 1000 == 2061) {
+                    chr->activeProjectile = i;
+                    break;
+                }
+            }
+
+            if (i == chr->inventory[0].slotCount)
+                chr->activeProjectile = -1;
+        } else if (wid / 10000 == 147) {
+            // Claw
+            uint8_t i;
+            for (i = chr->activeProjectile + 1; i < chr->inventory[0].slotCount; i++) {
+                if (!chr->inventory[0].items[i].isEmpty && chr->inventory[0].items[i].item.item.itemId / 10000 == 207 && chr->inventory[0].items[i].item.quantity > 0) {
+                    chr->activeProjectile = i;
+                    break;
+                }
+            }
+
+            if (i == chr->inventory[0].slotCount)
+                chr->activeProjectile = -1;
+        } else if (wid / 10000 == 149) {
+            // Gun
+            uint8_t i;
+            for (i = chr->activeProjectile + 1; i < chr->inventory[0].slotCount; i++) {
+                if (!chr->inventory[0].items[i].isEmpty && chr->inventory[0].items[i].item.item.itemId / 1000 == 2330 && chr->inventory[0].items[i].item.quantity > 0) {
+                    chr->activeProjectile = i;
+                    break;
+                }
+            }
+
+            if (i == chr->inventory[0].slotCount)
+                chr->activeProjectile = -1;
+        }
+    }
+
+    // As far as I know, there are no projectiles that are also quest items
+    /*const struct ItemInfo *item_info = wz_get_item_info(item->item.itemId);
+    if (item_info->quest && hash_set_u32_get(chr->itemQuests, item->item.itemId) == NULL) {
+        hash_set_u32_insert(chr->itemQuests, &item->item.itemId);
+    }*/
+
+    {
+        struct InventoryModify mod;
+        mod.inventory = 2;
+        mod.slot = slot + 1;
+        if (chr->inventory[0].items[slot].isEmpty) {
+            mod.mode = INVENTORY_MODIFY_TYPE_REMOVE;
+        } else {
+            mod.mode = INVENTORY_MODIFY_TYPE_MODIFY;
+            mod.quantity = chr->inventory[0].items[slot].item.quantity;
+        }
+
+        uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
+        size_t len = modify_items_packet(1, &mod, packet);
+        session_write(client->session, len, packet);
+    }
+
+    *success = true;
+    return true;
+
 }
 
 bool client_remove_equip(struct Client *client, bool equipped, uint8_t src, bool *success, struct Equipment *equip)
@@ -3615,11 +3749,12 @@ bool client_apply_skill(struct Client *client, uint32_t skill_id)
         if (chr->activeProjectile == (uint8_t)-1)
             return true;
 
+        bool success;
+        if (!client_use_projectile(client, info->levels[skill->level].bulletCount, &success))
+            return false;
+
         uint8_t slot;
         for (slot = chr->activeProjectile; slot < chr->inventory[0].slotCount; slot++) {
-            bool success;
-            if (!client_remove_item(client, 2, slot + 1, info->levels[skill->level].bulletCount, &success, NULL))
-                return false;
 
             if (success)
                 break;

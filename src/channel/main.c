@@ -473,7 +473,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
 
         if (skill == 0) {
             bool success;
-            client_remove_item(client, 2, chr->activeProjectile + 1, 1, &success, NULL);
+            client_use_projectile(client, 1, &success);
         } else {
             if (!client_apply_skill(client, skill))
                 return (struct OnPacketResult) { .status = -1 };
