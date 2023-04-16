@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "client.h"
+#include "monster.h"
 #include "server.h" // This is temporary for map_join, I should find a better way to do this
 #include "../item.h"
 #include "../wz.h"

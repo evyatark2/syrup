@@ -1003,6 +1003,14 @@ struct MapHandleContainer *client_get_map(struct Client *client)
     return &client->map;
 }
 
+bool client_announce_monster(struct Client *client, const struct Monster *monster)
+{
+    uint8_t packet[SPAWN_MONSTER_PACKET_LENGTH];
+    spawn_monster_packet(monster->oid, monster->id, monster->x, monster->y, monster->fh, false, packet);
+    session_write(client->session, SPAWN_MONSTER_PACKET_LENGTH, packet);
+    return true;
+}
+
 bool client_announce_drop(struct Client *client, uint32_t owner_id, uint32_t dropper_oid, bool player_drop, const struct Drop *drop)
 {
     struct Character *chr = &client->character;

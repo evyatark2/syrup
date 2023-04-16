@@ -5,11 +5,11 @@
 
 #include <lua.h>
 
-#include "server.h"
-#include "drop.h"
-//#include "../character.h"
 #include "../database.h"
+#include "drop.h"
+#include "monster.h"
 #include "scripting/script-manager.h"
+#include "server.h"
 
 struct Client;
 
@@ -63,7 +63,7 @@ void client_update_conn(struct Client *client, struct DatabaseConnection *conn);
 const struct Character *client_get_character(struct Client *client);
 uint32_t client_get_active_npc(struct Client *client);
 struct MapHandleContainer *client_get_map(struct Client *client);
-bool client_announce_monster(struct Client *client);
+bool client_announce_monster(struct Client *client, const struct Monster *monster);
 bool client_announce_drop(struct Client *client, uint32_t owner_id, uint32_t dropper_oid, bool player_drop, const struct Drop *drop);
 bool client_announce_spawn_drop(struct Client *client, uint32_t owner_id, uint32_t dropper_oid, bool player_drop, const struct Drop *drop);
 void client_update_player_pos(struct Client *client, int16_t x, int16_t y, uint16_t fh, uint8_t stance);
