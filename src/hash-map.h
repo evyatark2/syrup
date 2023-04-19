@@ -15,6 +15,7 @@ void *hash_set_u32_get(struct HashSetU32 *set, uint32_t key);
 void hash_set_u32_remove(struct HashSetU32 *set, uint32_t key);
 size_t hash_set_u32_size(struct HashSetU32 *set);
 void hash_set_u32_foreach(struct HashSetU32 *set, void f(void *data, void *ctx), void *ctx);
+// Iterates over the elements and for each one decide whether to delete that element or keep it
 void hash_set_u32_foreach_with_remove(struct HashSetU32 *set, bool f(void *data, void *ctx), void *ctx);
 
 struct HashSetU16;

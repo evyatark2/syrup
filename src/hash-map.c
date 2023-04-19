@@ -21,7 +21,7 @@ static void hash_set_terminate(struct HashSet *set);
 static int hash_set_insert(struct HashSet *set, const void *data, size_t key_size);
 static void *hash_set_get(struct HashSet *set, const void *key, size_t key_size);
 static void hash_set_remove(struct HashSet *set, const void *key, size_t key_size);
-static void hash_set_foreach_remove(struct HashSet *set, bool f(void *data, void *ctx), void *ctx, size_t key_size);
+static void hash_set_foreach_with_remove(struct HashSet *set, bool f(void *data, void *ctx), void *ctx, size_t key_size);
 
 struct HashSetU32 {
     struct HashSet set;
@@ -78,7 +78,7 @@ void hash_set_u32_foreach(struct HashSetU32 *set, void f(void *data, void *ctx),
 
 void hash_set_u32_foreach_with_remove(struct HashSetU32 *set, bool f(void *data, void *ctx), void *ctx)
 {
-    hash_set_foreach_remove(&set->set, f, ctx, sizeof(uint32_t));
+    hash_set_foreach_with_remove(&set->set, f, ctx, sizeof(uint32_t));
 }
 
 struct HashSetU16 {
@@ -199,7 +199,7 @@ void hash_set_addr_foreach(struct HashSetAddr *set, void f(void *data, void *ctx
 
 void hash_set_addr_foreach_with_remove(struct HashSetAddr *set, bool f(void *data, void *ctx), void *ctx)
 {
-    hash_set_foreach_remove(&set->set, f, ctx, sizeof(struct sockaddr_storage));
+    hash_set_foreach_with_remove(&set->set, f, ctx, sizeof(struct sockaddr_storage));
 }
 
 static int hash_set_init(struct HashSet *set, size_t stride, size_t key_offset)
@@ -339,7 +339,7 @@ static void hash_set_remove(struct HashSet *set, const void *key, size_t key_siz
     }
 }
 
-static void hash_set_foreach_remove(struct HashSet *set, bool f(void *data, void *ctx), void *ctx, size_t key_size)
+static void hash_set_foreach_with_remove(struct HashSet *set, bool f(void *data, void *ctx), void *ctx, size_t key_size)
 {
     for (size_t i = 0; i < set->capacity; i++) {
         if (set->states[i] == 1) {

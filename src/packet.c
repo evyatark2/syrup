@@ -9,41 +9,24 @@
 size_t login_success_packet(uint32_t id, uint8_t gender, uint8_t name_len, char *name, enum PicStatus pic, uint8_t *packet)
 {
     struct Writer writer;
-    writer_init(&writer, 42 + name_len, packet);
-    // Opcode
+    writer_init(&writer, LOGIN_SUCCESS_PACKET_MAX_LENGTH, packet);
     writer_u16(&writer, 0x0000);
-
     writer_zero(&writer, 6);
-
-    // Account ID
     writer_u32(&writer, id);
-
-    // Gender
     writer_u8(&writer, gender);
-
-    // Flying
-    writer_u8(&writer, 0);
+    writer_u8(&writer, 0); // Flying
     writer_u8(&writer, 0); // Admin byte
-
-    // Coutnry code
-    writer_u8(&writer, 0);
-
+    writer_u8(&writer, 0); // Country code
     writer_sized_string(&writer, name_len, name);
-
     writer_u8(&writer, 0);
-
     writer_u8(&writer, 0);  // IsQuietBan
     writer_u64(&writer, 0); // IsQuietBanTimeStamp
     writer_u64(&writer, 0); // CreationTimeStamp
-
     writer_u32(&writer, 1); // Removes the "Select the world you wnat to play in" pop up
+    writer_u8(&writer, 1); // PIN; 0 - enabled; 1 - diabled
+    writer_u8(&writer, pic);
 
-    // Pin
-    writer_u8(&writer, 1); // 0 - enabled; 1 - diabled
-    // Pic
-    writer_u8(&writer, pic); // 0 - register; 1 - ask; 2 - disabled
-
-    return 42 + name_len;
+    return writer.pos;
 }
 
 void login_failure_packet(enum LoginFailureReason reason, uint8_t *packet)
