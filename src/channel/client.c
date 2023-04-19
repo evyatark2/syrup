@@ -3069,6 +3069,9 @@ struct ClientResult client_regain_quest_item(struct Client *client, uint16_t qid
     if (hash_set_u16_get(chr->quests, qid) == NULL)
         return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
 
+    if (client_has_item(client, item_id))
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
+
     size_t i;
     for (i = 0; i < info->startActCount; i++) {
         if (info->startActs[i].type == QUEST_ACT_TYPE_ITEM) {
@@ -3086,13 +3089,18 @@ struct ClientResult client_regain_quest_item(struct Client *client, uint16_t qid
                         session_write(client->session, len, packet);
                     }
                     break;
+                } else {
+                    return (struct ClientResult) {
+                        .type = CLIENT_RESULT_TYPE_BAN,
+                            .reason = "Client tried to regain an item from a quest that doesn't hand it out"
+                    };
                 }
             }
 
             if (j == info->startActs[i].item.count)
                 return (struct ClientResult) {
                     .type = CLIENT_RESULT_TYPE_BAN,
-                    .reason = "Client tried to regain an item from a quest that doesn't give it out"
+                    .reason = "Client tried to regain an item from a quest that doesn't give any quest items"
                 };
 
             break;
