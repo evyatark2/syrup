@@ -627,15 +627,15 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         READ_OR_ERROR(reader_u8, &action);
         switch (action) {
         case 0: { // Buy
-            uint16_t position;
+            uint16_t slot;
             uint32_t id;
             int16_t quantity;
             int32_t price;
-            READ_OR_ERROR(reader_u16, &position);
+            READ_OR_ERROR(reader_u16, &slot);
             READ_OR_ERROR(reader_u32, &id);
             READ_OR_ERROR(reader_i16, &quantity);
             READ_OR_ERROR(reader_i32, &price);
-            struct ClientResult res = client_buy(client, position, id, quantity, price);
+            struct ClientResult res = client_buy(client, slot, id, quantity, price);
             if (res.type < 0)
                 return (struct OnPacketResult) { .status = -1 };
 
@@ -644,13 +644,13 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         break;
 
         case 1: { // Sell
-            uint16_t position;
+            uint16_t slot;
             uint32_t id;
             int16_t quantity;
-            READ_OR_ERROR(reader_u16, &position);
+            READ_OR_ERROR(reader_u16, &slot);
             READ_OR_ERROR(reader_u32, &id);
             READ_OR_ERROR(reader_i16, &quantity);
-            struct ClientResult res = client_sell(client, position, id, quantity);
+            struct ClientResult res = client_sell(client, slot, id, quantity);
             if (res.type < 0)
                 return (struct OnPacketResult) { .status = -1 };
 
@@ -658,7 +658,14 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         }
         break;
 
-        case 2: // Recharge
+        case 2: { // Recharge
+            uint16_t slot;
+            READ_OR_ERROR(reader_u16, &slot);
+            struct ClientResult res = client_recharge(client, slot);
+            if (res.type < 0)
+                return (struct OnPacketResult) { .status = -1 };
+
+        }
         break;
 
         case 3: // Leave
