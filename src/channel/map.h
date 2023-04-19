@@ -68,15 +68,6 @@ int map_join(struct Map *map, struct Client *client, struct MapHandleContainer *
 void map_leave(struct Map *map, struct MapPlayer *player);
 
 /**
- * Do an action for each NPC in the map
- *
- * \param map The map
- * \param f The action to take
- * \param ctx Additional context to pass as the second argument to \p f
- */
-void map_for_each_npc(struct Map *map, void (*f)(struct Npc *, void *), void *ctx);
-
-/**
  * Do an action for each drop in the map
  *
  * \param map The map

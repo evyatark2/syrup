@@ -45,9 +45,6 @@ static void on_room_destroy(struct Room *room);
 
 static void on_sigint(int sig);
 
-static void notify_player_on_map(struct Session *src, struct Session *dst, void *ctx);
-static void notify_npc_on_map(struct Npc *npc, void *ctx);
-
 struct ChannelServer *SERVER;
 
 int main(void)
@@ -1286,8 +1283,6 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         //session_broadcast_to_room(session, len, packet);
 
         map_join(map, client, client_get_map(client));
-        session_foreach_in_room(session, notify_player_on_map, NULL);
-        map_for_each_npc(map, notify_npc_on_map, session);
 
         // Forced stat reset
         session_write(session, 2, (uint8_t[]) { 0x23, 0x00 }); // Forced stat reset
@@ -1412,6 +1407,7 @@ static bool on_client_join(struct Session *session, void *thread_ctx)
     const struct PortalInfo *info = wz_get_portal_info(chr->map, chr->spawnPoint);
     client_update_player_pos(client, info->x, info->y, 0, 6);
 
+    // Maybe transfer this to map_join()?
     {
         uint8_t packet[ADD_PLAYER_TO_MAP_PACKET_MAX_LENGTH];
         size_t len = add_player_to_map_packet(client_get_character(client), packet);
@@ -1443,27 +1439,5 @@ static void on_sigint(int sig)
 {
     channel_server_stop(SERVER);
     signal(sig, SIG_DFL);
-}
-
-static void notify_player_on_map(struct Session *src, struct Session *dst, void *ctx)
-{
-    struct Client *c = session_get_context(dst);
-    uint8_t packet[ADD_PLAYER_TO_MAP_PACKET_MAX_LENGTH];
-    size_t len = add_player_to_map_packet(client_get_character(c), packet);
-    session_write(src, len, packet);
-}
-
-static void notify_npc_on_map(struct Npc *npc, void *ctx)
-{
-    {
-        uint8_t packet[SPAWN_NPC_PACKET_LENGTH];
-        spawn_npc_packet(npc->oid, npc->id, npc->x, npc->cy, npc->f == 1, npc->fh, npc->rx0, npc->rx1, packet);
-        session_write(ctx, SPAWN_NPC_PACKET_LENGTH, packet);
-    }
-    {
-        uint8_t packet[SPAWN_NPC_CONTROLLER_PACKET_LENGTH];
-        spawn_npc_controller_packet(npc->oid, npc->id, npc->x, npc->cy, npc->f == 1, npc->fh, npc->rx0, npc->rx1, packet);
-        session_write(ctx, SPAWN_NPC_CONTROLLER_PACKET_LENGTH, packet);
-    }
 }
 

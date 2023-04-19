@@ -19,6 +19,7 @@ function start(c)
             end
 
             if not c:hasItem(2010007) then
+                -- We are assuming that at this point the player must have empty inventory slots
                 c:gainItems({ { id = 2010007, amount = 1 } })
             end
 

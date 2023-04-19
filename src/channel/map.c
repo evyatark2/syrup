@@ -437,6 +437,12 @@ int map_join(struct Map *map, struct Client *client, struct MapHandleContainer *
 
     player->player = &map->players[map->playerCount];
 
+    for (size_t i = 0; i < map->playerCount; i++)
+        client_announce_add_player(map->players[i].client, client_get_character(client));
+
+    for (size_t i = 0; i < map->npcCount; i++)
+        client_announce_add_npc(client, &map->npcs[i]);
+
     if (map->heap.count == 0)
         map->respawnHandle = room_add_timer(map->room, 10 * 1000, on_respawn, NULL, false);
 
