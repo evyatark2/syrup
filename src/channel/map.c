@@ -11,7 +11,7 @@
 #include "../wz.h"
 #include "client.h"
 #include "drops.h"
-#include "monster.h"
+#include "life.h"
 #include "scripting/reactor-manager.h"
 #include "server.h"
 
@@ -883,12 +883,12 @@ struct ClientResult map_cont_script(struct Map *map, struct MapPlayer *player)
     return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
 }
 
-const struct Npc *map_get_npc(struct Map *map, uint32_t oid)
+uint32_t map_get_npc(struct Map *map, uint32_t oid)
 {
     struct MapObject *object = object_list_get(&map->objectList, oid);
     if (object == NULL || object->type != MAP_OBJECT_NPC)
-        return NULL;
-    return &map->npcs[object->index];
+        return -1;
+    return map->npcs[object->index].id;
 }
 
 bool map_move_monster(struct Map *map, struct MapPlayer *controller, uint8_t activity, uint32_t oid, int16_t x, int16_t y, uint16_t fh, uint8_t stance, size_t len, uint8_t *raw_data)

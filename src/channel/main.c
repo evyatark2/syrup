@@ -569,11 +569,11 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         READ_OR_ERROR(reader_u32, &oid);
         READER_END();
 
-        const struct Npc *npc = map_get_npc(map, oid);
-        if (npc == NULL)
+        uint32_t id = map_get_npc(map, oid);
+        if (id == -1)
             return (struct OnPacketResult) { .status = -1 };
 
-        struct ClientResult res = client_npc_talk(client, npc->id);
+        struct ClientResult res = client_npc_talk(client, id);
             switch (res.type) {
             case CLIENT_RESULT_TYPE_BAN:
             case CLIENT_RESULT_TYPE_ERROR:

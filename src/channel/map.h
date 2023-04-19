@@ -4,22 +4,10 @@
 #include <stdint.h>
 
 #include "client.h"
-#include "monster.h"
+//#include "life.h"
 #include "server.h" // This is temporary for map_join, I should find a better way to do this
 #include "../item.h"
 #include "../wz.h"
-
-struct Npc {
-    uint32_t oid;
-    uint32_t id;
-    int16_t x;
-    int16_t y;
-    int16_t fh;
-    int16_t cy;
-    int16_t rx0;
-    int16_t rx1;
-    bool f;
-};
 
 struct MapPlayer;
 struct MapHandleContainer {
@@ -112,9 +100,9 @@ struct ClientResult map_cont_script(struct Map *map, struct MapPlayer *player);
  * \param map The map to get the NPC from.
  * \param oid The object ID of the NPC to get
  *
- * \return The requested NPC or NULL if it wasn't found.
+ * \return The NPC ID
  */
-const struct Npc *map_get_npc(struct Map *map, uint32_t oid);
+uint32_t map_get_npc(struct Map *map, uint32_t oid);
 
 /**
  * Move a monster.

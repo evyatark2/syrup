@@ -7,7 +7,7 @@
 
 #include "../database.h"
 #include "drop.h"
-#include "monster.h"
+#include "life.h"
 #include "scripting/script-manager.h"
 #include "server.h"
 

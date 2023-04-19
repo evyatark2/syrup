@@ -1142,6 +1142,7 @@ static void on_session_join(int fd, short what, void *ctx_)
     struct WorkerCommand command;
 
     if ((status = read(fd, &command, sizeof(struct WorkerCommand))) == 0) {
+        // Shutdown request
         int fd = event_get_fd(manager->worker.transportEvent);
         event_free(manager->worker.transportEvent);
         close(fd);
@@ -1150,7 +1151,7 @@ static void on_session_join(int fd, short what, void *ctx_)
 
         event_del(manager->timer);
 
-        // timers that aren't keepAlive will be killed here
+        // Timers that aren't keepAlive will be killed here as part of destroy_room()
         hash_set_u32_foreach_with_remove(manager->rooms, do_kill_room, manager);
     } else if (status != -1) {
         switch (command.type) {
@@ -1768,6 +1769,9 @@ static void destroy_room(struct RoomManager *manager, struct Room *room, bool as
     if (room->timerCount == 0) {
         manager->onRoomDestroy(room);
         free(room->timers);
+
+        // If the room is being destroyed while iterating over the manager->rooms set then
+        // we must not modify that set
         if (!async)
             hash_set_u32_remove(manager->rooms, room->id);
 
