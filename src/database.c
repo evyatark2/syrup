@@ -200,6 +200,7 @@ struct DatabaseRequest *database_request_create(struct DatabaseConnection *conn,
         req->res.getCharacter.completedQuests = NULL;
         req->res.getCharacter.skills = NULL;
         req->res.getCharacter.monsterBook = NULL;
+        req->res.getCharacter.keyMap = NULL;
     } else if (req->params.type == DATABASE_REQUEST_TYPE_UPDATE_CHARACTER) {
         req->temp.updateCharacter.data = NULL;
     }
@@ -236,8 +237,8 @@ void database_request_destroy(struct DatabaseRequest *req)
         free(req->res.getCharacter.monsterBook);
         free(req->res.getCharacter.skills);
         free(req->res.getCharacter.completedQuests);
-        free(req->res.getCharacter.progresses);
         free(req->res.getCharacter.questInfos);
+        free(req->res.getCharacter.progresses);
         free(req->res.getCharacter.quests);
     } else if (req->params.type == DATABASE_REQUEST_TYPE_UPDATE_CHARACTER) {
         free(req->temp.updateCharacter.data);
