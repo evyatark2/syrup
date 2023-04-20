@@ -821,13 +821,14 @@ struct ClientResult map_hit_reactor(struct Map *map, struct MapPlayer *player, u
         return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
 
     struct Reactor *reactor = &map->reactors[object->index];
-    if (wz_get_reactor_info(reactor->id)->states[reactor->state].eventCount == 0)
+    const struct ReactorInfo *info = wz_get_reactor_info(reactor->id);
+    if (info->states[reactor->state].eventCount == 0)
         return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
 
     bool found = false;
-    for (size_t i = 0; i < wz_get_reactor_info(reactor->id)->states[reactor->state].eventCount; i++) {
-        if (wz_get_reactor_info(reactor->id)->states[reactor->state].events[i].type == REACTOR_EVENT_TYPE_HIT) {
-            reactor->state = wz_get_reactor_info(reactor->id)->states[reactor->state].events[i].next;
+    for (size_t i = 0; i < info->states[reactor->state].eventCount; i++) {
+        if (info->states[reactor->state].events[i].type == REACTOR_EVENT_TYPE_HIT) {
+            reactor->state = info->states[reactor->state].events[i].next;
             found = true;
             break;
         }
@@ -836,10 +837,10 @@ struct ClientResult map_hit_reactor(struct Map *map, struct MapPlayer *player, u
     if (!found)
         return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
 
-    if (wz_get_reactor_info(reactor->id)->states[reactor->state].eventCount == 0) {
+    if (info->states[reactor->state].eventCount == 0) {
         // Reactor broken
         char script_name[37];
-        strcpy(script_name, wz_get_reactor_info(reactor->id)->action);
+        strcpy(script_name, info->action);
         strcat(script_name, ".lua");
         player->script = script_manager_alloc(map->reactorManager, script_name, 0);
         if (player->script == NULL) {
@@ -1861,7 +1862,8 @@ static struct MapObject *object_list_get(struct ObjectList *list, uint32_t oid)
 
     size_t start = XXH3_64bits(&oid, sizeof(uint32_t)) % list->objectCapacity;
     size_t index = start;
-    while (list->objects[index].type == MAP_OBJECT_DELETED || (list->objects[index].type != MAP_OBJECT_NONE && list->objects[index].oid != oid)) {
+    while (list->objects[index].type == MAP_OBJECT_DELETED ||
+            (list->objects[index].type != MAP_OBJECT_NONE && list->objects[index].oid != oid)) {
         index++;
         index %= list->objectCapacity;
         if (index == start)
@@ -1937,7 +1939,8 @@ static void heap_remove(struct ControllerHeap *heap, struct ControllerHeapNode *
     heap->controllers[node->index] = heap->controllers[heap->count - 1];
     heap->controllers[node->index]->index = node->index;
     heap->count--;
-    if (node->index == 0 || heap->controllers[(node->index-1) / 2]->controlleeCount < heap->controllers[node->index]->controlleeCount)
+    if (node->index == 0 ||
+            heap->controllers[(node->index-1) / 2]->controlleeCount < heap->controllers[node->index]->controlleeCount)
         sift_down(heap, node->index);
     else
         sift_up(heap, node->index);
@@ -1965,11 +1968,13 @@ static void sift_down(struct ControllerHeap *heap, size_t i)
             break;
         }
 
-        if (heap->controllers[i]->controlleeCount <= heap->controllers[i*2 + 1]->controlleeCount && heap->controllers[i]->controlleeCount <= heap->controllers[i*2 + 2]->controlleeCount) {
+        if (heap->controllers[i]->controlleeCount <= heap->controllers[i*2 + 1]->controlleeCount &&
+                heap->controllers[i]->controlleeCount <= heap->controllers[i*2 + 2]->controlleeCount) {
             break;
         }
 
-        if (heap->controllers[i]->controlleeCount > heap->controllers[i*2 + 1]->controlleeCount && heap->controllers[i]->controlleeCount > heap->controllers[i*2 + 2]->controlleeCount) {
+        if (heap->controllers[i]->controlleeCount > heap->controllers[i*2 + 1]->controlleeCount &&
+                heap->controllers[i]->controlleeCount > heap->controllers[i*2 + 2]->controlleeCount) {
             if (heap->controllers[i*2 + 1]->controlleeCount < heap->controllers[i*2 + 2]->controlleeCount) {
                 swap(heap, i, i*2 + 1);
                 i = i*2 + 1;
