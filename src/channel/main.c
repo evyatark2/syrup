@@ -1384,7 +1384,7 @@ static struct OnResumeResult on_client_resume_disconnect(struct Session *session
 
     struct ClientContResult res = client_cont(client, status);
     if (res.status > 0 && (res.fd != session_get_event_fd(session) || res.status != session_get_event_disposition(session))) {
-        session_set_event(session, res.status, res.fd, on_client_resume);
+        session_set_event(session, res.status, res.fd, on_client_resume_disconnect);
     }
 
     return (struct OnResumeResult) { .status = res.status, .room = res.map };

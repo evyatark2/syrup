@@ -633,7 +633,7 @@ int session_get_event_disposition(struct Session *session)
 
 int session_get_event_fd(struct Session *session)
 {
-    return event_get_fd(session->userEvent);
+    return session->userEvent != NULL ? event_get_fd(session->userEvent) : -1;
 }
 
 int session_set_event(struct Session *session, int status, int fd, OnResume *on_resume)
