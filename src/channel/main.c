@@ -538,6 +538,12 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
                 if (client_is_auto_pickup_enabled(client)) {
                     map_pick_up_all(room_get_context(session_get_room(session)), client_get_map(client)->player);
                 }
+            } else if (!strncmp(string + 1, "killall", str_len - 1)) {
+                size_t count;
+                uint32_t *ids = map_kill_all_by(room_get_context(session_get_room(session)), client_get_map(client)->player, &count);
+                for (size_t i = 0; i < count; i++)
+                    client_kill_monster(client, ids[i]);
+                free(ids);
             }
         } else if (string[0] != '/') {
             uint8_t packet[CHAT_PACKET_MAX_LENGTH];

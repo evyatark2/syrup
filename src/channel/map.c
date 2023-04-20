@@ -612,18 +612,6 @@ void map_leave(struct Map *map, struct MapPlayer *player)
     }
 }
 
-void map_for_each_npc(struct Map *map, void (*f)(struct Npc *, void *), void *ctx)
-{
-    for (size_t i = 0; i < map->npcCount; i++)
-        f(map->npcs + i, ctx);
-}
-
-void map_for_each_monster(struct Map *map, void (*f)(struct Monster *, void *), void *ctx)
-{
-    for (size_t i = 0; i < map->spawnerCount; i++)
-        f(&map->monsters[i].monster, ctx);
-}
-
 void map_for_each_drop(struct Map *map, void (*f)(struct Drop *, void *), void *ctx)
 {
     for (size_t i = map->dropBatchStart; i < map->dropBatchEnd; i++) {
@@ -798,6 +786,31 @@ uint32_t map_damage_monster_by(struct Map *map, struct MapPlayer *player, uint32
     }
 
     return -1;
+}
+
+uint32_t *map_kill_all_by(struct Map *map, struct MapPlayer *player, size_t *count)
+{
+    uint32_t *ids = malloc(map->monsterCount * sizeof(uint32_t));
+    if (ids == NULL)
+        return NULL;
+
+    *count = 0;
+
+    for (size_t i = 0; i < map->monsterCount; i++) {
+        if (map->monsters[i].monster.hp > 0) {
+            uint32_t oid = map->monsters[i].monster.oid;
+            uint32_t id = map_damage_monster_by(map, player, client_get_character(player->client)->id, oid, 1, &map->monsters[i].monster.hp);
+            ids[*count] = id;
+            (*count)++;
+
+            // If the OID of the monster doesn't exist anymore then map_kill_monster was called
+            // And so the current monster index was replaced with the last monster
+            if (object_list_get(&map->objectList, oid) == NULL)
+                i--;
+        }
+    }
+
+    return ids;
 }
 
 struct ClientResult map_hit_reactor(struct Map *map, struct MapPlayer *player, uint32_t oid, uint8_t stance)

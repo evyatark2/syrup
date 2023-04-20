@@ -88,7 +88,18 @@ bool map_monster_is_alive(struct Map *map, uint32_t id, uint32_t oid);
  *
  * \return If the monster was killed, its ID; otherwise -1.
  */
-uint32_t map_damage_monster_by(struct Map *map, struct MapPlayer *controller, uint32_t char_id, uint32_t oid, size_t hit_count, int32_t *damage);
+uint32_t map_damage_monster_by(struct Map *map, struct MapPlayer *player, uint32_t char_id, uint32_t oid, size_t hit_count, int32_t *damage);
+
+/**
+ * Kill all monsters on the map
+ *
+ * \param map The map
+ * \param player The player that will get the experience and own the drops
+ * \param[out] count The number of monster killed
+ *
+ * \return An array of *count size of the IDs of the killed monsters
+ */
+uint32_t *map_kill_all_by(struct Map *map, struct MapPlayer *player, size_t *count);
 
 struct ClientResult map_hit_reactor(struct Map *map, struct MapPlayer *player, uint32_t oid, uint8_t stance);
 
