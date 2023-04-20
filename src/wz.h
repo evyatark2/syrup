@@ -197,6 +197,14 @@ struct QuestItemAction {
     uint16_t job;
 };
 
+struct QuestSkillAction {
+    uint32_t id;
+    int8_t level;
+    int8_t masterLevel;
+    size_t jobCount;
+    uint16_t *jobs;
+};
+
 struct QuestAct {
     enum QuestActType type;
     struct {
@@ -216,6 +224,10 @@ struct QuestAct {
     struct {
         uint16_t qid;
     } nextQuest;
+    struct {
+        size_t count;
+        struct QuestSkillAction *skills;
+    } skill;
 };
 
 struct QuestInfo {

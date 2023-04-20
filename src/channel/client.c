@@ -4173,28 +4173,29 @@ static bool end_quest(struct Client *client, uint16_t qid, uint32_t npc, bool *s
     const struct QuestInfo *info = wz_get_quest_info(qid);
     uint16_t next_quest = 0;
     for (size_t i = 0; i < info->endActCount; i++) {
-        switch (info->endActs[i].type) {
+        struct QuestAct *act = &info->endActs[i];
+        switch (act->type) {
         case QUEST_ACT_TYPE_EXP:
-            client_gain_exp(client, info->endActs[i].exp.amount, true);
+            client_gain_exp(client, act->exp.amount, true);
         break;
 
         case QUEST_ACT_TYPE_MESO:
-            client_gain_meso(client, info->endActs[i].meso.amount, false, true);
+            client_gain_meso(client, act->meso.amount, false, true);
         break;
 
         case QUEST_ACT_TYPE_ITEM: {
             bool has_prop = false;
             int8_t item_count = 0;
             int32_t total = 0;
-            for (size_t j = 0; j < info->endActs[i].item.count; j++) {
-                if (info->endActs[i].item.items[j].prop == 0 || !has_prop) {
-                    if (info->endActs[i].item.items[j].prop != 0)
+            for (size_t i = 0; i < act->item.count; i++) {
+                if (act->item.items[i].prop == 0 || !has_prop) {
+                    if (act->item.items[i].prop != 0)
                         has_prop = true;
 
                     item_count++;
                 }
 
-                total += info->endActs[i].item.items[j].prop;
+                total += act->item.items[i].prop;
             }
 
             uint32_t ids[item_count];
@@ -4214,6 +4215,7 @@ static bool end_quest(struct Client *client, uint16_t qid, uint32_t npc, bool *s
                 }
 
                 for (size_t i = 0; i < 4; i++) {
+                    size_t j;
                     for (j = 0; j < chr->inventory[i].slotCount; j++) {
                         if (chr->inventory[i].items[j].isEmpty)
                             break;
@@ -4230,14 +4232,14 @@ static bool end_quest(struct Client *client, uint16_t qid, uint32_t npc, bool *s
             has_prop = false;
             item_count = 0;
             total = 0;
-            for (size_t j = 0; j < info->endActs[i].item.count; j++) {
-                total += info->endActs[i].item.items[j].prop;
-                if (info->endActs[i].item.items[j].prop == 0 || (!has_prop && r < total)) {
-                    if (info->endActs[i].item.items[j].prop != 0)
+            for (size_t j = 0; j < act->item.count; j++) {
+                total += act->item.items[j].prop;
+                if (act->item.items[j].prop == 0 || (!has_prop && r < total)) {
+                    if (act->item.items[j].prop != 0)
                         has_prop = true;
 
-                    ids[item_count] = info->endActs[i].item.items[j].id;
-                    amounts[item_count] = info->endActs[i].item.items[j].count;
+                    ids[item_count] = act->item.items[j].id;
+                    amounts[item_count] = act->item.items[j].count;
                     item_count++;
                 }
             }
@@ -4257,6 +4259,27 @@ static bool end_quest(struct Client *client, uint16_t qid, uint32_t npc, bool *s
 
         case QUEST_ACT_TYPE_NEXT_QUEST: {
             next_quest = info->endActs[i].nextQuest.qid;
+        }
+        break;
+
+        case QUEST_ACT_TYPE_SKILL: {
+            for (size_t i = 0; i < act->skill.count; i++) {
+                for (size_t j = 0; j < act->skill.skills[i].jobCount; j++) {
+                    if (chr->job == act->skill.skills[i].jobs[j]) {
+                        struct Skill skill = {
+                            .id = act->skill.skills[i].id,
+                            .level = act->skill.skills[i].level,
+                            .masterLevel = act->skill.skills[i].masterLevel,
+                        };
+
+                        hash_set_u32_insert(chr->skills, &skill);
+                        uint8_t packet[UPDATE_SKILL_PACKET_LENGTH];
+                        update_skill_packet(skill.id, skill.level, skill.masterLevel, packet);
+                        session_write(client->session, UPDATE_SKILL_PACKET_LENGTH, packet);
+                    }
+                }
+
+            }
         }
         break;
 

@@ -163,6 +163,9 @@ enum QuestActItemType {
     QUEST_ACT_ITEM_TYPE_ACT_QUEST,
     QUEST_ACT_ITEM_TYPE_ACT_ITEMS,
     QUEST_ACT_ITEM_TYPE_ACT_ITEM,
+    QUEST_ACT_ITEM_TYPE_ACT_SKILLS,
+    QUEST_ACT_ITEM_TYPE_ACT_SKILL,
+    QUEST_ACT_ITEM_TYPE_ACT_SKILL_JOBS,
 };
 
 struct QuestActParserStackNode {
@@ -176,6 +179,7 @@ struct QuestActParserContext {
     size_t questCapacity;
     size_t actCapacity;
     size_t itemCapacity;
+    size_t jobCapacity;
     uint32_t skip;
 };
 
@@ -1054,15 +1058,27 @@ void wz_terminate(void)
     cmph_destroy(QUEST_INFO_MPH);
     for (size_t i = 0; i < QUEST_INFO_COUNT; i++) {
         for (size_t j = 0; j < QUEST_INFOS[i].endActCount; j++) {
-            if (QUEST_INFOS[i].endActs[j].type == QUEST_ACT_TYPE_ITEM)
+            if (QUEST_INFOS[i].endActs[j].type == QUEST_ACT_TYPE_ITEM) {
                 free(QUEST_INFOS[i].endActs[j].item.items);
+            } else if (QUEST_INFOS[i].endActs[j].type == QUEST_ACT_TYPE_SKILL) {
+                for (size_t k = 0; k < QUEST_INFOS[i].endActs[j].skill.count; k++)
+                    free(QUEST_INFOS[i].endActs[j].skill.skills[k].jobs);
+                free(QUEST_INFOS[i].endActs[j].skill.skills);
+            }
         }
         free(QUEST_INFOS[i].endActs);
+
         for (size_t j = 0; j < QUEST_INFOS[i].startActCount; j++) {
-            if (QUEST_INFOS[i].startActs[j].type == QUEST_ACT_TYPE_ITEM)
+            if (QUEST_INFOS[i].startActs[j].type == QUEST_ACT_TYPE_ITEM) {
                 free(QUEST_INFOS[i].startActs[j].item.items);
+            } else if (QUEST_INFOS[i].startActs[j].type == QUEST_ACT_TYPE_SKILL) {
+                for (size_t k = 0; k < QUEST_INFOS[i].startActs[j].skill.count; k++)
+                    free(QUEST_INFOS[i].startActs[j].skill.skills[k].jobs);
+                free(QUEST_INFOS[i].startActs[j].skill.skills);
+            }
         }
         free(QUEST_INFOS[i].startActs);
+
         for (size_t j = 0; j < QUEST_INFOS[i].endRequirementCount; j++) {
             if (QUEST_INFOS[i].endRequirements[j].type == QUEST_REQUIREMENT_TYPE_JOB)
                 free(QUEST_INFOS[i].endRequirements[j].job.jobs);
@@ -1076,6 +1092,7 @@ void wz_terminate(void)
             }
         }
         free(QUEST_INFOS[i].endRequirements);
+
         for (size_t j = 0; j < QUEST_INFOS[i].startRequirementCount; j++) {
             if (QUEST_INFOS[i].startRequirements[j].type == QUEST_REQUIREMENT_TYPE_JOB)
                 free(QUEST_INFOS[i].startRequirements[j].job.jobs);
@@ -2576,6 +2593,22 @@ static void on_quest_act_start(void *user_data, const XML_Char *name, const XML_
                     //new->next = ctx->head;
                     //new->type = QUEST_ACT_ITEM_TYPE_ACT_QUESTS;
                     //ctx->head = new;
+                } else if (!strcmp(attrs[1], "skill")) {
+                    if (quest->startActCount == ctx->actCapacity) {
+                        quest->startActs = realloc(quest->startActs, (ctx->actCapacity * 2) * sizeof(struct QuestAct));
+                        ctx->actCapacity *= 2;
+                    }
+
+                    quest->startActs[quest->startActCount].type = QUEST_ACT_TYPE_SKILL;
+                    quest->startActs[quest->startActCount].skill.count = 0;
+                    quest->startActs[quest->startActCount].skill.skills = malloc(sizeof(struct QuestSkillAction));
+
+                    ctx->itemCapacity = 1;
+
+                    struct QuestActParserStackNode *new = malloc(sizeof(struct QuestActParserStackNode));
+                    new->next = ctx->head;
+                    new->type = QUEST_ACT_ITEM_TYPE_ACT_SKILLS;
+                    ctx->head = new;
                 } else {
                     ctx->skip++;
                 }
@@ -2645,6 +2678,22 @@ static void on_quest_act_start(void *user_data, const XML_Char *name, const XML_
                     //new->next = ctx->head;
                     //new->type = QUEST_ACT_ITEM_TYPE_ACT_QUESTS;
                     //ctx->head = new;
+                } else if (!strcmp(attrs[1], "skill")) {
+                    if (quest->endActCount == ctx->actCapacity) {
+                        quest->endActs = realloc(quest->endActs, (ctx->actCapacity * 2) * sizeof(struct QuestAct));
+                        ctx->actCapacity *= 2;
+                    }
+
+                    quest->endActs[quest->endActCount].type = QUEST_ACT_TYPE_SKILL;
+                    quest->endActs[quest->endActCount].skill.count = 0;
+                    quest->endActs[quest->endActCount].skill.skills = malloc(sizeof(struct QuestSkillAction));
+
+                    ctx->itemCapacity = 1;
+
+                    struct QuestActParserStackNode *new = malloc(sizeof(struct QuestActParserStackNode));
+                    new->next = ctx->head;
+                    new->type = QUEST_ACT_ITEM_TYPE_ACT_SKILLS;
+                    ctx->head = new;
                 } else {
                     ctx->skip++;
                 }
@@ -2704,7 +2753,6 @@ static void on_quest_act_start(void *user_data, const XML_Char *name, const XML_
                 ctx->itemCapacity *= 2;
             }
 
-            act->type = QUEST_ACT_TYPE_ITEM;
             act->item.items[act->item.count].gender = 0;
             act->item.items[act->item.count].job = 0;
             act->item.items[act->item.count].prop = 0;
@@ -2756,6 +2804,103 @@ static void on_quest_act_start(void *user_data, const XML_Char *name, const XML_
         }
         break;
 
+        case QUEST_ACT_ITEM_TYPE_ACT_SKILLS: {
+            if (strcmp(name, "imgdir"))
+                assert(0);
+
+            struct QuestAct *act = ctx->head->next->type == QUEST_ACT_ITEM_TYPE_START ?
+                &QUEST_INFOS[ctx->currentQuest].startActs[QUEST_INFOS[ctx->currentQuest].startActCount] :
+                &QUEST_INFOS[ctx->currentQuest].endActs[QUEST_INFOS[ctx->currentQuest].endActCount];
+
+            if (ctx->itemCapacity == act->skill.count) {
+                act->skill.skills = realloc(act->skill.skills, (ctx->itemCapacity * 2) * sizeof(struct QuestSkillAction));
+                ctx->itemCapacity *= 2;
+            }
+
+            act->skill.skills[act->skill.count].jobCount = 0;
+            act->skill.skills[act->skill.count].jobs = NULL;
+
+            struct QuestActParserStackNode *new = malloc(sizeof(struct QuestActParserStackNode));
+            new->next = ctx->head;
+            new->type = QUEST_ACT_ITEM_TYPE_ACT_SKILL;
+            ctx->head  = new;
+        }
+        break;
+
+        case QUEST_ACT_ITEM_TYPE_ACT_SKILL: {
+            struct QuestAct *act = ctx->head->next->next->type == QUEST_ACT_ITEM_TYPE_START ?
+                &QUEST_INFOS[ctx->currentQuest].startActs[QUEST_INFOS[ctx->currentQuest].startActCount] :
+                &QUEST_INFOS[ctx->currentQuest].endActs[QUEST_INFOS[ctx->currentQuest].endActCount];
+
+            if (!strcmp(name, "int")) {
+                const XML_Char *key = NULL;
+                const XML_Char *value = NULL;
+                for (size_t i = 0; attrs[i] != NULL; i += 2) {
+                    if (!strcmp(attrs[i], "name"))
+                        key = attrs[i+1];
+                    else if (!strcmp(attrs[i], "value"))
+                        value = attrs[i+1];
+                }
+
+                assert(key != NULL && value != NULL);
+
+                ctx->skip++;
+                if (!strcmp(key, "id")) {
+                    act->skill.skills[act->skill.count].id = strtol(value, NULL, 10);
+                } else if (!strcmp(key, "level")) {
+                    act->skill.skills[act->skill.count].level = strtol(value, NULL, 10);
+                } else if (!strcmp(key, "masterLevel")) {
+                    act->skill.skills[act->skill.count].masterLevel = strtol(value, NULL, 10);
+                }
+            } else if (!strcmp(name, "imgdir")) {
+                act->skill.skills[act->skill.count].jobs = malloc(sizeof(uint16_t));
+
+                ctx->jobCapacity = 1;
+
+                struct QuestActParserStackNode *new = malloc(sizeof(struct QuestActParserStackNode));
+                new->next = ctx->head;
+                new->type = QUEST_ACT_ITEM_TYPE_ACT_SKILL_JOBS;
+                ctx->head  = new;
+            } else {
+                // Quest 6034 has a 'short' item with key 'acquire'
+                ctx->skip++;
+            }
+        }
+        break;
+
+        case QUEST_ACT_ITEM_TYPE_ACT_SKILL_JOBS: {
+            struct QuestAct *act = ctx->head->next->next->type == QUEST_ACT_ITEM_TYPE_START ?
+                &QUEST_INFOS[ctx->currentQuest].startActs[QUEST_INFOS[ctx->currentQuest].startActCount] :
+                &QUEST_INFOS[ctx->currentQuest].endActs[QUEST_INFOS[ctx->currentQuest].endActCount];
+
+            struct QuestSkillAction *skill = &act->skill.skills[act->skill.count];
+
+            if (ctx->jobCapacity == skill->jobCount) {
+                skill->jobs = realloc(skill->jobs, (ctx->jobCapacity * 2) * sizeof(uint16_t));
+                ctx->jobCapacity *= 2;
+            }
+
+            const XML_Char *key = NULL;
+            const XML_Char *value = NULL;
+            for (size_t i = 0; attrs[i] != NULL; i += 2) {
+                if (!strcmp(attrs[i], "name"))
+                    key = attrs[i+1];
+                else if (!strcmp(attrs[i], "value"))
+                    value = attrs[i+1];
+            }
+
+            assert(key != NULL && value != NULL);
+
+            if (!strcmp(name, "int")) {
+                ctx->skip++;
+                skill->jobs[skill->jobCount] = strtol(value, NULL, 10);
+                skill->jobCount++;
+            } else {
+                assert(0);
+            }
+        }
+        break;
+
         default:
             ctx->skip++;
         }
@@ -2775,7 +2920,14 @@ static void on_quest_act_end(void *user_data, const XML_Char *name)
             QUEST_INFOS[ctx->currentQuest].startActs[QUEST_INFOS[ctx->currentQuest].startActCount].item.count++;
         else
             QUEST_INFOS[ctx->currentQuest].endActs[QUEST_INFOS[ctx->currentQuest].endActCount].item.count++;
-    } else if (ctx->head->type == QUEST_ACT_ITEM_TYPE_ACT_QUESTS || ctx->head->type == QUEST_ACT_ITEM_TYPE_ACT_ITEMS) {
+    } else if (ctx->head->type == QUEST_ACT_ITEM_TYPE_ACT_SKILL) {
+        if (ctx->head->next->next->type == QUEST_ACT_ITEM_TYPE_START)
+            QUEST_INFOS[ctx->currentQuest].startActs[QUEST_INFOS[ctx->currentQuest].startActCount].skill.count++;
+        else
+            QUEST_INFOS[ctx->currentQuest].endActs[QUEST_INFOS[ctx->currentQuest].endActCount].skill.count++;
+    } else if (ctx->head->type == QUEST_ACT_ITEM_TYPE_ACT_QUESTS ||
+            ctx->head->type == QUEST_ACT_ITEM_TYPE_ACT_ITEMS ||
+            ctx->head->type == QUEST_ACT_ITEM_TYPE_ACT_SKILLS) {
         if (ctx->head->next->type == QUEST_ACT_ITEM_TYPE_START)
             QUEST_INFOS[ctx->currentQuest].startActCount++;
         else
