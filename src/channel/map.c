@@ -920,12 +920,6 @@ bool map_move_monster(struct Map *map, struct MapPlayer *controller, uint8_t act
     monster->monster.fh = fh;
     monster->monster.stance = stance;
 
-    {
-        uint8_t packet[MOVE_MOB_PACKET_MAX_LENGTH];
-        size_t packet_len = move_monster_packet(oid, activity, len, raw_data, packet);
-        session_broadcast_to_room(client_get_session(monster->controller->client), packet_len, packet);
-    }
-
     return true;
 }
 

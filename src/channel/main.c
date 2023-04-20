@@ -1131,9 +1131,17 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         SKIP(9);
 
         if (map_move_monster(map, client_get_map(client)->player, activity, oid, x, y, fh, stance, len, packet + 25)) {
-            uint8_t send[MOVE_MOB_RESPONSE_PACKET_LENGTH];
-            move_monster_response_packet(oid, moveid, send);
-            session_write(session, MOVE_MOB_RESPONSE_PACKET_LENGTH, send);
+            {
+                uint8_t packet[MOVE_MONSTER_PACKET_MAX_LENGTH];
+                size_t packet_len = move_monster_packet(oid, activity, len, packet + 25, packet);
+                session_broadcast_to_room(session, packet_len, packet);
+            }
+
+            {
+                uint8_t send[MOVE_MONSTER_RESPONSE_PACKET_LENGTH];
+                move_monster_response_packet(oid, moveid, send);
+                session_write(session, MOVE_MONSTER_RESPONSE_PACKET_LENGTH, send);
+            }
         }
 
         READER_END();
