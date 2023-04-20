@@ -321,5 +321,8 @@ size_t popup_message_packet(uint16_t len, const char *message, uint8_t *packet);
 #define KEYMAP_PACKET_LENGTH 453
 void keymap_packet(const struct KeyMapEntry *keymap, uint8_t *packet);
 
+#define UPDATE_CHAR_LOOK_MAX_LENGTH 363
+size_t update_char_look(const struct Character *chr, uint8_t *packet);
+
 #endif
 

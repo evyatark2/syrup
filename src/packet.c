@@ -1412,6 +1412,24 @@ void keymap_packet(const struct KeyMapEntry *keymap, uint8_t *packet)
     }
 }
 
+size_t update_char_look(const struct Character *chr, uint8_t *packet)
+{
+    struct Writer writer;
+    writer_init(&writer, UPDATE_CHAR_LOOK_MAX_LENGTH, packet);
+
+    writer_u16(&writer, 0x00C5);
+    writer_u32(&writer, chr->id);
+    writer_u8(&writer, 1);
+    struct CharacterAppearance appearance = character_to_character_appearance(chr);
+    writer_char_appearance(&writer, &appearance, false);
+    writer_u8(&writer, 0); // Crush rings
+    writer_u8(&writer, 0); // Friendship rings
+    writer_u8(&writer, 0); // Marriage ring
+    writer_u32(&writer, 0);
+
+    return writer.pos;
+}
+
 static void exp_gain_packet_internal(struct Writer *writer, int32_t exp, int32_t equip_bonus, int32_t party_bonus, bool white, bool in_chat)
 {
     writer_u16(writer, 0x0027);

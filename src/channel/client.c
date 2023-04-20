@@ -2693,6 +2693,12 @@ bool client_equip(struct Client *client, uint8_t src, enum EquipSlot slot)
         session_write(client->session, len, packet);
     }
 
+    {
+        uint8_t packet[UPDATE_CHAR_LOOK_MAX_LENGTH];
+        size_t len = update_char_look(chr, packet);
+        session_broadcast_to_room(client->session, len, packet);
+    }
+
     return true;
 }
 
@@ -2774,6 +2780,12 @@ bool client_unequip(struct Client *client, enum EquipSlot slot, uint8_t dst)
         uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
         size_t len = modify_items_packet(1, &mod, packet);
         session_write(client->session, len, packet);
+    }
+
+    {
+        uint8_t packet[UPDATE_CHAR_LOOK_MAX_LENGTH];
+        size_t len = update_char_look(chr, packet);
+        session_broadcast_to_room(client->session, len, packet);
     }
 
     return true;
