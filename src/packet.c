@@ -391,7 +391,7 @@ size_t enter_map_packet(struct Character *chr, uint8_t *packet) {
 void set_gender_packet(bool gender, uint8_t *packet)
 {
     struct Writer writer;
-    writer_init(&writer, CHANGE_MAP_PACKET_LENGTH, packet);
+    writer_init(&writer, SET_GENDER_PACKET_LENGTH, packet);
 
     writer_u16(&writer, 0x003A);
     writer_bool(&writer, gender);
@@ -688,7 +688,7 @@ void npc_action_packet(size_t size, uint8_t *data, uint8_t *packet)
 size_t move_monster_packet(uint32_t oid, uint8_t activity, size_t len, uint8_t *data, uint8_t *packet)
 {
     struct Writer writer;
-    writer_init(&writer, MOVE_MOB_PACKET_MAX_LENGTH, packet);
+    writer_init(&writer, MOVE_MONSTER_PACKET_MAX_LENGTH, packet);
 
     writer_u16(&writer, 0x00EF);
     writer_u32(&writer, oid);
@@ -706,7 +706,7 @@ size_t move_monster_packet(uint32_t oid, uint8_t activity, size_t len, uint8_t *
 void move_monster_response_packet(uint32_t oid, uint16_t moveid, uint8_t *packet)
 {
     struct Writer writer;
-    writer_init(&writer, MOVE_MOB_RESPONSE_PACKET_LENGTH, packet);
+    writer_init(&writer, MOVE_MONSTER_RESPONSE_PACKET_LENGTH, packet);
 
     writer_u16(&writer, 0x00F0);
     writer_u32(&writer, oid);
@@ -782,7 +782,7 @@ size_t ranged_attack_packet(uint32_t id, uint8_t skill, uint8_t skill_level, uin
 void monster_hp_packet(uint32_t oid, uint8_t hp, uint8_t *packet)
 {
     struct Writer writer;
-    writer_init(&writer, CLOSE_RANGE_ATTACK_PACKET_MAX_LENGTH, packet);
+    writer_init(&writer, MONSTER_HP_PACKET_LENGTH, packet);
 
     writer_u16(&writer, 0x00FA);
     writer_u32(&writer, oid);
@@ -792,7 +792,7 @@ void monster_hp_packet(uint32_t oid, uint8_t hp, uint8_t *packet)
 void kill_monster_packet(uint32_t oid, bool animation, uint8_t *packet)
 {
     struct Writer writer;
-    writer_init(&writer, MOVE_MOB_RESPONSE_PACKET_LENGTH, packet);
+    writer_init(&writer, KILL_MONSTER_PACKET_LENGTH, packet);
 
     writer_u16(&writer, 0x00ED);
     writer_u32(&writer, oid);
