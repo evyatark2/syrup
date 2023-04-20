@@ -35,6 +35,7 @@ struct MapObject {
 struct ObjectList {
     size_t objectCapacity;
     size_t objectCount;
+    size_t freeStackCapacity;
     size_t freeStackTop;
     struct MapObject *objects;
     uint32_t *freeStack;
@@ -1744,6 +1745,7 @@ static int object_list_init(struct ObjectList *list)
 
     list->objectCapacity = 1;
     list->objectCount = 0;
+    list->freeStackCapacity = 1;
     list->freeStackTop = 0;
     list->objects[0].type = MAP_OBJECT_NONE;
 
@@ -1767,13 +1769,16 @@ static struct MapObject *object_list_allocate(struct ObjectList *list)
         if (new == NULL)
             return NULL;
 
-        void *temp = realloc(list->freeStack, (list->objectCapacity * 2) * sizeof(uint32_t));
-        if (temp == NULL) {
-            free(new);
-            return NULL;
-        }
+        if (list->freeStackCapacity < list->objectCapacity * 2) {
+            void *temp = realloc(list->freeStack, (list->objectCapacity * 2) * sizeof(uint32_t));
+            if (temp == NULL) {
+                free(new);
+                return NULL;
+            }
 
-        list->freeStack = temp;
+            list->freeStack = temp;
+            list->freeStackCapacity *= 2;
+        }
 
         for (size_t i = 0; i < list->objectCapacity * 2; i++)
             new[i].type = MAP_OBJECT_NONE;
