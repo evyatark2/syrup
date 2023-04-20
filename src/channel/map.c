@@ -439,7 +439,7 @@ int map_join(struct Map *map, struct Client *client, struct MapHandleContainer *
     player->player = &map->players[map->playerCount];
 
     for (size_t i = 0; i < map->playerCount; i++)
-        client_announce_add_player(map->players[i].client, client_get_character(client));
+        client_announce_add_player(client, client_get_character(map->players[i].client));
 
     for (size_t i = 0; i < map->npcCount; i++)
         client_announce_add_npc(client, &map->npcs[i]);
