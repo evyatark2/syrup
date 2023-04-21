@@ -132,6 +132,7 @@ struct Character {
     uint8_t skin;
     uint32_t face;
     uint32_t hair;
+    uint32_t chair;
 
     uint8_t level; // TODO: Maybe use a int16_t for faster calculations?
     enum Job job;

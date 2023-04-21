@@ -475,7 +475,7 @@ size_t add_player_to_map_packet(const struct Character *chr, uint8_t *packet)
     writer_char_appearance(&writer, &appearance, false);
     writer_u32(&writer, 0); // Number of heart-shaped chocolates
     writer_u32(&writer, 0); // Item effect
-    writer_u32(&writer, 0); // Chair
+    writer_u32(&writer, chr->chair); // Chair
     writer_i16(&writer, chr->x);
     writer_i16(&writer, chr->y);
     writer_u8(&writer, chr->stance);
@@ -1412,7 +1412,7 @@ void keymap_packet(const struct KeyMapEntry *keymap, uint8_t *packet)
     }
 }
 
-size_t update_char_look(const struct Character *chr, uint8_t *packet)
+size_t update_char_look_packet(const struct Character *chr, uint8_t *packet)
 {
     struct Writer writer;
     writer_init(&writer, UPDATE_CHAR_LOOK_MAX_LENGTH, packet);
@@ -1428,6 +1428,25 @@ size_t update_char_look(const struct Character *chr, uint8_t *packet)
     writer_u32(&writer, 0);
 
     return writer.pos;
+}
+
+void set_chair_packet(uint32_t id, uint32_t chair_id, uint8_t *packet)
+{
+    struct Writer writer;
+    writer_init(&writer, SET_CHAIR_PACKET_LENGTH, packet);
+
+    writer_u16(&writer, 0x00C4);
+    writer_u32(&writer, id);
+    writer_u32(&writer, chair_id);
+}
+
+void stand_up_packet(uint8_t *packet)
+{
+    struct Writer writer;
+    writer_init(&writer, STAND_UP_PACKET_LENGTH, packet);
+
+    writer_u16(&writer, 0x00CD);
+    writer_u8(&writer, 0);
 }
 
 static void exp_gain_packet_internal(struct Writer *writer, int32_t exp, int32_t equip_bonus, int32_t party_bonus, bool white, bool in_chat)

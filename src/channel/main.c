@@ -372,6 +372,31 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
     }
     break;
 
+    case 0x002A: {
+        uint16_t id;
+        READER_BEGIN(size, packet);
+        READ_OR_ERROR(reader_u16, &id);
+        READER_END();
+
+        if (id == (uint16_t)-1) {
+            if (!client_stand_up(client))
+                return (struct OnPacketResult) { .status = -1 };
+        } else {
+        }
+    }
+    break;
+
+    case 0x002B: {
+        uint32_t id;
+        READER_BEGIN(size, packet);
+        READ_OR_ERROR(reader_u32, &id);
+        READER_END();
+
+        if (!client_sit(client, id))
+            return (struct OnPacketResult) { .status = -1 };
+    }
+    break;
+
     case 0x002C: {
         struct Map *map = room_get_context(session_get_room(session));
         uint32_t oids[15];

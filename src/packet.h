@@ -322,7 +322,13 @@ size_t popup_message_packet(uint16_t len, const char *message, uint8_t *packet);
 void keymap_packet(const struct KeyMapEntry *keymap, uint8_t *packet);
 
 #define UPDATE_CHAR_LOOK_MAX_LENGTH 363
-size_t update_char_look(const struct Character *chr, uint8_t *packet);
+size_t update_char_look_packet(const struct Character *chr, uint8_t *packet);
+
+#define SET_CHAIR_PACKET_LENGTH 10
+void set_chair_packet(uint32_t id, uint32_t chair_id, uint8_t *packet);
+
+#define STAND_UP_PACKET_LENGTH 3
+void stand_up_packet(uint8_t *packet);
 
 #endif
 

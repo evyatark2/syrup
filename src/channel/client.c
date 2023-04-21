@@ -227,6 +227,7 @@ struct ClientContResult client_cont(struct Client *client, int status)
             //chr->y = info->y;
             //chr->fh = 0;
             //chr->stance = 6;
+            chr->chair = 0;
             chr->map = res->getCharacter.map;
             chr->spawnPoint = wz_get_portal_info_by_name(chr->map, "sp")->id;
             chr->job = res->getCharacter.job;
@@ -2695,7 +2696,7 @@ bool client_equip(struct Client *client, uint8_t src, enum EquipSlot slot)
 
     {
         uint8_t packet[UPDATE_CHAR_LOOK_MAX_LENGTH];
-        size_t len = update_char_look(chr, packet);
+        size_t len = update_char_look_packet(chr, packet);
         session_broadcast_to_room(client->session, len, packet);
     }
 
@@ -2784,7 +2785,7 @@ bool client_unequip(struct Client *client, enum EquipSlot slot, uint8_t dst)
 
     {
         uint8_t packet[UPDATE_CHAR_LOOK_MAX_LENGTH];
-        size_t len = update_char_look(chr, packet);
+        size_t len = update_char_look_packet(chr, packet);
         session_broadcast_to_room(client->session, len, packet);
     }
 
@@ -3505,7 +3506,7 @@ struct ClientResult client_recharge(struct Client *client, uint16_t slot)
         struct InventoryModify mod = {
             .mode = INVENTORY_MODIFY_TYPE_MODIFY,
             .inventory = 2,
-            .slot = slot + 1, 
+            .slot = slot + 1,
             .quantity = info->slotMax
         };
 
@@ -3875,6 +3876,56 @@ bool client_remove_key(struct Client *client, uint32_t key, uint32_t action)
 
     chr->keyMap[key].type = 0;
     chr->keyMap[key].action = 0;
+    return true;
+}
+
+bool client_sit(struct Client *client, uint32_t id)
+{
+    struct Character *chr = &client->character;
+
+    if (!ITEM_IS_CHAIR(id))
+        return false;
+
+    if (chr->chair != 0)
+        return false;
+
+    if (!client_has_item(client, id))
+        return true;
+
+    chr->chair = id;
+
+    uint8_t packet[SET_CHAIR_PACKET_LENGTH];
+    set_chair_packet(chr->id, id, packet);
+    room_broadcast(session_get_room(client->session), SET_CHAIR_PACKET_LENGTH, packet);
+
+    return true;
+}
+
+bool client_sit_on_map_seat(struct Client *client, uint32_t id)
+{
+    return true;
+}
+
+bool client_stand_up(struct Client *client)
+{
+    struct Character *chr = &client->character;
+
+    if (chr->chair != 0) {
+        chr->chair = 0;
+
+        {
+            uint8_t packet[SET_CHAIR_PACKET_LENGTH];
+            set_chair_packet(chr->id, 0, packet);
+            room_broadcast(session_get_room(client->session), SET_CHAIR_PACKET_LENGTH, packet);
+        }
+
+        {
+            uint8_t packet[STAND_UP_PACKET_LENGTH];
+            stand_up_packet(packet);
+            session_write(client->session, STAND_UP_PACKET_LENGTH, packet);
+        }
+    }
+
     return true;
 }
 

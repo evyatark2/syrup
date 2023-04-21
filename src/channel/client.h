@@ -143,6 +143,8 @@ bool client_apply_skill(struct Client *client, uint32_t skill_id);
 bool client_add_key(struct Client *client, uint32_t key, uint8_t type, uint32_t action);
 bool client_add_skill_key(struct Client *client, uint32_t key, uint32_t skill_id);
 bool client_remove_key(struct Client *client, uint32_t key, uint32_t action);
+bool client_sit(struct Client *client, uint32_t id);
+bool client_stand_up(struct Client *client);
 
 #endif
 
