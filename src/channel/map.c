@@ -155,6 +155,7 @@ struct Map {
     size_t dropBatchStart;
     size_t dropBatchEnd;
     struct DropBatch *dropBatches;
+    bool *occupiedSeats;
 };
 
 static void map_kill_monster(struct Map *map, uint32_t oid);
@@ -325,6 +326,22 @@ struct Map *map_create(struct Room *room, struct ScriptManager *reactor_manager)
 
     map->monsters = malloc(map->spawnerCount * sizeof(struct MapMonster));
     if (map->monsters == NULL && map->spawnerCount != 0) {
+        heap_destroy(&map->heap);
+        free(map->players);
+        free(map->reactors);
+        free(map->dropBatches);
+        free(map->droppingBatches);
+        free(map->dead);
+        free(map->spawners);
+        free(map->npcs);
+        object_list_destroy(&map->objectList);
+        free(map);
+        return NULL;
+    }
+
+    map->occupiedSeats = calloc(wz_get_map_seat_count(room_get_id(room)), sizeof(bool));
+    if (map->occupiedSeats == NULL) {
+        free(map->monsters);
         heap_destroy(&map->heap);
         free(map->players);
         free(map->reactors);
@@ -1351,6 +1368,22 @@ void map_remove_drop(struct Map *map, uint32_t char_id, uint32_t oid)
         room_broadcast(map->room, PICKUP_DROP_PACKET_LENGTH, packet);
     }
 }
+
+bool map_try_occupy_seat(struct Map *map, uint16_t id)
+{
+    if (!map->occupiedSeats[id]) {
+        map->occupiedSeats[id] = true;
+        return true;
+    }
+
+    return false;
+}
+
+void map_tire_seat(struct Map *map, uint16_t id)
+{
+    map->occupiedSeats[id] = false;
+}
+
 
 static void map_kill_monster(struct Map *map, uint32_t oid)
 {

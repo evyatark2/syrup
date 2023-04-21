@@ -382,6 +382,8 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             if (!client_stand_up(client))
                 return (struct OnPacketResult) { .status = -1 };
         } else {
+            if (!client_sit_on_map_seat(client, id))
+                return (struct OnPacketResult) { .status = -1 };
         }
     }
     break;

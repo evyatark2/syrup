@@ -1449,6 +1449,16 @@ void stand_up_packet(uint8_t *packet)
     writer_u8(&writer, 0);
 }
 
+void sit_on_map_seat_packet(uint16_t id, uint8_t *packet)
+{
+    struct Writer writer;
+    writer_init(&writer, SIT_ON_MAP_SEAT_PACKET_LENGTH, packet);
+
+    writer_u16(&writer, 0x00CD);
+    writer_u8(&writer, 1);
+    writer_u16(&writer, id);
+}
+
 static void exp_gain_packet_internal(struct Writer *writer, int32_t exp, int32_t equip_bonus, int32_t party_bonus, bool white, bool in_chat)
 {
     writer_u16(writer, 0x0027);

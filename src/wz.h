@@ -75,6 +75,7 @@ struct MapInfo {
     char onFirstUserEnter[SCRIPT_NAME_MAX_LENGTH+1];
     char onUserEnter[SCRIPT_NAME_MAX_LENGTH+1];
     struct FootholdRTree *footholdTree;
+    uint16_t seats;
     size_t lifeCount;
     struct LifeInfo *lives;
     size_t reactorCount;
@@ -365,6 +366,7 @@ int wz_init_equipment(void);
 void wz_terminate(void);
 void wz_terminate_equipment(void);
 uint32_t wz_get_map_nearest_town(uint32_t id);
+uint16_t wz_get_map_seat_count(uint32_t id);
 uint32_t wz_get_target_map(uint32_t id, char *target);
 uint8_t wz_get_target_portal(uint32_t id, char *target);
 const struct FootholdRTree *wz_get_foothold_tree_for_map(uint32_t id);

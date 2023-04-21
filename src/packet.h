@@ -330,5 +330,7 @@ void set_chair_packet(uint32_t id, uint32_t chair_id, uint8_t *packet);
 #define STAND_UP_PACKET_LENGTH 3
 void stand_up_packet(uint8_t *packet);
 
+#define SIT_ON_MAP_SEAT_PACKET_LENGTH 5
+void sit_on_map_seat_packet(uint16_t id, uint8_t *packet);
 #endif
 

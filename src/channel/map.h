@@ -175,5 +175,8 @@ const struct Drop *map_get_drop(struct Map *map, uint32_t oid);
  */
 void map_remove_drop(struct Map *map, uint32_t char_id, uint32_t oid);
 
+bool map_try_occupy_seat(struct Map *map, uint16_t id);
+void map_tire_seat(struct Map *map, uint16_t id);
+
 #endif
 

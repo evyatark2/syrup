@@ -80,6 +80,7 @@ enum MapItemType {
     MAP_ITEM_TYPE_TOP_LEVEL,
     MAP_ITEM_TYPE_INFO,
     MAP_ITEM_TYPE_FOOTHOLDS,
+    MAP_ITEM_TYPE_SEATS,
     MAP_ITEM_TYPE_PORTALS,
     MAP_ITEM_TYPE_PORTAL,
     MAP_ITEM_TYPE_LIVES,
@@ -744,6 +745,8 @@ int wz_init(void)
                         read(fd, data, len);
                         close(fd);
 
+                        MAP_INFOS[ctx.currentMap].seats = 0;
+
                         ctx.currentLife = 1;
                         MAP_INFOS[ctx.currentMap].lifeCount = 0;
                         MAP_INFOS[ctx.currentMap].lives = malloc(sizeof(struct LifeInfo));
@@ -1138,6 +1141,12 @@ uint32_t wz_get_map_nearest_town(uint32_t id)
     return MAP_INFOS[i].returnMap;
 }
 
+uint16_t wz_get_map_seat_count(uint32_t id)
+{
+    size_t i = cmph_search(MAP_INFO_MPH, (void *)&id, sizeof(uint32_t));
+    return MAP_INFOS[i].seats;
+}
+
 uint32_t wz_get_target_map(uint32_t id, char *target)
 {
     size_t i = cmph_search(MAP_INFO_MPH, (void *)&id, sizeof(uint32_t));
@@ -1397,6 +1406,11 @@ static void on_map_start(void *user_data, const XML_Char *name, const XML_Char *
                 new->next = ctx->head;
                 new->type = MAP_ITEM_TYPE_FOOTHOLDS;
                 ctx->head = new;
+            } else if (!strcmp(attrs[i], "seat")) {
+                struct MapParserStackNode *new = malloc(sizeof(struct MapParserStackNode));
+                new->next = ctx->head;
+                new->type = MAP_ITEM_TYPE_SEATS;
+                ctx->head = new;
             } else {
                 ctx->skip++;
             }
@@ -1487,6 +1501,12 @@ static void on_map_start(void *user_data, const XML_Char *name, const XML_Char *
             } else {
                 ctx->footholdLevel++;
             }
+        }
+        break;
+
+        case MAP_ITEM_TYPE_SEATS: {
+            ctx->skip++;
+            MAP_INFOS[ctx->currentMap].seats++;
         }
         break;
 

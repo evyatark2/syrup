@@ -228,6 +228,7 @@ struct ClientContResult client_cont(struct Client *client, int status)
             //chr->fh = 0;
             //chr->stance = 6;
             chr->chair = 0;
+            chr->seat = -1;
             chr->map = res->getCharacter.map;
             chr->spawnPoint = wz_get_portal_info_by_name(chr->map, "sp")->id;
             chr->job = res->getCharacter.job;
@@ -3886,7 +3887,7 @@ bool client_sit(struct Client *client, uint32_t id)
     if (!ITEM_IS_CHAIR(id))
         return false;
 
-    if (chr->chair != 0)
+    if (chr->chair != 0 || chr->seat != (uint16_t)-1)
         return false;
 
     if (!client_has_item(client, id))
@@ -3901,8 +3902,26 @@ bool client_sit(struct Client *client, uint32_t id)
     return true;
 }
 
-bool client_sit_on_map_seat(struct Client *client, uint32_t id)
+bool client_sit_on_map_seat(struct Client *client, uint16_t id)
 {
+    struct Character *chr = &client->character;
+    if (id >= wz_get_map_seat_count(chr->map))
+        return false;
+
+    if (chr->seat != (uint16_t)-1)
+        return true;
+
+    if (!map_try_occupy_seat(room_get_context(session_get_room(client->session)), id))
+        return true;
+
+    chr->seat = id;
+
+    uint8_t packet[SIT_ON_MAP_SEAT_PACKET_LENGTH];
+    sit_on_map_seat_packet(id, packet);
+    session_write(client->session, SIT_ON_MAP_SEAT_PACKET_LENGTH, packet);
+
+    // Other map players will be notified of the sitting by a client_move()
+
     return true;
 }
 
@@ -3918,12 +3937,15 @@ bool client_stand_up(struct Client *client)
             set_chair_packet(chr->id, 0, packet);
             room_broadcast(session_get_room(client->session), SET_CHAIR_PACKET_LENGTH, packet);
         }
+    } else if (chr->seat != (uint16_t)-1) {
+        map_tire_seat(room_get_context(session_get_room(client->session)), chr->seat);
+        chr->seat = -1;
+    }
 
-        {
-            uint8_t packet[STAND_UP_PACKET_LENGTH];
-            stand_up_packet(packet);
-            session_write(client->session, STAND_UP_PACKET_LENGTH, packet);
-        }
+    {
+        uint8_t packet[STAND_UP_PACKET_LENGTH];
+        stand_up_packet(packet);
+        session_write(client->session, STAND_UP_PACKET_LENGTH, packet);
     }
 
     return true;
