@@ -436,14 +436,15 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         SKIP(4);
         READER_END();
 
+        uint8_t skill_level = 0;
         if (skill != 0) {
-            if (!client_apply_skill(client, skill))
+            if (!client_apply_skill(client, skill, &skill_level))
                 return (struct OnPacketResult) { .status = -1 };
         }
 
         {
             uint8_t packet[CLOSE_RANGE_ATTACK_PACKET_MAX_LENGTH];
-            size_t len = close_range_attack_packet(chr->id, skill, 0, monster_count, hit_count, oids, damage, display, direction, stance, speed, packet);
+            size_t len = close_range_attack_packet(chr->id, skill, skill_level, monster_count, hit_count, oids, damage, display, direction, stance, speed, packet);
             session_broadcast_to_room(session, len, packet);
         }
 
@@ -495,17 +496,18 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         SKIP(4);
         READER_END();
 
+        uint8_t skill_level = 0;
         if (skill == 0) {
             bool success;
             client_use_projectile(client, 1, &success);
         } else {
-            if (!client_apply_skill(client, skill))
+            if (!client_apply_skill(client, skill, &skill_level))
                 return (struct OnPacketResult) { .status = -1 };
         }
 
         {
             uint8_t packet[RANGED_ATTACK_PACKET_MAX_LENGTH];
-            size_t len = ranged_attack_packet(chr->id, skill, 0, monster_count, hit_count, oids, damage, display, direction, stance, speed, chr->inventory[0].items[chr->activeProjectile].item.item.itemId, packet);
+            size_t len = ranged_attack_packet(chr->id, skill, skill_level, monster_count, hit_count, oids, damage, display, direction, stance, speed, chr->inventory[0].items[chr->activeProjectile].item.item.itemId, packet);
             session_broadcast_to_room(session, len, packet);
         }
 

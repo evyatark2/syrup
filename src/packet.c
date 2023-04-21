@@ -717,7 +717,7 @@ void move_monster_response_packet(uint32_t oid, uint16_t moveid, uint8_t *packet
     writer_u8(&writer, 0);
 }
 
-size_t close_range_attack_packet(uint32_t id, uint8_t skill, uint8_t skill_level, uint8_t monster_count, uint8_t hit_count, uint32_t *oids, int32_t *damage, uint8_t display, uint8_t direction, uint8_t stance, uint8_t speed, uint8_t *packet)
+size_t close_range_attack_packet(uint32_t id, uint32_t skill, uint8_t skill_level, uint8_t monster_count, uint8_t hit_count, uint32_t *oids, int32_t *damage, uint8_t display, uint8_t direction, uint8_t stance, uint8_t speed, uint8_t *packet)
 {
     struct Writer writer;
     writer_init(&writer, CLOSE_RANGE_ATTACK_PACKET_MAX_LENGTH, packet);
@@ -729,7 +729,7 @@ size_t close_range_attack_packet(uint32_t id, uint8_t skill, uint8_t skill_level
     writer_u8(&writer, 0x5B);
     writer_u8(&writer, skill_level);
     if (skill_level > 0)
-        writer_u8(&writer, skill);
+        writer_u32(&writer, skill);
 
     writer_u8(&writer, display);
     writer_u8(&writer, direction);
@@ -747,7 +747,7 @@ size_t close_range_attack_packet(uint32_t id, uint8_t skill, uint8_t skill_level
     return writer.pos;
 }
 
-size_t ranged_attack_packet(uint32_t id, uint8_t skill, uint8_t skill_level, uint8_t monster_count, uint8_t hit_count, uint32_t *oids, int32_t *damage, uint8_t display, uint8_t direction, uint8_t stance, uint8_t speed, uint32_t projectile, uint8_t *packet)
+size_t ranged_attack_packet(uint32_t id, uint32_t skill, uint8_t skill_level, uint8_t monster_count, uint8_t hit_count, uint32_t *oids, int32_t *damage, uint8_t display, uint8_t direction, uint8_t stance, uint8_t speed, uint32_t projectile, uint8_t *packet)
 {
     struct Writer writer;
     writer_init(&writer, RANGED_ATTACK_PACKET_MAX_LENGTH, packet);

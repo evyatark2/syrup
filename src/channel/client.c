@@ -3819,7 +3819,7 @@ bool client_is_auto_pickup_enabled(struct Client *client)
     return client->autoPickup;
 }
 
-bool client_apply_skill(struct Client *client, uint32_t skill_id)
+bool client_apply_skill(struct Client *client, uint32_t skill_id, uint8_t *level)
 {
     struct Character *chr = &client->character;
     struct Skill *skill = hash_set_u32_get(chr->skills, skill_id);
@@ -3843,6 +3843,8 @@ bool client_apply_skill(struct Client *client, uint32_t skill_id)
     }
 
     client_adjust_mp_now(client, -info->levels[skill->level].mpCon);
+
+    *level = skill->level;
 
     return true;
 }
