@@ -296,10 +296,10 @@ struct PetItem {
     unsigned int petId;
 };
 
-static inline bool item_is_rechargeable(uint32_t id)
-{
-    return id / 10000 == 207 || id / 10000 == 233;
-}
+#define ITEM_IS_THROWING_STAR(id) ((id) / 10000 == 207)
+#define ITEM_IS_BULLET(id) ((id) / 10000 == 233)
+#define ITEM_IS_RECHARGEABLE(id) (ITEM_IS_THROWING_STAR(id) || ITEM_IS_BULLET(id))
+#define ITEM_IS_CHAIR(id) ((id) / 10000 == 301)
 
 static inline enum InventoryType item_get_inventory(uint32_t id)
 {
