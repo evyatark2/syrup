@@ -1005,15 +1005,21 @@ struct MapHandleContainer *client_get_map(struct Client *client)
     return &client->map;
 }
 
-bool client_announce_add_player(struct Client *client, const struct Character *chr)
+void client_announce_self_to_map(struct Client *client)
+{
+    uint8_t packet[ADD_PLAYER_TO_MAP_PACKET_MAX_LENGTH];
+    size_t len = add_player_to_map_packet(client_get_character(client), packet);
+    session_broadcast_to_room(client->session, len, packet);
+}
+
+void client_announce_add_player(struct Client *client, const struct Character *chr)
 {
     uint8_t packet[ADD_PLAYER_TO_MAP_PACKET_MAX_LENGTH];
     size_t len = add_player_to_map_packet(chr, packet);
     session_write(client->session, len, packet);
-    return true;
 }
 
-bool client_announce_add_npc(struct Client *client, const struct Npc *npc)
+void client_announce_add_npc(struct Client *client, const struct Npc *npc)
 {
     {
         uint8_t packet[SPAWN_NPC_PACKET_LENGTH];
@@ -1025,15 +1031,13 @@ bool client_announce_add_npc(struct Client *client, const struct Npc *npc)
         spawn_npc_controller_packet(npc->oid, npc->id, npc->x, npc->cy, npc->f == 1, npc->fh, npc->rx0, npc->rx1, packet);
         session_write(client->session, SPAWN_NPC_CONTROLLER_PACKET_LENGTH, packet);
     }
-    return true;
 }
 
-bool client_announce_monster(struct Client *client, const struct Monster *monster)
+void client_announce_monster(struct Client *client, const struct Monster *monster)
 {
     uint8_t packet[SPAWN_MONSTER_PACKET_LENGTH];
     spawn_monster_packet(monster->oid, monster->id, monster->x, monster->y, monster->fh, false, packet);
     session_write(client->session, SPAWN_MONSTER_PACKET_LENGTH, packet);
-    return true;
 }
 
 bool client_announce_drop(struct Client *client, uint32_t owner_id, uint32_t dropper_oid, bool player_drop, const struct Drop *drop)

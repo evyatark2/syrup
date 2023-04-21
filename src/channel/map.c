@@ -455,6 +455,8 @@ int map_join(struct Map *map, struct Client *client, struct MapHandleContainer *
 
     player->player = &map->players[map->playerCount];
 
+    client_announce_self_to_map(client);
+
     for (size_t i = 0; i < map->playerCount; i++)
         client_announce_add_player(client, client_get_character(map->players[i].client));
 

@@ -1455,13 +1455,6 @@ static bool on_client_join(struct Session *session, void *thread_ctx)
     const struct PortalInfo *info = wz_get_portal_info(chr->map, chr->spawnPoint);
     client_update_player_pos(client, info->x, info->y, 0, 6);
 
-    // Maybe transfer this to map_join()?
-    {
-        uint8_t packet[ADD_PLAYER_TO_MAP_PACKET_MAX_LENGTH];
-        size_t len = add_player_to_map_packet(client_get_character(client), packet);
-        session_broadcast_to_room(session, len, packet);
-    }
-
     return true;
 }
 
