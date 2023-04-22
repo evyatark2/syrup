@@ -1459,23 +1459,33 @@ void client_gain_exp(struct Client *client, int32_t exp, bool reward)
 
         if (chr->job == JOB_BEGINNER || chr->job == JOB_NOBLESSE || chr->job == JOB_LEGEND) {
             character_set_max_hp(chr, chr->maxHp + rand() % 5 + 12);
-            character_set_max_mp(chr, chr->maxHp + rand() % 3 + 10);
+            character_set_max_mp(chr, chr->maxMp + rand() % 3 + 10);
         } else if (job_is_a(chr->job, JOB_FIGHTER) || job_is_a(chr->job, JOB_DAWN_WARRIOR)) {
             character_set_max_hp(chr, chr->maxHp + rand() % 5 + 24);
-            character_set_max_mp(chr, chr->maxHp + rand() % 3 + 4);
+            character_set_max_mp(chr, chr->maxMp + rand() % 3 + 4);
         } else if (job_is_a(chr->job, JOB_MAGICIAN) || job_is_a(chr->job, JOB_BLAZE_WIZARD)) {
             character_set_max_hp(chr, chr->maxHp + rand() % 5 + 10);
-            character_set_max_mp(chr, chr->maxHp + rand() % 3 + 22);
+            character_set_max_mp(chr, chr->maxMp + rand() % 3 + 22);
+
+            if (job_is_a(chr->job, JOB_MAGICIAN)) {
+                struct Skill *improved_max_mp_increase = hash_set_u32_get(chr->skills, 2000001);
+                if (improved_max_mp_increase != NULL)
+                    character_set_max_mp(chr, chr->maxMp + improved_max_mp_increase->level * 2);
+            } else {
+                struct Skill *increasing_max_mp = hash_set_u32_get(chr->skills, 12000000);
+                if (increasing_max_mp != NULL)
+                    character_set_max_mp(chr, chr->maxMp + increasing_max_mp->level * 2);
+            }
         } else if (job_is_a(chr->job, JOB_ARCHER) || job_is_a(chr->job, JOB_ROGUE) ||
                 job_is_a(chr->job, JOB_WIND_ARCHER) || job_is_a(chr->job, JOB_NIGHT_WALKER)) {
             character_set_max_hp(chr, chr->maxHp + rand() % 5 + 20);
-            character_set_max_mp(chr, chr->maxHp + rand() % 3 + 14);
+            character_set_max_mp(chr, chr->maxMp + rand() % 3 + 14);
         } else if (job_is_a(chr->job, JOB_PIRATE) || job_is_a(chr->job, JOB_THUNDER_BREAKER)) {
             character_set_max_hp(chr, chr->maxHp + rand() % 7 + 22);
-            character_set_max_mp(chr, chr->maxHp + rand() % 6 + 18);
+            character_set_max_mp(chr, chr->maxMp + rand() % 6 + 18);
         } else if (job_is_a(chr->job, JOB_ARAN)) {
             character_set_max_hp(chr, chr->maxHp + rand() % 5 + 44);
-            character_set_max_mp(chr, chr->maxHp + rand() % 5 + 4);
+            character_set_max_mp(chr, chr->maxMp + rand() % 5 + 4);
         }
         character_set_max_mp(chr, chr->maxMp + character_get_effective_int(chr) /
                 (job_is_a(chr->job, JOB_MAGICIAN) || job_is_a(chr->job, JOB_BLAZE_WIZARD) ? 20 : 10));
