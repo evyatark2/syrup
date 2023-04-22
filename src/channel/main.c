@@ -519,6 +519,64 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
     }
     break;
 
+    case 0x002E: {
+        struct Map *map = room_get_context(session_get_room(session));
+        uint32_t oids[15];
+        int32_t damage[15 * 15];
+        uint8_t monster_count;
+        uint8_t hit_count;
+        uint32_t skill;
+        uint8_t display;
+        uint8_t direction;
+        uint8_t stance;
+        uint8_t speed;
+        READER_BEGIN(size, packet);
+        SKIP(1);
+        READ_OR_ERROR(reader_u8, &hit_count);
+        monster_count = hit_count >> 4;
+        hit_count &= 0xF;
+        READ_OR_ERROR(reader_u32, &skill);
+        SKIP(8);
+        READ_OR_ERROR(reader_u8, &display);
+        READ_OR_ERROR(reader_u8, &direction);
+        READ_OR_ERROR(reader_u8, &stance);
+        SKIP(1);
+        READ_OR_ERROR(reader_u8, &speed);
+        SKIP(4);
+        for (int8_t i = 0; i < monster_count; i++) {
+            READ_OR_ERROR(reader_u32, &oids[i]);
+            SKIP(14);
+
+            for (int8_t j = 0; j < hit_count; j++)
+                READ_OR_ERROR(reader_i32, &damage[i * hit_count + j]);
+
+
+            SKIP(4);
+        }
+        SKIP(4);
+        READER_END();
+
+        uint8_t skill_level = 0;
+        if (skill != 0) {
+            if (!client_apply_skill(client, skill, &skill_level))
+                return (struct OnPacketResult) { .status = -1 };
+        }
+
+        {
+            uint8_t packet[MAGIC_ATTACK_PACKET_MAX_LENGTH];
+            size_t len = magic_attack_packet(chr->id, skill, skill_level, monster_count, hit_count, oids, damage, display, direction, stance, speed, packet);
+            session_broadcast_to_room(session, len, packet);
+        }
+
+        for (uint8_t i = 0; i < monster_count; i++) {
+            uint32_t killed = map_damage_monster_by(map, client_get_map(client)->player, chr->id, oids[i], hit_count, damage + i * hit_count);
+            if (killed != -1)
+                client_kill_monster(client, killed);
+        }
+
+    }
+    break;
+
     case 0x0030: {
         struct Map *map = room_get_context(session_get_room(session));
         uint8_t skill;

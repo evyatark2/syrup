@@ -779,6 +779,38 @@ size_t ranged_attack_packet(uint32_t id, uint32_t skill, uint8_t skill_level, ui
     return writer.pos;
 }
 
+size_t magic_attack_packet(uint32_t id, uint32_t skill, uint8_t skill_level, uint8_t monster_count, uint8_t hit_count, uint32_t *oids, int32_t *damage, uint8_t display, uint8_t direction, uint8_t stance, uint8_t speed, uint8_t *packet)
+{
+    struct Writer writer;
+    writer_init(&writer, MAGIC_ATTACK_PACKET_MAX_LENGTH, packet);
+
+    writer_u16(&writer, 0x00BC);
+    writer_u32(&writer, id);
+    uint8_t count = (monster_count << 4) | hit_count;
+    writer_u8(&writer, count);
+    writer_u8(&writer, 0x5B);
+    writer_u8(&writer, skill_level);
+    if (skill_level > 0)
+        writer_u32(&writer, skill);
+
+    writer_u8(&writer, display);
+    writer_u8(&writer, direction);
+    writer_u8(&writer, stance);
+    writer_u8(&writer, speed);
+    writer_u8(&writer, 0x0A);
+    writer_u32(&writer, 0);
+    for (uint8_t i = 0; i < monster_count; i++) {
+        writer_u32(&writer, oids[i]);
+        writer_u8(&writer, 0);
+        for (uint8_t j = 0; j < hit_count; j++)
+            writer_i32(&writer, damage[i * hit_count + j]);
+    }
+
+    // TODO: charge value
+
+    return writer.pos;
+}
+
 void monster_hp_packet(uint32_t oid, uint8_t hp, uint8_t *packet)
 {
     struct Writer writer;

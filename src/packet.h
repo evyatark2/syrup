@@ -143,6 +143,9 @@ size_t close_range_attack_packet(uint32_t id, uint32_t skill, uint8_t skill_leve
 #define RANGED_ATTACK_PACKET_MAX_LENGTH 1001
 size_t ranged_attack_packet(uint32_t id, uint32_t skill, uint8_t skill_level, uint8_t monster_count, uint8_t hit_count, uint32_t *oids, int32_t *damage, uint8_t display, uint8_t direction, uint8_t stance, uint8_t speed, uint32_t projectile, uint8_t *packet);
 
+#define MAGIC_ATTACK_PACKET_MAX_LENGTH 1001
+size_t magic_attack_packet(uint32_t id, uint32_t skill, uint8_t skill_level, uint8_t monster_count, uint8_t hit_count, uint32_t *oids, int32_t *damage, uint8_t display, uint8_t direction, uint8_t stance, uint8_t speed, uint8_t *packet);
+
 #define MONSTER_HP_PACKET_LENGTH 7
 void monster_hp_packet(uint32_t oid, uint8_t hp, uint8_t *packet);
 
