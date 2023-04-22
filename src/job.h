@@ -7,7 +7,6 @@ enum JobType {
     JOB_TYPE_EXPLORER = 0,
     JOB_TYPE_CYGNUS = 1,
     JOB_TYPE_LEGEND = 2,
-
 };
 
 enum Job {

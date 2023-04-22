@@ -1354,7 +1354,9 @@ bool client_assign_sp(struct Client *client, uint32_t id)
 {
     struct Character *chr = &client->character;
 
-    // TODO: Check if id is legal for this client to assign
+    const struct SkillInfo *info = wz_get_skill_info(id);
+    if (info == NULL)
+        return false;
 
     if (id >= 1000 && id <= 1002) {
         uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
@@ -1374,15 +1376,28 @@ bool client_assign_sp(struct Client *client, uint32_t id)
 
     struct Skill *skill = hash_set_u32_get(chr->skills, id);
     if (skill == NULL) {
+        uint16_t job = id / 10000;
+        if ((job % 1000 != 0 && chr->job / 100 != job / 100) || (job / 10 % 10 != 0 && chr->job % 10 < job % 10))
+            return false;
+
+        for (size_t i = 0; i < info->reqCount; i++) {
+            struct Skill *req = hash_set_u32_get(chr->skills, info->reqs[i].id);
+            if (req == NULL || req->level < info->reqs[i].level)
+                return false;
+        }
+
         struct Skill new = {
             .id = id,
             .level = 1,
-            .masterLevel = 0
+            .masterLevel = ((id / 10000) % 10 == 2) ? 0 : info->levelCount,
         };
+
         hash_set_u32_insert(chr->skills, &new);
         skill = hash_set_u32_get(chr->skills, id);
-    } else {
+    } else if (skill->level < skill->masterLevel) {
         skill->level++;
+    } else {
+        return true;
     }
 
     {
