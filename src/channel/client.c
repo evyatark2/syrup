@@ -3855,19 +3855,19 @@ bool client_apply_skill(struct Client *client, uint32_t skill_id, uint8_t *level
     if (info == NULL)
         return false; // Packet-edit
 
-    if (info->levels[skill->level].bulletCount > 0) {
+    if (info->levels[skill->level-1].bulletCount > 0) {
         if (chr->activeProjectile == (uint8_t)-1)
             return true;
 
         bool success;
-        if (!client_use_projectile(client, info->levels[skill->level].bulletCount, &success))
+        if (!client_use_projectile(client, info->levels[skill->level-1].bulletCount, &success))
             return false;
 
         if (!success)
             return true;
     }
 
-    client_adjust_mp_now(client, -info->levels[skill->level].mpCon);
+    client_adjust_mp_now(client, -info->levels[skill->level-1].mpCon);
 
     *level = skill->level;
 
