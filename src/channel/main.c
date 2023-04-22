@@ -959,8 +959,10 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
 
         str[len] = '\0';
         const struct PortalInfo *info = wz_get_portal_info_by_name(chr->map, str);
-        if (info == NULL)
-            return (struct OnPacketResult) { .status = -1 };
+        if (info == NULL) {
+            // The client can spam enter portal
+            return (struct OnPacketResult) { .status = 0, .room = -1 };
+        }
         struct ClientResult res = client_portal_script(client, info->script);
         switch (res.type) {
         case CLIENT_RESULT_TYPE_BAN:
