@@ -60,9 +60,9 @@ typedef struct OnPacketResult OnClientPacket(struct Session *session, size_t siz
 typedef int OnRoomCreate(struct Room *room, void *thread_ctx);
 typedef void OnRoomDestroy(struct Room *room);
 
-typedef int OnDatabaseResult();
+typedef int OnDatabaseResult(void);
 
-typedef void *CreateUserContext();
+typedef void *CreateUserContext(void);
 typedef void DestroyUserContext(void *ctx);
 
 typedef void OnLoginPacket(size_t len, void *data);

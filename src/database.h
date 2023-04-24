@@ -188,6 +188,7 @@ struct RequestParams {
             } equipmentInventory[252];
             size_t itemCount;
             struct {
+                uint64_t id;
                 uint8_t slot;
                 int16_t count;
                 struct DatabaseItem item;
@@ -376,6 +377,7 @@ union DatabaseResult {
         } equipmentInventory[252];
         size_t itemCount;
         struct {
+            uint64_t id;
             uint8_t slot;
             int16_t count;
             struct DatabaseItem item;

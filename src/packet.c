@@ -301,7 +301,7 @@ size_t enter_map_packet(struct Character *chr, uint8_t *packet) {
         writer_i16(&writer, chr->inventory[0].items[i].item.quantity);
         writer_sized_string(&writer, chr->inventory[0].items[i].item.item.ownerLength, chr->inventory[0].items[i].item.item.owner);
         writer_u16(&writer, chr->inventory[0].items[i].item.item.flags);
-        if (chr->inventory[0].items[i].item.item.itemId / 10000 == 207 || chr->inventory[0].items[i].item.item.itemId / 10000 == 233) {
+        if (ITEM_IS_RECHARGEABLE(chr->inventory[0].items[i].item.item.itemId)) {
             writer_u32(&writer, 2);
             writer_array(&writer, 4, (uint8_t[]) { 0x54, 0x00, 0x00, 0x34 });
         }
@@ -846,7 +846,7 @@ size_t open_shop_packet(uint32_t id, uint16_t item_count, struct ShopItem *items
         writer_u32(&writer, 0);
         writer_u32(&writer, 0);
         writer_u32(&writer, 0);
-        if (items[i].id / 10000 != 207 && items[i].id / 10000 != 233) {
+        if (!ITEM_IS_RECHARGEABLE(items[i].id)) {
             writer_u16(&writer, 1);
             writer_u16(&writer, 1000); // Max buyable stack size
         } else {
@@ -1302,7 +1302,7 @@ size_t modify_items_packet(uint8_t mod_count, struct InventoryModify *mods, uint
                 writer_u16(&writer, mods[i].item.quantity);
                 writer_sized_string(&writer, mods[i].item.item.ownerLength, mods[i].item.item.owner);
                 writer_u16(&writer, mods[i].item.item.flags);
-                if (mods[i].item.item.itemId / 10000 == 207 || mods[i].item.item.itemId / 10000 == 233) {
+                if (ITEM_IS_RECHARGEABLE(mods[i].item.item.itemId)) {
                     writer_u32(&writer, 2);
                     writer_array(&writer, 4, (uint8_t[]) { 0x54, 0x00, 0x00, 0x34 });
                 }
@@ -1489,6 +1489,72 @@ void sit_on_map_seat_packet(uint16_t id, uint8_t *packet)
     writer_u16(&writer, 0x00CD);
     writer_u8(&writer, 1);
     writer_u16(&writer, id);
+}
+
+size_t open_storage_packet(const struct Storage *storage, uint32_t npc, uint8_t *packet)
+{
+    struct Writer writer;
+    writer_init(&writer, OPEN_STORAGE_PACKET_MAX_LENGTH, packet);
+
+    writer_u16(&writer, 0x0135);
+    writer_u8(&writer, 0x16);
+    writer_u32(&writer, npc);
+    writer_u8(&writer, storage->slots);
+    writer_u32(&writer, 0x7E);
+    writer_u32(&writer, 0);
+    writer_i32(&writer, storage->mesos);
+    writer_u16(&writer, 0);
+    writer_u8(&writer, storage->count);
+    for (uint8_t i = 0; i < storage->count; i++) {
+        if (storage->storage[i].isEquip) {
+            writer_u8(&writer, 1); // Item type
+            writer_u32(&writer, storage->storage[i].equip.item.itemId);
+            writer_bool(&writer, false); // Is cash? if it is, an additional cash id needs to be supplied
+            writer_u64(&writer, 150842304000000000L); // DEFAULT_TIME
+            writer_u8(&writer, storage->storage[i].equip.slots);
+            writer_u8(&writer, 0); // level (the number of times a scroll was successfuly applied)
+            writer_i16(&writer, storage->storage[i].equip.str);
+            writer_i16(&writer, storage->storage[i].equip.dex);
+            writer_i16(&writer, storage->storage[i].equip.int_);
+            writer_i16(&writer, storage->storage[i].equip.luk);
+            writer_i16(&writer, storage->storage[i].equip.hp);
+            writer_i16(&writer, storage->storage[i].equip.mp);
+            writer_i16(&writer, storage->storage[i].equip.atk);
+            writer_i16(&writer, storage->storage[i].equip.matk);
+            writer_i16(&writer, storage->storage[i].equip.def);
+            writer_i16(&writer, storage->storage[i].equip.mdef);
+            writer_i16(&writer, storage->storage[i].equip.acc);
+            writer_i16(&writer, storage->storage[i].equip.avoid);
+            writer_i16(&writer, storage->storage[i].equip.hands);
+            writer_i16(&writer, storage->storage[i].equip.speed);
+            writer_i16(&writer, storage->storage[i].equip.jump);
+            writer_sized_string(&writer, storage->storage[i].equip.item.ownerLength, storage->storage[i].equip.item.owner);
+            writer_u16(&writer, storage->storage[i].equip.item.flags);
+            writer_u8(&writer, 0);
+            writer_u8(&writer, 1); // Item level
+            writer_i32(&writer, 0); // exp
+            writer_u32(&writer, 0); // vicious
+            writer_u64(&writer, 0);
+            writer_u64(&writer, 94354848000000000L); // ZERO_TIME
+            writer_i32(&writer, -1);
+        } else {
+            writer_u8(&writer, 2); // Item type
+            writer_u32(&writer, storage->storage[i].item.item.itemId);
+            writer_bool(&writer, false); // Is cash
+            writer_u64(&writer, 150842304000000000L); // Unlimited expiration time
+            writer_u16(&writer, storage->storage[i].item.quantity);
+            writer_sized_string(&writer, storage->storage[i].item.item.ownerLength, storage->storage[i].item.item.owner);
+            writer_u16(&writer, storage->storage[i].item.item.flags);
+            if (ITEM_IS_RECHARGEABLE(storage->storage[i].item.item.itemId)) {
+                writer_u32(&writer, 2);
+                writer_array(&writer, 4, (uint8_t[]) { 0x54, 0x00, 0x00, 0x34 });
+            }
+        }
+    }
+    writer_u16(&writer, 0);
+    writer_u8(&writer, 0);
+
+    return writer.pos;
 }
 
 static void exp_gain_packet_internal(struct Writer *writer, int32_t exp, int32_t equip_bonus, int32_t party_bonus, bool white, bool in_chat)

@@ -772,7 +772,7 @@ static int do_get_characters_for_account_for_world(struct DatabaseRequest *req, 
     for (req->temp.updateCharacter.i = 0; req->temp.updateCharacter.i < req->res.getCharactersForAccountForWorld.characterCount; req->temp.updateCharacter.i++) {
         DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
 
-        query = "SELECT item_id FROM Items WHERE character_id = ? AND id IN (SELECT item FROM Equipment WHERE id IN (SELECT equip FROM EquippedEquipment))";
+        query = "SELECT item_id FROM Items JOIN CharacterItems ON Items.id = item WHERE character_id = ? AND CharacterItems.id IN (SELECT equip FROM EquippedEquipment)";
         DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
 
         INPUT_BINDER_INIT(1);
@@ -854,41 +854,39 @@ static int do_try_create_character(struct DatabaseRequest *req, int status)
     req->res.tryCreateCharacter.created = mysql_stmt_affected_rows(req->stmt) == 1;
     if (!req->res.tryCreateCharacter.created)
         return 0;
+
     req->res.tryCreateCharacter.id = mysql_stmt_insert_id(req->stmt);
+
     DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
 
     if (equip_type_from_id(req->params.tryCreateCharacter.top.item.itemId) == EQUIP_TYPE_COAT)
-        query = "INSERT INTO Items (item_id, character_id) VALUES (?, ?), (?, ?), (?, ?), (?, ?)";
+        query = "INSERT INTO Items (item_id) VALUES (?), (?), (?), (?)";
     else
-        query = "INSERT INTO Items (item_id, character_id) VALUES (?, ?), (?, ?), (?, ?)";
+        query = "INSERT INTO Items (item_id) VALUES (?), (?), (?)";
 
     DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
 
-    //case DATABASE_REQUEST_TYPE_TRY_CREATE_CHARACTER:
-    INPUT_BINDER_INIT(equip_type_from_id(req->params.tryCreateCharacter.top.item.itemId) == EQUIP_TYPE_COAT ? 2 * 4 : 2 * 3);
+    INPUT_BINDER_INIT(equip_type_from_id(req->params.tryCreateCharacter.top.item.itemId) == EQUIP_TYPE_COAT ? 4 : 3);
     // Top
     INPUT_BINDER_u32(&req->params.tryCreateCharacter.top.item.itemId);
-    INPUT_BINDER_u32(&req->res.tryCreateCharacter.id);
 
     // Bottom
     if (equip_type_from_id(req->params.tryCreateCharacter.top.item.itemId) == EQUIP_TYPE_COAT) {
         INPUT_BINDER_u32(&req->params.tryCreateCharacter.bottom.item.itemId);
-        INPUT_BINDER_u32(&req->res.tryCreateCharacter.id);
     }
 
     // Shoes
     INPUT_BINDER_u32(&req->params.tryCreateCharacter.shoes.item.itemId);
-    INPUT_BINDER_u32(&req->res.tryCreateCharacter.id);
 
     // Weapon
     INPUT_BINDER_u32(&req->params.tryCreateCharacter.weapon.item.itemId);
-    INPUT_BINDER_u32(&req->res.tryCreateCharacter.id);
 
     INPUT_BINDER_FINALIZE(req->stmt);
 
     DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
 
     req->temp.id[0] = mysql_stmt_insert_id(req->stmt);
+
     DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
 
     if (equip_type_from_id(req->params.tryCreateCharacter.top.item.itemId) == EQUIP_TYPE_COAT)
@@ -984,8 +982,39 @@ static int do_try_create_character(struct DatabaseRequest *req, int status)
     INPUT_BINDER_FINALIZE(req->stmt);
     DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
 
-    req->temp.id[0] = mysql_stmt_insert_id(req->stmt);
     DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
+
+    if (equip_type_from_id(req->params.tryCreateCharacter.top.item.itemId) == EQUIP_TYPE_COAT)
+        query = "INSERT INTO CharacterItems (item, character_id) VALUES (?, ?), (?, ?), (?, ?), (?, ?)";
+    else
+        query = "INSERT INTO CharacterItems (item, character_id) VALUES (?, ?), (?, ?), (?, ?)";
+
+    DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
+
+    INPUT_BINDER_INIT(equip_type_from_id(req->params.tryCreateCharacter.top.item.itemId) == EQUIP_TYPE_COAT ? 2 * 4 : 2 * 3);
+
+    // Top/Overall
+    INPUT_BINDER_u64(&req->temp.id[0]);
+    INPUT_BINDER_u32(&req->res.tryCreateCharacter.id);
+
+    // Bottom
+    if (equip_type_from_id(req->params.tryCreateCharacter.top.item.itemId) == EQUIP_TYPE_COAT) {
+        INPUT_BINDER_u64(&req->temp.id[1]);
+        INPUT_BINDER_u32(&req->res.tryCreateCharacter.id);
+    }
+
+    // Shoes
+    INPUT_BINDER_u64(&req->temp.id[2]);
+    INPUT_BINDER_u32(&req->res.tryCreateCharacter.id);
+
+    // Weapon
+    INPUT_BINDER_u64(&req->temp.id[3]);
+    INPUT_BINDER_u32(&req->res.tryCreateCharacter.id);
+    INPUT_BINDER_FINALIZE(req->stmt);
+
+    DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
+
+    req->temp.id[0] = mysql_stmt_insert_id(req->stmt);
 
     if (equip_type_from_id(req->params.tryCreateCharacter.top.item.itemId) == EQUIP_TYPE_COAT)
         query = "INSERT INTO EquippedEquipment (equip) VALUES (?), (?), (?), (?)";
@@ -1018,7 +1047,7 @@ static int do_try_create_character(struct DatabaseRequest *req, int status)
     int len = sprintf(query,
             "INSERT INTO Keymaps VALUES (%" PRIu32 ", ?, ?, ?)",
             req->res.tryCreateCharacter.id);
-    DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
+    DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, len);
 
     INPUT_BINDER_INIT(3);
     INPUT_BINDER_u32(DEFAULT_KEY);
@@ -1084,14 +1113,16 @@ static int do_get_character(struct DatabaseRequest *req, int status)
 
     DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
 
-    query = "SELECT Equipment.id, Items.id, item_id, flags, owner, level, slots, str, dex, int_, luk, hp, mp, atk, matk, def, mdef, acc, avoid, speed, jump FROM Equipment JOIN Items ON item = Items.id WHERE Equipment.item IN (SELECT id FROM Items WHERE character_id = ?) AND Equipment.id IN (SELECT equip FROM EquippedEquipment)";
+    query = "SELECT CharacterItems.id, Items.id, item_id, flags, owner, level, slots, str, dex, int_, luk, hp, mp, atk, matk, def, mdef, acc, avoid, speed, jump "
+        "FROM Equipment JOIN Items ON item = Items.id JOIN CharacterItems ON Items.id = CharacterItems.item "
+        "WHERE character_id = ? AND CharacterItems.id IN (SELECT equip FROM EquippedEquipment)";
     DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
 
     INPUT_BINDER_INIT(1);
     INPUT_BINDER_u32(&req->params.getCharacter.id);
     INPUT_BINDER_FINALIZE(req->stmt);
 
-    OUTPUT_BINDER_INIT(21);
+    OUTPUT_BINDER_INIT(22);
     OUTPUT_BINDER_u64(&req->res.getCharacter.equippedEquipment[EQUIP_SLOT_COUNT - 1].id);
     OUTPUT_BINDER_u64(&req->res.getCharacter.equippedEquipment[EQUIP_SLOT_COUNT - 1].item.id);
     OUTPUT_BINDER_u32(&req->res.getCharacter.equippedEquipment[EQUIP_SLOT_COUNT - 1].item.itemId);
@@ -1133,7 +1164,9 @@ static int do_get_character(struct DatabaseRequest *req, int status)
 
     DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
 
-    query = "SELECT Equipment.id, Items.id, item_id, flags, owner, level, slots, str, dex, int_, luk, hp, mp, atk, matk, def, mdef, acc, avoid, speed, jump, slot FROM InventoryEquipment JOIN Equipment ON equip = Equipment.id JOIN Items ON item = Items.id WHERE Equipment.item IN (SELECT id FROM Items WHERE character_id = ?) AND Equipment.id IN (SELECT equip FROM InventoryEquipment)";
+    query = "SELECT CharacterItems.id, Items.id, item_id, flags, owner, level, slots, str, dex, int_, luk, hp, mp, atk, matk, def, mdef, acc, avoid, speed, jump, slot "
+        "FROM InventoryEquipment JOIN CharacterItems ON equip = CharacterItems.id JOIN Equipment ON CharacterItems.item = Equipment.item JOIN Items ON Equipment.item = Items.id "
+        "WHERE character_id = ?";
     DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
 
     INPUT_BINDER_INIT(1);
@@ -1183,14 +1216,17 @@ static int do_get_character(struct DatabaseRequest *req, int status)
 
     DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
 
-    query = "SELECT id, item_id, flags, owner, slot, count FROM InventoryItems JOIN Items ON item = Items.id WHERE Items.id IN (SELECT id FROM Items WHERE character_id = ?)";
+    query = "SELECT CharacterItems.id, Items.id, item_id, flags, owner, slot, count "
+        "FROM InventoryItems JOIN CharacterItems ON InventoryItems.item = id JOIN Items ON CharacterItems.item = Items.id "
+        "WHERE character_id = ?";
     DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
 
     INPUT_BINDER_INIT(1);
     INPUT_BINDER_u32(&req->params.getCharacter.id);
     INPUT_BINDER_FINALIZE(req->stmt);
 
-    OUTPUT_BINDER_INIT(6);
+    OUTPUT_BINDER_INIT(7);
+    OUTPUT_BINDER_u64(&req->res.getCharacter.inventoryItems[4*252 - 1].id);
     OUTPUT_BINDER_u64(&req->res.getCharacter.inventoryItems[4*252 - 1].item.id);
     OUTPUT_BINDER_u32(&req->res.getCharacter.inventoryItems[4*252 - 1].item.itemId);
     OUTPUT_BINDER_u8(&req->res.getCharacter.inventoryItems[4*252 - 1].item.flags);
@@ -1456,6 +1492,8 @@ static int do_get_character(struct DatabaseRequest *req, int status)
         DO_ASYNC(ret, ret == 1, mysql_stmt_fetch, req, status);
     }
 
+    DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
+
     END_ASYNC()
 
     return 0;
@@ -1509,7 +1547,7 @@ static int do_update_character(struct DatabaseRequest *req, int status)
 
     DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
 
-    query = "UPDATE Items SET deleted = 1 WHERE character_id = ?";
+    query = "UPDATE Items JOIN CharacterItems ON Items.id = item SET deleted = 1 WHERE character_id = ?";
     DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
     INPUT_BINDER_INIT(1);
     INPUT_BINDER_u32(&req->params.updateCharacter.id);
@@ -1544,14 +1582,13 @@ static int do_update_character(struct DatabaseRequest *req, int status)
 
     // Update existing items
     if (item_count_not_zero) {
-        query = "INSERT INTO Items (id, character_id, item_id, flags, owner, giver) \
-            VALUES (?, ?, ?, ?, ?, ?) \
-            ON DUPLICATE KEY UPDATE character_id = ?, flags = ?, owner = ?, giver = ?, deleted = 0";
+        query = "INSERT INTO Items (id, item_id, flags, owner, giver) "
+            "VALUES (?, ?, ?, ?, ?) "
+            "ON DUPLICATE KEY UPDATE deleted = 0";
         DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
 
         struct {
             uint64_t id;
-            uint32_t charId;
             uint32_t itemId;
             uint8_t flags;
             char owner[CHARACTER_MAX_NAME_LENGTH];
@@ -1561,9 +1598,10 @@ static int do_update_character(struct DatabaseRequest *req, int status)
             unsigned long giverLength;
             char giver_ind;
         } *data = malloc((req->params.updateCharacter.equippedCount + req->params.updateCharacter.equipCount + req->params.updateCharacter.itemCount) * sizeof(*data));
-        req->temp.updateCharacter.data = data;
         if (data == NULL)
             return -1;
+
+        req->temp.updateCharacter.data = data;
 
         size_t count = 0;
         for (size_t i = 0; i < 3; i++) {
@@ -1580,7 +1618,6 @@ static int do_update_character(struct DatabaseRequest *req, int status)
 
                 if (item->id != 0) {
                     data[count].id = item->id;
-                    data[count].charId = req->params.updateCharacter.id;
                     data[count].itemId = item->itemId;
                     data[count].flags = item->flags;
                     strncpy(data[count].owner, item->owner, item->ownerLength);
@@ -1594,14 +1631,9 @@ static int do_update_character(struct DatabaseRequest *req, int status)
             }
         }
 
-        INPUT_BINDER_INIT(10);
+        INPUT_BINDER_INIT(5);
         INPUT_BINDER_u64(&data->id);
-        INPUT_BINDER_u32(&data->charId);
         INPUT_BINDER_u32(&data->itemId);
-        INPUT_BINDER_u8(&data->flags);
-        INPUT_BINDER_bulk_sized_string(data->owner, &data->ownerLength, &data->owner_ind);
-        INPUT_BINDER_bulk_sized_string(data->giver, &data->giverLength, &data->giver_ind);
-        INPUT_BINDER_u32(&data->charId);
         INPUT_BINDER_u8(&data->flags);
         INPUT_BINDER_bulk_sized_string(data->owner, &data->ownerLength, &data->owner_ind);
         INPUT_BINDER_bulk_sized_string(data->giver, &data->giverLength, &data->giver_ind);
@@ -1621,7 +1653,7 @@ static int do_update_character(struct DatabaseRequest *req, int status)
     }
 
     // Insert new items - Probably can't batch the request as we need the ID of each inserted item
-    query = "INSERT INTO Items (character_id, item_id, flags, owner, giver) VALUES (?, ?, ?, ?, ?)";
+    query = "INSERT INTO Items (item_id, flags, owner, giver) VALUES (?, ?, ?, ?)";
     DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
 
     // Insert new equipped items
@@ -1630,8 +1662,7 @@ static int do_update_character(struct DatabaseRequest *req, int status)
             req->temp.updateCharacter.i++) {
         struct DatabaseItem *item = &req->params.updateCharacter.equippedEquipment[req->temp.updateCharacter.i].item;
         if (item->id == 0) {
-            INPUT_BINDER_INIT(5);
-            INPUT_BINDER_u32(&req->params.updateCharacter.id);
+            INPUT_BINDER_INIT(4);
             INPUT_BINDER_u32(&item->itemId);
             INPUT_BINDER_u8(&item->flags);
             if (item->ownerLength == 0)
@@ -1658,8 +1689,7 @@ static int do_update_character(struct DatabaseRequest *req, int status)
         struct DatabaseItem *item =
             &req->params.updateCharacter.equipmentInventory[req->temp.updateCharacter.i].equip.item;
         if (item->id == 0) {
-            INPUT_BINDER_INIT(5);
-            INPUT_BINDER_u32(&req->params.updateCharacter.id);
+            INPUT_BINDER_INIT(4);
             INPUT_BINDER_u32(&item->itemId);
             INPUT_BINDER_u8(&item->flags);
             if (item->ownerLength == 0)
@@ -1685,8 +1715,7 @@ static int do_update_character(struct DatabaseRequest *req, int status)
             req->temp.updateCharacter.i++) {
         struct DatabaseItem *item = &req->params.updateCharacter.inventoryItems[req->temp.updateCharacter.i].item;
         if (item->id == 0) {
-            INPUT_BINDER_INIT(5);
-            INPUT_BINDER_u32(&req->params.updateCharacter.id);
+            INPUT_BINDER_INIT(4);
             INPUT_BINDER_u32(&item->itemId);
             INPUT_BINDER_u8(&item->flags);
             if (item->ownerLength == 0)
@@ -1703,6 +1732,105 @@ static int do_update_character(struct DatabaseRequest *req, int status)
             DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
             item = &req->params.updateCharacter.inventoryItems[req->temp.updateCharacter.i].item;
             item->id = mysql_stmt_insert_id(req->stmt);
+        }
+    }
+
+    DO_ASYNC(bret, bret, mysql_stmt_reset, req, status);
+
+    query = "INSERT INTO CharacterItems (id, item, character_id) VALUES (?, ?, ?) \
+            ON DUPLICATE KEY UPDATE character_id = ?";
+    DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
+
+    for (req->temp.updateCharacter.i = 0;
+            req->temp.updateCharacter.i < req->params.updateCharacter.equippedCount;
+            req->temp.updateCharacter.i++) {
+        if (req->params.updateCharacter.equippedEquipment[req->temp.updateCharacter.i].id != 0) {
+            INPUT_BINDER_INIT(4);
+            INPUT_BINDER_u64(&req->params.updateCharacter.equippedEquipment[req->temp.updateCharacter.i].id);
+            INPUT_BINDER_u64(&req->params.updateCharacter.equippedEquipment[req->temp.updateCharacter.i].item.id);
+            INPUT_BINDER_u32(&req->params.updateCharacter.id);
+            INPUT_BINDER_u32(&req->params.updateCharacter.id);
+            INPUT_BINDER_FINALIZE(req->stmt);
+
+            DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
+        }
+    }
+
+    for (req->temp.updateCharacter.i = 0;
+            req->temp.updateCharacter.i < req->params.updateCharacter.equipCount;
+            req->temp.updateCharacter.i++) {
+        if (req->params.updateCharacter.equipmentInventory[req->temp.updateCharacter.i].equip.id != 0) {
+            INPUT_BINDER_INIT(4);
+            INPUT_BINDER_u64(&req->params.updateCharacter.equipmentInventory[req->temp.updateCharacter.i].equip.id);
+            INPUT_BINDER_u64(&req->params.updateCharacter.equipmentInventory[req->temp.updateCharacter.i].equip.item.id);
+            INPUT_BINDER_u32(&req->params.updateCharacter.id);
+            INPUT_BINDER_u32(&req->params.updateCharacter.id);
+            INPUT_BINDER_FINALIZE(req->stmt);
+
+            DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
+        }
+    }
+
+    for (req->temp.updateCharacter.i = 0;
+            req->temp.updateCharacter.i < req->params.updateCharacter.itemCount;
+            req->temp.updateCharacter.i++) {
+        if (req->params.updateCharacter.inventoryItems[req->temp.updateCharacter.i].id != 0) {
+            INPUT_BINDER_INIT(4);
+            INPUT_BINDER_u64(&req->params.updateCharacter.inventoryItems[req->temp.updateCharacter.i].id);
+            INPUT_BINDER_u64(&req->params.updateCharacter.inventoryItems[req->temp.updateCharacter.i].item.id);
+            INPUT_BINDER_u32(&req->params.updateCharacter.id);
+            INPUT_BINDER_u32(&req->params.updateCharacter.id);
+            INPUT_BINDER_FINALIZE(req->stmt);
+
+            DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
+        }
+    }
+
+    query = "INSERT INTO CharacterItems (item, character_id) VALUES (?, ?)";
+    DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
+
+    for (req->temp.updateCharacter.i = 0;
+            req->temp.updateCharacter.i < req->params.updateCharacter.equippedCount;
+            req->temp.updateCharacter.i++) {
+        if (req->params.updateCharacter.equippedEquipment[req->temp.updateCharacter.i].id == 0) {
+            INPUT_BINDER_INIT(2);
+            INPUT_BINDER_u64(&req->params.updateCharacter.equippedEquipment[req->temp.updateCharacter.i].item.id);
+            INPUT_BINDER_u32(&req->params.updateCharacter.id);
+            INPUT_BINDER_FINALIZE(req->stmt);
+
+            DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
+
+            req->params.updateCharacter.equippedEquipment[req->temp.updateCharacter.i].id = mysql_stmt_insert_id(req->stmt);
+        }
+    }
+
+    for (req->temp.updateCharacter.i = 0;
+            req->temp.updateCharacter.i < req->params.updateCharacter.equipCount;
+            req->temp.updateCharacter.i++) {
+        if (req->params.updateCharacter.equipmentInventory[req->temp.updateCharacter.i].equip.id == 0) {
+            INPUT_BINDER_INIT(2);
+            INPUT_BINDER_u64(&req->params.updateCharacter.equipmentInventory[req->temp.updateCharacter.i].equip.item.id);
+            INPUT_BINDER_u32(&req->params.updateCharacter.id);
+            INPUT_BINDER_FINALIZE(req->stmt);
+
+            DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
+
+            req->params.updateCharacter.equipmentInventory[req->temp.updateCharacter.i].equip.id = mysql_stmt_insert_id(req->stmt);
+        }
+    }
+
+    for (req->temp.updateCharacter.i = 0;
+            req->temp.updateCharacter.i < req->params.updateCharacter.itemCount;
+            req->temp.updateCharacter.i++) {
+        if (req->params.updateCharacter.inventoryItems[req->temp.updateCharacter.i].id == 0) {
+            INPUT_BINDER_INIT(2);
+            INPUT_BINDER_u64(&req->params.updateCharacter.inventoryItems[req->temp.updateCharacter.i].item.id);
+            INPUT_BINDER_u32(&req->params.updateCharacter.id);
+            INPUT_BINDER_FINALIZE(req->stmt);
+
+            DO_ASYNC(ret, ret != 0, mysql_stmt_execute, req, status);
+
+            req->params.updateCharacter.inventoryItems[req->temp.updateCharacter.i].id = mysql_stmt_insert_id(req->stmt);
         }
     }
 
@@ -1732,12 +1860,11 @@ static int do_update_character(struct DatabaseRequest *req, int status)
     // Update existing equipment
     if (item_count_not_zero) {
         query = "INSERT INTO Equipment \
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
             ON DUPLICATE KEY UPDATE level = ?, slots = ?, str = ?, dex = ?, int_ = ?, luk = ?, hp = ?, mp = ?, atk = ?, matk = ?, def = ?, mdef = ?, acc = ?, avoid = ?, speed = ?, jump = ?";
         DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
 
         struct {
-            uint64_t id;
             uint64_t item;
             int8_t level;
             int8_t slots;
@@ -1773,7 +1900,6 @@ static int do_update_character(struct DatabaseRequest *req, int status)
                     &req->params.updateCharacter.equipmentInventory[j].equip;
 
                 if (equip->id != 0) {
-                    data[count].id = equip->id;
                     data[count].item = equip->item.id;
                     data[count].level = equip->level;
                     data[count].slots = equip->slots;
@@ -1796,8 +1922,7 @@ static int do_update_character(struct DatabaseRequest *req, int status)
             }
         }
 
-        INPUT_BINDER_INIT(34);
-        INPUT_BINDER_u64(&data->id);
+        INPUT_BINDER_INIT(33);
         INPUT_BINDER_u64(&data->item);
         INPUT_BINDER_i8(&data->level);
         INPUT_BINDER_i8(&data->slots);
@@ -2026,7 +2151,7 @@ static int do_update_character(struct DatabaseRequest *req, int status)
         DO_ASYNC(ret, ret != 0, mysql_stmt_prepare, req, status, query, strlen(query));
 
         INPUT_BINDER_INIT(5);
-        INPUT_BINDER_u64(&req->params.updateCharacter.inventoryItems->item.id);
+        INPUT_BINDER_u64(&req->params.updateCharacter.inventoryItems->id);
         INPUT_BINDER_u8(&req->params.updateCharacter.inventoryItems->slot);
         INPUT_BINDER_i16(&req->params.updateCharacter.inventoryItems->count);
         INPUT_BINDER_u8(&req->params.updateCharacter.inventoryItems->slot);

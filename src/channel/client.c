@@ -222,6 +222,7 @@ struct ClientContResult client_cont(struct Client *client, int status)
             const union DatabaseResult *res = database_request_result(client->request);
             chr->nameLength = res->getCharacter.nameLength;
             memcpy(chr->name, res->getCharacter.name, res->getCharacter.nameLength);
+            chr->map = res->getCharacter.map;
             // Will be updated in on_client_join()
             //chr->x = info->x;
             //chr->y = info->y;
@@ -229,10 +230,9 @@ struct ClientContResult client_cont(struct Client *client, int status)
             //chr->stance = 6;
             chr->chair = 0;
             chr->seat = -1;
-            chr->map = res->getCharacter.map;
             chr->spawnPoint = wz_get_portal_info_by_name(chr->map, "sp")->id;
-            chr->job = res->getCharacter.job;
             chr->level = res->getCharacter.level;
+            chr->job = res->getCharacter.job;
             chr->exp = res->getCharacter.exp;
             chr->maxHp = res->getCharacter.maxHp;
             chr->eMaxHp = 0;
@@ -355,6 +355,7 @@ struct ClientContResult client_cont(struct Client *client, int status)
                 uint8_t inv = res->getCharacter.inventoryItems[i].item.itemId / 1000000 - 2;
                 chr->inventory[inv].items[res->getCharacter.inventoryItems[i].slot].isEmpty = false;
                 struct InventoryItem *item = &chr->inventory[inv].items[res->getCharacter.inventoryItems[i].slot].item;
+                item->id = res->getCharacter.inventoryItems[i].id;
                 item->item.id = res->getCharacter.inventoryItems[i].item.id;
                 item->item.itemId = res->getCharacter.inventoryItems[i].item.itemId;
                 item->item.flags = res->getCharacter.inventoryItems[i].item.flags;
@@ -362,6 +363,10 @@ struct ClientContResult client_cont(struct Client *client, int status)
                 item->item.giftFromLength = 0;
                 item->quantity = res->getCharacter.inventoryItems[i].count;
             }
+
+            chr->storage.slots = 4;
+            chr->storage.count = 0;
+            chr->storage.mesos = 258;
 
             chr->activeProjectile = -1;
 
@@ -646,7 +651,7 @@ struct ClientContResult client_cont(struct Client *client, int status)
     case PACKET_TYPE_LOGOUT:
         if (client->databaseState == 0) {
             // If the client doesn't have a room - meaning it didn't load a character, there is no need to flush the character
-            if (room_get_context(session_get_room(client->session)) == NULL) {
+            if (session_get_room(client->session) == NULL) {
                 client_destroy(client);
                 return (struct ClientContResult) { .status = 0 };
             }
@@ -771,15 +776,18 @@ struct ClientContResult client_cont(struct Client *client, int status)
             for (uint8_t inv = 0; inv < 4; inv++) {
                 for (uint8_t i = 0; i < chr->inventory[inv].slotCount; i++) {
                     if (!chr->inventory[inv].items[i].isEmpty) {
-                        params.updateCharacter.inventoryItems[params.updateCharacter.itemCount].item.id = chr->inventory[inv].items[i].item.item.id;
-                        params.updateCharacter.inventoryItems[params.updateCharacter.itemCount].item.itemId = chr->inventory[inv].items[i].item.item.itemId;
-                        params.updateCharacter.inventoryItems[params.updateCharacter.itemCount].item.flags = chr->inventory[inv].items[i].item.item.flags;
-                        params.updateCharacter.inventoryItems[params.updateCharacter.itemCount].item.ownerLength = chr->inventory[inv].items[i].item.item.ownerLength;
-                        memcpy(params.updateCharacter.inventoryItems[params.updateCharacter.itemCount].item.owner, chr->inventory[inv].items[i].item.item.owner, chr->inventory[inv].items[i].item.item.ownerLength);
-                        params.updateCharacter.inventoryItems[params.updateCharacter.itemCount].item.giverLength = chr->inventory[inv].items[i].item.item.giftFromLength;
-                        memcpy(params.updateCharacter.inventoryItems[params.updateCharacter.itemCount].item.giver, chr->inventory[inv].items[i].item.item.giftFrom, chr->inventory[inv].items[i].item.item.giftFromLength);
+                        params.updateCharacter.inventoryItems[params.updateCharacter.itemCount].id = chr->inventory[inv].items[i].item.id;
                         params.updateCharacter.inventoryItems[params.updateCharacter.itemCount].slot = i;
                         params.updateCharacter.inventoryItems[params.updateCharacter.itemCount].count = chr->inventory[inv].items[i].item.quantity;
+                        
+                        struct Item *item = &chr->inventory[inv].items[i].item.item;
+                        params.updateCharacter.inventoryItems[params.updateCharacter.itemCount].item.id = item->id;
+                        params.updateCharacter.inventoryItems[params.updateCharacter.itemCount].item.itemId = item->itemId;
+                        params.updateCharacter.inventoryItems[params.updateCharacter.itemCount].item.flags = item->flags;
+                        params.updateCharacter.inventoryItems[params.updateCharacter.itemCount].item.ownerLength = item->ownerLength;
+                        memcpy(params.updateCharacter.inventoryItems[params.updateCharacter.itemCount].item.owner, item->owner, item->ownerLength);
+                        params.updateCharacter.inventoryItems[params.updateCharacter.itemCount].item.giverLength = item->giftFromLength;
+                        memcpy(params.updateCharacter.inventoryItems[params.updateCharacter.itemCount].item.giver, item->giftFrom, item->giftFromLength);
 
                         params.updateCharacter.itemCount++;
                     }
@@ -1739,6 +1747,7 @@ bool client_gain_items(struct Client *client, size_t len, const uint32_t *ids, c
                     for (size_t j = 0; j < invs[inv].slotCount; j++) {
                         if (invs[inv].items[j].isEmpty) {
                             invs[inv].items[j].isEmpty = false;
+                            invs[inv].items[j].item.id = 0;
                             invs[inv].items[j].item.item.id = 0;
                             invs[inv].items[j].item.item.itemId = ids[i];
                             invs[inv].items[j].item.item.flags = 0;
@@ -1919,7 +1928,10 @@ bool client_gain_inventory_item(struct Client *client, const struct InventoryIte
                     quantity -= wz_get_item_info(item->item.itemId)->slotMax - inv.items[i].item.quantity;
                     inv.items[i].item.quantity = wz_get_item_info(item->item.itemId)->slotMax;
                 } else {
-                    inv.items[i].item.item.id = item->item.id;
+                    if (inv.items[i].item.item.id == 0) {
+                        inv.items[i].item.item.id = item->item.id;
+                        inv.items[i].item.id = item->id;
+                    }
                     inv.items[i].item.quantity += quantity;
                     quantity = 0;
                 }
@@ -1959,6 +1971,7 @@ bool client_gain_inventory_item(struct Client *client, const struct InventoryIte
                         hash_set_u32_remove(chr->itemQuests, item->item.itemId);
 
                     inv.items[j].isEmpty = false;
+                    inv.items[j].item.id = 0;
                     inv.items[j].item.item = item->item;
                     inv.items[j].item.quantity = quantity;
 
@@ -3982,6 +3995,14 @@ bool client_stand_up(struct Client *client)
     return true;
 }
 
+bool client_open_storage(struct Client *client)
+{
+    uint8_t packet[OPEN_STORAGE_PACKET_MAX_LENGTH];
+    size_t len = open_storage_packet(&client->character.storage, client->npc, packet);
+    session_write(client->session, len, packet);
+    return true;
+}
+
 static bool check_quest_requirements(struct Character *chr, size_t req_count, const struct QuestRequirement *reqs, uint32_t npc)
 {
     for (size_t i = 0; i < req_count; i++) {
@@ -4120,6 +4141,7 @@ static bool start_quest(struct Client *client, uint16_t qid, uint32_t npc, bool 
         .id = qid,
         .progressCount = 0
     };
+
     for (size_t i = 0; i < info->endRequirementCount; i++) {
         struct QuestRequirement *req = &info->endRequirements[i];
         if (req->type == QUEST_REQUIREMENT_TYPE_MOB) {
@@ -4213,6 +4235,15 @@ static bool start_quest(struct Client *client, uint16_t qid, uint32_t npc, bool 
                 }
             }
 
+            for (int8_t i = 0; i < item_count; i++) {
+                if (client_has_item(client, ids[i])) {
+                    item_count--;
+                    ids[i] = ids[item_count];
+                    amounts[i] = amounts[item_count];
+                    i--;
+                }
+            }
+
             bool success;
             if (!client_gain_items(client, item_count, ids, amounts, true, &success)) {
                 hash_set_u16_remove(chr->quests, qid);
@@ -4231,7 +4262,9 @@ static bool start_quest(struct Client *client, uint16_t qid, uint32_t npc, bool 
         }
     }
 
-    client_commit_stats(client);
+    // No need to enable actions if no stat has changed
+    if (client->stats != 0)
+        client_commit_stats(client);
 
     char progress[15];
     size_t prog_len = quest_get_progress_string(&quest, progress);

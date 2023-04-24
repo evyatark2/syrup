@@ -244,7 +244,7 @@ struct LoginServer *login_server_create(OnLog *on_log, CreateUserContext *create
             bufferevent_enable(channel->event, EV_READ | EV_WRITE);
 
             struct timeval time = {
-                .tv_sec = 10,
+                .tv_sec = 2,
                 .tv_usec = 0
             };
             bufferevent_set_timeouts(channel->event, &time, NULL);
@@ -571,7 +571,7 @@ static void on_channel_event(struct bufferevent *bev, short what, void *ctx)
         bufferevent_setcb(new, on_channel_read, NULL, on_channel_event, channel);
         bufferevent_enable(new, EV_READ | EV_WRITE);
         struct timeval time = {
-            .tv_sec = 10,
+            .tv_sec = 2,
             .tv_usec = 0
         };
         bufferevent_set_timeouts(new, &time, NULL);

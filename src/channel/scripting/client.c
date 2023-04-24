@@ -41,6 +41,7 @@ static int l_client_start_quest_now(lua_State *L);
 static int l_client_to_string(lua_State *L);
 static int l_client_warp(lua_State *L);
 static int l_client_reset_stats(lua_State *L);
+static int l_client_open_storage(lua_State *L);
 
 static const struct luaL_Reg clientlib[] = {
     { "activeNpc", l_client_active_npc },
@@ -78,6 +79,7 @@ static const struct luaL_Reg clientlib[] = {
     { "setQuestInfo", l_client_set_quest_info },
     { "startQuestNow", l_client_start_quest_now },
     { "warp", l_client_warp },
+    { "openStorage", l_client_open_storage },
     { "__tostring", l_client_to_string },
     { NULL, NULL }
 };
@@ -411,6 +413,13 @@ static int l_client_reset_stats(lua_State *L)
 {
     struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
     client_reset_stats(client);
+    return 0;
+}
+
+static int l_client_open_storage(lua_State *L)
+{
+    struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
+    client_open_storage(client);
     return 0;
 }
 

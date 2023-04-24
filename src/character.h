@@ -115,6 +115,20 @@ struct KeyMapEntry {
     uint32_t action;
 };
 
+struct Storage {
+    uint8_t slots;
+    uint8_t count;
+    int32_t mesos;
+
+    struct {
+        bool isEquip;
+        union {
+            struct InventoryItem item;
+            struct Equipment equip;
+        };
+    } storage[MAX_ITEM_COUNT];
+};
+
 #define KEYMAP_MAX_KEYS 90
 
 size_t quest_get_progress_string(struct Quest *quest, char *out);
@@ -161,6 +175,8 @@ struct Character {
     uint8_t spawnPoint;
 
     int32_t mesos;
+
+    struct Storage storage;
 
     struct {
         bool isEmpty;

@@ -286,6 +286,7 @@ static inline struct Equipment equipment_from_info(const struct EquipInfo *info)
 }
 
 struct InventoryItem {
+    uint64_t id;
     struct Item item;
     int16_t quantity;
 };
