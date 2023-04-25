@@ -109,7 +109,7 @@ int main(void)
         }
     };
 
-    SERVER = channel_server_create(7575, on_log, CHANNEL_CONFIG.listen, create_context, destroy_context, on_client_connect, on_client_disconnect, on_client_join, on_unassigned_client_packet, on_client_packet, on_room_create, on_room_destroy, &ctx, 1);
+    SERVER = channel_server_create(7575, on_log, CHANNEL_CONFIG.listen, create_context, destroy_context, on_client_connect, on_client_disconnect, on_client_join, on_unassigned_client_packet, on_client_packet, on_room_create, on_room_destroy, &ctx, 2);
     if (SERVER == NULL)
         return -1;
 
@@ -147,6 +147,7 @@ int main(void)
     }
 
     event_ellinia_orbis_boat_init(SERVER);
+    event_orbis_ludibrium_train_init(SERVER);
 
     signal(SIGINT, on_sigint);
     channel_server_start(SERVER);

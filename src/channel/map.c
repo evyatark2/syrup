@@ -170,6 +170,10 @@ static int dock_undock_boat(struct Room *room, int fd, int status);
 static int start_sailing(struct Room *room, int fd, int status);
 static int end_sailing(struct Room *room, int fd, int status);
 
+static int dock_undock_train(struct Room *room, int fd, int status);
+static int start_train(struct Room *room, int fd, int status);
+static int end_train(struct Room *room, int fd, int status);
+
 static void map_kill_monster(struct Map *map, uint32_t oid);
 static bool map_calculate_drop_position(struct Map *map, struct Point *p);
 static void map_destroy_reactor(struct Map *map, uint32_t oid);
@@ -395,18 +399,31 @@ struct Map *map_create(struct ChannelServer *server, struct Room *room, struct S
         map->reactors[i].keepAlive = false;
     }
 
-    if (room_get_id(room) == 101000300 || room_get_id(room) == 200000111) {
+    uint32_t id = room_get_id(room);
+    if (id == 101000300 || id == 200000111 ) {
         map->fd = eventfd(0, 0);
         room_set_event(room, map->fd, POLLIN, dock_undock_boat);
         map->listener = event_add_listener(channel_server_get_event(server, EVENT_ELLINIA_ORBIS_BOAT), EVENT_ELLINIA_ORBIS_BOAT_PROPERTY_SAILING, on_boat_state_changed, map);
-    } else if (room_get_id(room) == 101000301 || room_get_id(room) == 200000112) {
+    } else if (id == 101000301 || id == 200000112) {
         map->fd = eventfd(0, 0);
         room_set_event(room, map->fd, POLLIN, start_sailing);
         map->listener = event_add_listener(channel_server_get_event(server, EVENT_ELLINIA_ORBIS_BOAT), EVENT_ELLINIA_ORBIS_BOAT_PROPERTY_SAILING, on_boat_state_changed, map);
-    } else if (room_get_id(room) / 10 == 20009001 || room_get_id(room) / 10 == 20009000) {
+    } else if (id / 10 == 20009001 || id / 10 == 20009000) {
         map->fd = eventfd(0, 0);
         room_set_event(room, map->fd, POLLIN, end_sailing);
         map->listener = event_add_listener(channel_server_get_event(server, EVENT_ELLINIA_ORBIS_BOAT), EVENT_ELLINIA_ORBIS_BOAT_PROPERTY_SAILING, on_boat_state_changed, map);
+    } else if (id == 200000121 || id == 220000110) {
+        map->fd = eventfd(0, 0);
+        room_set_event(room, map->fd, POLLIN, dock_undock_train);
+        map->listener = event_add_listener(channel_server_get_event(server, EVENT_ORBIS_LUDIBRIUM_BOAT), EVENT_ORBIS_LUDIBRIUM_BOAT_PROPERTY_SAILING, on_boat_state_changed, map);
+    } else if (id == 200000122 || id == 220000111) {
+        map->fd = eventfd(0, 0);
+        room_set_event(room, map->fd, POLLIN, start_train);
+        map->listener = event_add_listener(channel_server_get_event(server, EVENT_ORBIS_LUDIBRIUM_BOAT), EVENT_ORBIS_LUDIBRIUM_BOAT_PROPERTY_SAILING, on_boat_state_changed, map);
+    } else if (id == 200090100 || id == 200090110) {
+        map->fd = eventfd(0, 0);
+        room_set_event(room, map->fd, POLLIN, end_train);
+        map->listener = event_add_listener(channel_server_get_event(server, EVENT_ORBIS_LUDIBRIUM_BOAT), EVENT_ORBIS_LUDIBRIUM_BOAT_PROPERTY_SAILING, on_boat_state_changed, map);
     }
 
     map->server = server;
@@ -435,6 +452,10 @@ void map_destroy(struct Map *map)
     uint32_t id = room_get_id(map->room);
     if (id == 101000300 || id == 101000301 || id / 10 == 20009001 || id == 200000111 || id == 200000112 || id / 10 == 20009000) {
         event_remove_listener(channel_server_get_event(map->server, EVENT_ELLINIA_ORBIS_BOAT), EVENT_ELLINIA_ORBIS_BOAT_PROPERTY_SAILING, map->listener);
+        room_close_event(map->room);
+        close(map->fd);
+    } else if (id == 200000121 || id == 220000110 || id == 200000122 || id == 220000111 || id == 200090100 || id == 200090110) {
+        event_remove_listener(channel_server_get_event(map->server, EVENT_ORBIS_LUDIBRIUM_BOAT), EVENT_ORBIS_LUDIBRIUM_BOAT_PROPERTY_SAILING, map->listener);
         room_close_event(map->room);
         close(map->fd);
     }
@@ -1493,6 +1514,54 @@ static int end_sailing(struct Room *room, int fd, int status)
 
     return 0;
 
+}
+
+static int dock_undock_train(struct Room *room, int fd, int status)
+{
+    struct Map *map = room_get_context(room);
+    uint64_t one;
+    read(fd, &one, sizeof(uint64_t));
+    uint8_t packet[BOAT_PACKET_LENGTH];
+    int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_ORBIS_LUDIBRIUM_BOAT), EVENT_ORBIS_LUDIBRIUM_BOAT_PROPERTY_SAILING);
+    if (state != 1) {
+        if (state == 2) {
+            boat_packet(false, packet);
+        } else if (state == 0) {
+            boat_packet(true, packet);
+        }
+        room_broadcast(room, BOAT_PACKET_LENGTH, packet);
+    }
+    return 0;
+}
+
+static int start_train(struct Room *room, int fd, int status)
+{
+    struct Map *map = room_get_context(room);
+    uint64_t one;
+    read(fd, &one, sizeof(uint64_t));
+    int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_ORBIS_LUDIBRIUM_BOAT), EVENT_ORBIS_LUDIBRIUM_BOAT_PROPERTY_SAILING);
+    if (state == 2) {
+        for (size_t i = 0; i < map->playerCount; i++) {
+            client_warp_async(map->players[i].client, room_get_id(room) == 200000122 ? 200090100 : 200090110, 0);
+        }
+    }
+
+    return 0;
+}
+
+static int end_train(struct Room *room, int fd, int status)
+{
+    struct Map *map = room_get_context(room);
+    uint64_t one;
+    read(fd, &one, sizeof(uint64_t));
+    int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_ORBIS_LUDIBRIUM_BOAT), EVENT_ORBIS_LUDIBRIUM_BOAT_PROPERTY_SAILING);
+    if (state == 0) {
+        for (size_t i = 0; i < map->playerCount; i++) {
+            client_warp_async(map->players[i].client, room_get_id(room) == 200090100 ? 220000110 : 200000100, 0);
+        }
+    }
+
+    return 0;
 }
 
 static void map_kill_monster(struct Map *map, uint32_t oid)
