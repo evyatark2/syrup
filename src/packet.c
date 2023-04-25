@@ -1557,6 +1557,16 @@ size_t open_storage_packet(const struct Storage *storage, uint32_t npc, uint8_t 
     return writer.pos;
 }
 
+void boat_packet(bool state, uint8_t *packet)
+{
+    struct Writer writer;
+    writer_init(&writer, BOAT_PACKET_LENGTH, packet);
+
+    writer_u16(&writer, 0x0095);
+    writer_u8(&writer, state ? 1 : 2);
+    writer_u8(&writer, 0);
+}
+
 static void exp_gain_packet_internal(struct Writer *writer, int32_t exp, int32_t equip_bonus, int32_t party_bonus, bool white, bool in_chat)
 {
     writer_u16(writer, 0x0027);

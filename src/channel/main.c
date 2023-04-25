@@ -11,6 +11,7 @@
 #include "config.h"
 #include "client.h"
 #include "drops.h"
+#include "events.h"
 #include "server.h"
 #include "shop.h"
 #include "../constants.h"
@@ -32,7 +33,7 @@ struct GlobalContext {
 
 static void on_log(enum LogType type, const char *fmt, ...);
 
-static void *create_context(void *global_ctx);
+static void *create_context(void);
 static void destroy_context(void *ctx);
 static int on_client_connect(struct Session *session, void *global_ctx, void *thread_ctx, struct sockaddr *addr);
 static void on_client_disconnect(struct Session *session);
@@ -108,14 +109,18 @@ int main(void)
         }
     };
 
-    ctx.questManager = script_manager_create("script/quest", "def.lua", 2, eps);
+    SERVER = channel_server_create(7575, on_log, CHANNEL_CONFIG.listen, create_context, destroy_context, on_client_connect, on_client_disconnect, on_client_join, on_unassigned_client_packet, on_client_packet, on_room_create, on_room_destroy, &ctx, 1);
+    if (SERVER == NULL)
+        return -1;
+
+    ctx.questManager = script_manager_create(SERVER, "script/quest", "def.lua", 2, eps);
     if (ctx.questManager == NULL) {
         wz_terminate();
         return -1;
     }
 
     eps->name = "enter";
-    ctx.portalManager = script_manager_create("script/portal", "def.lua", 1, eps);
+    ctx.portalManager = script_manager_create(SERVER, "script/portal", "def.lua", 1, eps);
     if (ctx.portalManager == NULL) {
         script_manager_destroy(ctx.questManager);
         wz_terminate();
@@ -123,7 +128,7 @@ int main(void)
     }
 
     eps->name = "talk";
-    ctx.npcManager = script_manager_create("script/npc", "def.lua", 1, eps);
+    ctx.npcManager = script_manager_create(SERVER, "script/npc", "def.lua", 1, eps);
     if (ctx.npcManager == NULL) {
         script_manager_destroy(ctx.portalManager);
         script_manager_destroy(ctx.questManager);
@@ -132,7 +137,7 @@ int main(void)
     }
 
     eps->name = "act";
-    ctx.reactorManager = script_manager_create("script/reactor", "def.lua", 1, eps);
+    ctx.reactorManager = script_manager_create(SERVER, "script/reactor", "def.lua", 1, eps);
     if (ctx.reactorManager == NULL) {
         script_manager_destroy(ctx.npcManager);
         script_manager_destroy(ctx.portalManager);
@@ -141,9 +146,7 @@ int main(void)
         return -1;
     }
 
-    SERVER = channel_server_create(7575, on_log, CHANNEL_CONFIG.listen, create_context, destroy_context, on_client_connect, on_client_disconnect, on_client_join, on_unassigned_client_packet, on_client_packet, on_room_create, on_room_destroy, &ctx);
-    if (SERVER == NULL)
-        return -1;
+    event_ellinia_orbis_boat_init(SERVER);
 
     signal(SIGINT, on_sigint);
     channel_server_start(SERVER);
@@ -165,7 +168,7 @@ static void on_log(enum LogType type, const char *fmt, ...)
     va_end(args);
 }
 
-static void *create_context(void *global_ctx)
+static void *create_context(void)
 {
     const char *ip;
     const char *socket;
@@ -656,6 +659,9 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
     break;
 
     case 0x003A: {
+        if (client_get_map(client)->player == NULL)
+            return (struct OnPacketResult) { .status = 0, .room = -1 };
+
         struct Map *map = room_get_context(session_get_room(session));
         uint32_t oid;
         READER_BEGIN(size, packet);
@@ -1392,7 +1398,9 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         //size_t len = add_player_to_map_packet(chr, packet);
         //session_broadcast_to_room(session, len, packet);
 
-        map_join(map, client, client_get_map(client));
+        if (map_join(map, client, client_get_map(client)) == -2) {
+            return (struct OnPacketResult) { .status = 0, .room = chr->map };
+        }
 
         // Forced stat reset
         session_write(session, 2, (uint8_t[]) { 0x23, 0x00 }); // Forced stat reset
@@ -1524,7 +1532,7 @@ static int on_room_create(struct Room *room, void *thread_ctx)
 {
     struct GlobalContext *ctx = thread_ctx;
 
-    struct Map *map = map_create(room, ctx->reactorManager);
+    struct Map *map = map_create(SERVER, room, ctx->reactorManager);
     if (map == NULL)
         return -1;
 

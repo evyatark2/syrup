@@ -3,6 +3,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include <unistd.h>
+#include <sys/eventfd.h>
+
 #define XXH_INLINE_ALL
 #include <xxhash.h>
 
@@ -11,6 +14,7 @@
 #include "../wz.h"
 #include "client.h"
 #include "drops.h"
+#include "events.h"
 #include "life.h"
 #include "scripting/reactor-manager.h"
 #include "server.h"
@@ -129,6 +133,9 @@ struct DropBatch {
 
 struct Map {
     struct Room *room;
+    int fd;
+    uint32_t listener;
+    struct ChannelServer *server;
     size_t playerCapacity;
     size_t playerCount;
     struct MapPlayer *players;
@@ -158,6 +165,11 @@ struct Map {
     bool *occupiedSeats;
 };
 
+static void on_boat_state_changed(void *ctx);
+static int dock_undock_boat(struct Room *room, int fd, int status);
+static int start_sailing(struct Room *room, int fd, int status);
+static int end_sailing(struct Room *room, int fd, int status);
+
 static void map_kill_monster(struct Map *map, uint32_t oid);
 static bool map_calculate_drop_position(struct Map *map, struct Point *p);
 static void map_destroy_reactor(struct Map *map, uint32_t oid);
@@ -177,7 +189,7 @@ struct AnnounceItemDropContext {
 
 static void do_announce_item_drop(struct Session *src, struct Session *dst, void *ctx_);
 
-struct Map *map_create(struct Room *room, struct ScriptManager *reactor_manager)
+struct Map *map_create(struct ChannelServer *server, struct Room *room, struct ScriptManager *reactor_manager)
 {
     struct Map *map = malloc(sizeof(struct Map));
     if (map == NULL)
@@ -383,6 +395,22 @@ struct Map *map_create(struct Room *room, struct ScriptManager *reactor_manager)
         map->reactors[i].keepAlive = false;
     }
 
+    if (room_get_id(room) == 101000300 || room_get_id(room) == 200000111) {
+        map->fd = eventfd(0, 0);
+        room_set_event(room, map->fd, POLLIN, dock_undock_boat);
+        map->listener = event_add_listener(channel_server_get_event(server, EVENT_ELLINIA_ORBIS_BOAT), EVENT_ELLINIA_ORBIS_BOAT_PROPERTY_SAILING, on_boat_state_changed, map);
+    } else if (room_get_id(room) == 101000301 || room_get_id(room) == 200000112) {
+        map->fd = eventfd(0, 0);
+        room_set_event(room, map->fd, POLLIN, start_sailing);
+        map->listener = event_add_listener(channel_server_get_event(server, EVENT_ELLINIA_ORBIS_BOAT), EVENT_ELLINIA_ORBIS_BOAT_PROPERTY_SAILING, on_boat_state_changed, map);
+    } else if (room_get_id(room) / 10 == 20009001 || room_get_id(room) / 10 == 20009000) {
+        map->fd = eventfd(0, 0);
+        room_set_event(room, map->fd, POLLIN, end_sailing);
+        map->listener = event_add_listener(channel_server_get_event(server, EVENT_ELLINIA_ORBIS_BOAT), EVENT_ELLINIA_ORBIS_BOAT_PROPERTY_SAILING, on_boat_state_changed, map);
+    }
+
+    map->server = server;
+
     map->deadCount = 0;
 
     map->droppingBatchCapacity = 1;
@@ -404,6 +432,14 @@ struct Map *map_create(struct Room *room, struct ScriptManager *reactor_manager)
 
 void map_destroy(struct Map *map)
 {
+    uint32_t id = room_get_id(map->room);
+    if (id == 101000300 || id == 101000301 || id / 10 == 20009001 || id == 200000111 || id == 200000112 || id / 10 == 20009000) {
+        event_remove_listener(channel_server_get_event(map->server, EVENT_ELLINIA_ORBIS_BOAT), EVENT_ELLINIA_ORBIS_BOAT_PROPERTY_SAILING, map->listener);
+        room_close_event(map->room);
+        close(map->fd);
+    }
+
+    free(map->occupiedSeats);
     free(map->reactors);
 
     for (size_t i = map->dropBatchStart; i < map->dropBatchEnd; i++) {
@@ -437,6 +473,20 @@ uint32_t map_get_id(struct Map *map)
 int map_join(struct Map *map, struct Client *client, struct MapHandleContainer *player)
 {
     struct Session *session = client_get_session(client);
+
+    if (room_get_id(map->room) == 101000301 || room_get_id(map->room) == 200000112) {
+        if (event_get_property(channel_server_get_event(map->server, EVENT_ELLINIA_ORBIS_BOAT), EVENT_ELLINIA_ORBIS_BOAT_PROPERTY_SAILING) == 2) {
+            client_warp(client, room_get_id(map->room) == 101000301 ? 200090010 : 200090000, 0);
+            return -2;
+        }
+    } else if (room_get_id(map->room) / 10 == 20009001 || room_get_id(map->room) / 10 == 20009000) {
+        if (event_get_property(channel_server_get_event(map->server, EVENT_ELLINIA_ORBIS_BOAT), EVENT_ELLINIA_ORBIS_BOAT_PROPERTY_SAILING) != 2) {
+            client_warp(client, room_get_id(map->room) / 10 == 20009001 ? 200000100 : 101000300, 0);
+            return -2;
+        }
+    }
+
+
     if (map->playerCount == map->playerCapacity) {
         void *temp = realloc(map->players, (map->playerCapacity * 2) * sizeof(struct MapPlayer));
         if (temp == NULL)
@@ -1389,6 +1439,61 @@ void map_tire_seat(struct Map *map, uint16_t id)
     map->occupiedSeats[id] = false;
 }
 
+static void on_boat_state_changed(void *ctx)
+{
+    struct Map *map = ctx;
+    uint64_t one = 1;
+    write(map->fd, &one, sizeof(uint64_t));
+}
+
+static int dock_undock_boat(struct Room *room, int fd, int status)
+{
+    struct Map *map = room_get_context(room);
+    uint64_t one;
+    read(fd, &one, sizeof(uint64_t));
+    uint8_t packet[BOAT_PACKET_LENGTH];
+    int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_ELLINIA_ORBIS_BOAT), EVENT_ELLINIA_ORBIS_BOAT_PROPERTY_SAILING);
+    if (state != 1) {
+        if (state == 2) {
+            boat_packet(false, packet);
+        } else if (state == 0) {
+            boat_packet(true, packet);
+        }
+        room_broadcast(room, BOAT_PACKET_LENGTH, packet);
+    }
+    return 0;
+}
+
+static int start_sailing(struct Room *room, int fd, int status)
+{
+    struct Map *map = room_get_context(room);
+    uint64_t one;
+    read(fd, &one, sizeof(uint64_t));
+    int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_ELLINIA_ORBIS_BOAT), EVENT_ELLINIA_ORBIS_BOAT_PROPERTY_SAILING);
+    if (state == 2) {
+        for (size_t i = 0; i < map->playerCount; i++) {
+            client_warp_async(map->players[i].client, room_get_id(room) == 101000301 ? 200090010 : 200090000, 0);
+        }
+    }
+
+    return 0;
+}
+
+static int end_sailing(struct Room *room, int fd, int status)
+{
+    struct Map *map = room_get_context(room);
+    uint64_t one;
+    read(fd, &one, sizeof(uint64_t));
+    int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_ELLINIA_ORBIS_BOAT), EVENT_ELLINIA_ORBIS_BOAT_PROPERTY_SAILING);
+    if (state == 0) {
+        for (size_t i = 0; i < map->playerCount; i++) {
+            client_warp_async(map->players[i].client, room_get_id(room) / 10 == 20009001 ? 200000100 : 101000300, 0);
+        }
+    }
+
+    return 0;
+
+}
 
 static void map_kill_monster(struct Map *map, uint32_t oid)
 {

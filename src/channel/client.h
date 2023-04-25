@@ -135,6 +135,7 @@ void client_send_prev_next(struct Client *client, size_t msg_len, const char *ms
 void client_send_prev(struct Client *client, size_t msg_len, const char *msg, uint8_t speaker);
 void client_send_accept_decline(struct Client *client, size_t msg_len, const char *msg, uint8_t speaker);
 void client_warp(struct Client *client, uint32_t map, uint8_t portal);
+void client_warp_async(struct Client *client, uint32_t map, uint8_t portal);
 void client_reset_stats(struct Client *client);
 struct ClientResult client_portal_script(struct Client *client, const char *portal);
 void client_enable_actions(struct Client *client);

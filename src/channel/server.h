@@ -23,6 +23,8 @@ struct Session;
 
 struct Room;
 
+struct Event;
+
 typedef void OnLog(enum LogType type, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)));
 
@@ -44,6 +46,8 @@ struct OnConnectResult {
     int status;
     OnResume *onResume;
 };
+
+typedef int OnRoomResume(struct Room *room, int fd, int status);
 
 typedef int OnClientConnect(struct Session *session, void *global_ctx, void *thread_ctx, struct sockaddr *addr);
 
@@ -67,8 +71,9 @@ typedef void DestroyUserContext(void *ctx);
 
 typedef void OnLoginPacket(size_t len, void *data);
 
-struct ChannelServer *channel_server_create(uint16_t port, OnLog *on_log, const char *host, CreateUserContext *create_user_context, DestroyUserContext destroy_user_ctx, OnClientConnect *on_client_connect, OnClientDisconnect *on_client_disconnect, OnClientJoin *on_client_join, OnClientPacket *on_pending_client_packet, OnClientPacket *on_client_packet, OnRoomCreate *on_room_create, OnRoomDestroy *on_room_destroy, void *global_ctx);
+struct ChannelServer *channel_server_create(uint16_t port, OnLog *on_log, const char *host, CreateUserContext *create_user_context, DestroyUserContext destroy_user_ctx, OnClientConnect *on_client_connect, OnClientDisconnect *on_client_disconnect, OnClientJoin *on_client_join, OnClientPacket *on_pending_client_packet, OnClientPacket *on_client_packet, OnRoomCreate *on_room_create, OnRoomDestroy *on_room_destroy, void *global_ctx, size_t event_count);
 void channel_server_destroy(struct ChannelServer *server);
+struct Event *channel_server_get_event(struct ChannelServer *server, size_t event);
 enum ResponderResult channel_server_start(struct ChannelServer *server);
 void channel_server_stop(struct ChannelServer *server);
 
@@ -86,6 +91,8 @@ void session_foreach_in_room(struct Session *session, void (*f)(struct Session *
 void session_enable_write(struct Session *session);
 
 uint32_t room_get_id(struct Room *room);
+int room_set_event(struct Room *room, int fd, int status, OnRoomResume *on_resume);
+void room_close_event(struct Room *room);
 void room_set_context(struct Room *room, void *ctx);
 void *room_get_context(struct Room *room);
 void room_broadcast(struct Room *room, size_t len, uint8_t *packet);
@@ -94,6 +101,12 @@ void room_foreach(struct Room *room, void (*f)(struct Session *src, struct Sessi
 void room_keep_alive(struct Room *room);
 /// Disable the keep alive trigger
 void room_break_off(struct Room *room);
+
+void event_set_property(struct Event *event, uint32_t property, int32_t value);
+int32_t event_get_property(struct Event *event, uint32_t property);
+uint32_t event_add_listener(struct Event *event, uint32_t property, void (*f)(void *), void *ctx);
+void event_remove_listener(struct Event *event, uint32_t property, uint32_t listener_id);
+void event_schedule(struct Event *e, void f(struct Event *, void *), void *ctx, const struct timespec *tm);
 
 struct TimerHandle;
 struct TimerHandle *room_add_timer(struct Room *room, uint64_t msec, void (*f)(struct Room *, struct TimerHandle *), void *data, bool keep_alive);

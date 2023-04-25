@@ -745,6 +745,7 @@ int wz_init(void)
                         read(fd, data, len);
                         close(fd);
 
+                        MAP_INFOS[ctx.currentMap].forcedReturn = -1;
                         MAP_INFOS[ctx.currentMap].seats = 0;
 
                         ctx.currentLife = 1;
@@ -1141,6 +1142,12 @@ uint32_t wz_get_map_nearest_town(uint32_t id)
     return MAP_INFOS[i].returnMap;
 }
 
+uint32_t wz_get_map_forced_return(uint32_t id)
+{
+    size_t i = cmph_search(MAP_INFO_MPH, (void *)&id, sizeof(uint32_t));
+    return MAP_INFOS[i].forcedReturn != -1 ? MAP_INFOS[i].forcedReturn : id;
+}
+
 uint16_t wz_get_map_seat_count(uint32_t id)
 {
     size_t i = cmph_search(MAP_INFO_MPH, (void *)&id, sizeof(uint32_t));
@@ -1432,6 +1439,9 @@ static void on_map_start(void *user_data, const XML_Char *name, const XML_Char *
 
                 if (!strcmp(key, "returnMap")) {
                     MAP_INFOS[ctx->currentMap].returnMap = strtol(value, NULL, 10);
+                } else if (!strcmp(key, "forcedReturn")) {
+                    uint32_t map = strtol(value, NULL, 10);
+                    MAP_INFOS[ctx->currentMap].forcedReturn = map != 999999999 ? map : -1;
                 } else if (!strcmp(key, "fieldLimit")) {
                 } else if (!strcmp(key, "VRTop")) {
                 } else if (!strcmp(key, "VRBottom")) {

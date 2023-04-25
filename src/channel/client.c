@@ -5,6 +5,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <sys/eventfd.h>
+#include <unistd.h>
+
 #include "map.h"
 #include "../constants.h"
 #include "../packet.h"
@@ -676,7 +679,7 @@ struct ClientContResult client_cont(struct Client *client, int status)
                 .type = DATABASE_REQUEST_TYPE_UPDATE_CHARACTER,
                 .updateCharacter = {
                     .id = chr->id,
-                    .map = chr->map,
+                    .map = wz_get_map_forced_return(chr->map),
                     .spawnPoint = chr->spawnPoint,
                     .job = chr->job,
                     .level = chr->level,
@@ -779,7 +782,7 @@ struct ClientContResult client_cont(struct Client *client, int status)
                         params.updateCharacter.inventoryItems[params.updateCharacter.itemCount].id = chr->inventory[inv].items[i].item.id;
                         params.updateCharacter.inventoryItems[params.updateCharacter.itemCount].slot = i;
                         params.updateCharacter.inventoryItems[params.updateCharacter.itemCount].count = chr->inventory[inv].items[i].item.quantity;
-                        
+
                         struct Item *item = &chr->inventory[inv].items[i].item.item;
                         params.updateCharacter.inventoryItems[params.updateCharacter.itemCount].item.id = item->id;
                         params.updateCharacter.inventoryItems[params.updateCharacter.itemCount].item.itemId = item->itemId;
@@ -3659,6 +3662,28 @@ void client_warp(struct Client *client, uint32_t map, uint8_t portal)
         change_map_packet(&client->character, client->character.map, client->character.spawnPoint, packet);
         session_write(client->session, CHANGE_MAP_PACKET_LENGTH, packet);
     }
+}
+
+static struct OnResumeResult on_warp(struct Session *session, int fd, int status)
+{
+    struct Client *c = session_get_context(session);
+    close(fd);
+    client_warp(c, c->character.map, c->character.spawnPoint);
+    return (struct OnResumeResult) { .status = 0, .room = c->character.map };
+}
+
+void client_warp_async(struct Client *client, uint32_t map, uint8_t portal)
+{
+    script_manager_free(client->script);
+    client->script = NULL;
+
+    client->character.map = map;
+    client->character.spawnPoint = portal;
+    int fd = eventfd(0, 0);
+    // TODO: Check if an event is already underway before overwriting it
+    session_set_event(client->session, POLLIN, fd, on_warp);
+    uint64_t one = 1;
+    write(fd, &one, sizeof(uint64_t));
 }
 
 void client_reset_stats(struct Client *client)

@@ -25,7 +25,7 @@ struct Map;
  *
  * \return The newly created map or NULL if an error occurred
  */
-struct Map *map_create(struct Room *room, struct ScriptManager *reactor_manager);
+struct Map *map_create(struct ChannelServer *server, struct Room *room, struct ScriptManager *reactor_manager);
 
 /**
  * Destroys a map
