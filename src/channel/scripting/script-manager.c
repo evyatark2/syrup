@@ -19,6 +19,7 @@
 #include <lualib.h>
 
 #include "client.h"
+#include "event.h"
 #include "job.h"
 #include "reactor-manager.h"
 
@@ -43,7 +44,7 @@ struct ScriptInstance {
     bool started;
 };
 
-struct ScriptManager *script_manager_create(const char *dir_name, const char *def, size_t entry_point_count, struct ScriptEntryPoint *entry_points)
+struct ScriptManager *script_manager_create(struct ChannelServer *server, const char *dir_name, const char *def, size_t entry_point_count, struct ScriptEntryPoint *entry_points)
 {
     struct ScriptManager *sm = malloc(sizeof(struct ScriptManager));
     if (sm == NULL)
@@ -113,6 +114,7 @@ struct ScriptManager *script_manager_create(const char *dir_name, const char *de
         luaopen_reactor_manager(script->L);
         luaopen_job(script->L);
         lua_setglobal(script->L, "Job");
+        luaopen_event(script->L, server);
         if (luaL_loadbuffer(script->L, buf, size, ent->d_name) != LUA_OK || lua_pcall(script->L, 0, 0, 0))
             fprintf(stderr, "Failed to load %s: %s\n", ent->d_name, lua_tostring(script->L, -1));
         free(buf);

@@ -60,6 +60,29 @@ struct LoggedOutNode {
     uint32_t token;
 };
 
+struct Listener {
+    void (*listener)(void *);
+    void *ctx;
+};
+
+struct Property {
+    uint32_t id;
+    int32_t value;
+    mtx_t mtx;
+    size_t listenerCount;
+    struct Listener *listeners;
+};
+
+struct Event {
+    struct HashSetU32 *properties;
+    int fd;
+    struct event *event;
+    void (*f)(struct Event *, void *);
+    void *ctx;
+};
+
+static void on_event(int fd, short status, void *ctx);
+
 struct Worker {
     OnLog *onLog;
     OnClientDisconnect *onClientDisconnect;
@@ -114,6 +137,9 @@ struct ChannelServer {
     size_t threadCount;
     thrd_t *threads;
 
+    size_t eventCount;
+    struct Event *events;
+
     /// Minimum heap used to find the least busy worker
     mtx_t heapLock;
     struct HeapNode *minHeap;
@@ -161,9 +187,13 @@ struct Room {
     size_t timerCount;
     struct TimerHandle **timers;
     void *userData;
+    struct event *userEvent;
+    OnRoomResume *onResume;
 };
 
 static struct Room *create_room(struct RoomManager *manager, uint32_t id);
+
+static void on_resume_room(evutil_socket_t fd, short status, void *ctx);
 
 struct RoomId {
     uint32_t id;
@@ -228,7 +258,7 @@ static int libevent_to_poll(short mask);
 static void do_pending_assign(struct Session *session);
 static void do_transfer(struct Session *session);
 
-struct ChannelServer *channel_server_create(uint16_t port, OnLog *on_log, const char *host, CreateUserContext *create_user_context, DestroyUserContext destroy_user_ctx, OnClientConnect *on_client_connect, OnClientDisconnect *on_client_disconnect, OnClientJoin *on_client_join, OnClientPacket *on_pending_client_packet, OnClientPacket *on_client_packet, OnRoomCreate *on_room_create, OnRoomDestroy *on_room_destroy, void *global_ctx)
+struct ChannelServer *channel_server_create(uint16_t port, OnLog *on_log, const char *host, CreateUserContext *create_user_context, DestroyUserContext destroy_user_ctx, OnClientConnect *on_client_connect, OnClientDisconnect *on_client_disconnect, OnClientJoin *on_client_join, OnClientPacket *on_pending_client_packet, OnClientPacket *on_client_packet, OnRoomCreate *on_room_create, OnRoomDestroy *on_room_destroy, void *global_ctx, size_t event_count)
 {
     struct ChannelServer *server = malloc(sizeof(struct ChannelServer));
     if (server == NULL)
@@ -497,11 +527,37 @@ struct ChannelServer *channel_server_create(uint16_t port, OnLog *on_log, const 
         }
     }
 
+    server->events = malloc(event_count * sizeof(struct Event));
+    if (server->events == NULL)
+        goto exit_threads;
+
+    for (server->eventCount = 0; server->eventCount < event_count; server->eventCount++) {
+        server->events[server->eventCount].fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
+        if (server->events[server->eventCount].fd == -1)
+            goto free_events;
+
+        server->events[server->eventCount].event = event_new(server->worker.base, server->events[server->eventCount].fd, EV_READ | EV_PERSIST, on_event, &server->events[server->eventCount]);
+
+        event_add(server->events[server->eventCount].event, NULL);
+
+        server->events[server->eventCount].properties = hash_set_u32_create(sizeof(struct Property), offsetof(struct Property, id));
+        if (server->events[server->eventCount].properties == NULL) {
+            close(server->events[server->eventCount].fd);
+            goto free_events;
+        }
+    }
+
     server->userData = global_ctx;
     server->first = 0;
 
     return server;
 
+free_events:
+    for (size_t i = 0; i < server->eventCount; i++) {
+        close(server->events[i].fd);
+    }
+
+    free(server->events);
 
 exit_threads:
     for (size_t i = 0; i < server->threadCount; i++) {
@@ -536,8 +592,21 @@ free_server:
     return NULL;
 }
 
+static void do_destroy_property(void *data, void *ctx)
+{
+    struct Property *property = data;
+    mtx_destroy(&property->mtx);
+    free(property->listeners);
+}
+
 void channel_server_destroy(struct ChannelServer *server)
 {
+    for (size_t i = 0; i < server->eventCount; i++) {
+        hash_set_u32_foreach(server->events[i].properties, do_destroy_property, NULL);
+        hash_set_u32_destroy(server->events[i].properties);
+    }
+    free(server->events);
+
     for (size_t i = 0; i < server->threadCount; i++)
         mtx_destroy(&server->worker.transportMuteces[i]);
 
@@ -567,6 +636,11 @@ void channel_server_destroy(struct ChannelServer *server)
     free(server->worker.transportMuteces);
     free(server->worker.transportSinks);
     free(server);
+}
+
+struct Event *channel_server_get_event(struct ChannelServer *server, size_t event)
+{
+    return &server->events[event];
 }
 
 enum ResponderResult channel_server_start(struct ChannelServer *server)
@@ -746,6 +820,25 @@ uint32_t room_get_id(struct Room *room)
     return room->id;
 }
 
+int room_set_event(struct Room *room, int fd, int status, OnRoomResume *on_resume)
+{
+    room->userEvent = event_new(room->manager->worker.base, fd, poll_to_libevent(status) | EV_PERSIST, on_resume_room, room);
+    if (room->userEvent == NULL)
+        return -1;
+
+    event_add(room->userEvent, NULL);
+
+    room->onResume = on_resume;
+
+    return 0;
+}
+
+void room_close_event(struct Room *room)
+{
+    event_free(room->userEvent);
+    room->userEvent = NULL;
+}
+
 void room_set_context(struct Room *room, void *ctx)
 {
     room->userData = ctx;
@@ -774,6 +867,68 @@ void room_foreach(struct Room *room, void (*f)(struct Session *src, struct Sessi
         .ctx = ctx_
     };
     hash_set_addr_foreach(room->sessions, do_foreach, &ctx);
+}
+
+void event_set_property(struct Event *event, uint32_t property, int32_t value)
+{
+    struct Property *prop = hash_set_u32_get(event->properties, property);
+    if (prop == NULL) {
+        struct Property prop = {
+            .id = property,
+            .value = value,
+            .listenerCount = 0,
+            .listeners = NULL
+        };
+        mtx_init(&prop.mtx, mtx_plain);
+        hash_set_u32_insert(event->properties, &prop);
+    } else {
+        mtx_lock(&prop->mtx);
+        prop->value = value;
+        for (size_t i = 0; i < prop->listenerCount; i++) {
+            if (prop->listeners[i].listener != NULL)
+                prop->listeners[i].listener(prop->listeners[i].ctx);
+        }
+        mtx_unlock(&prop->mtx);
+    }
+}
+
+int32_t event_get_property(struct Event *event, uint32_t property)
+{
+    struct Property *prop = hash_set_u32_get(event->properties, property);
+    return prop->value;
+}
+
+uint32_t event_add_listener(struct Event *event, uint32_t property, void (*f)(void *), void *ctx)
+{
+    struct Property *prop = hash_set_u32_get(event->properties, property);
+    void *temp = realloc(prop->listeners, (prop->listenerCount + 1) * sizeof(struct Listener));
+    mtx_lock(&prop->mtx);
+    prop->listeners = temp;
+    prop->listeners[prop->listenerCount].listener = f;
+    prop->listeners[prop->listenerCount].ctx = ctx;
+    prop->listenerCount++;
+    mtx_unlock(&prop->mtx);
+    return prop->listenerCount - 1;
+}
+
+void event_remove_listener(struct Event *event, uint32_t property, uint32_t listener_id)
+{
+    struct Property *prop = hash_set_u32_get(event->properties, property);
+    mtx_lock(&prop->mtx);
+    prop->listeners[listener_id].listener = NULL;
+    mtx_unlock(&prop->mtx);
+}
+
+void event_schedule(struct Event *e, void f(struct Event *, void *), void *ctx, const struct timespec *tm)
+{
+    struct itimerspec spec = {
+        .it_value = *tm,
+        .it_interval = { 0, 0 },
+    };
+    timerfd_settime(e->fd, 0, &spec, NULL);
+
+    e->f = f;
+    e->ctx = ctx;
 }
 
 struct TimerHandle *room_add_timer(struct Room *room, uint64_t msec, void (*f)(struct Room *, struct TimerHandle *), void *data, bool keep_alive)
@@ -882,6 +1037,12 @@ static bool do_pending_kick(void *data, void *ctx)
     return kick_pending_session(((struct AddrSession *)data)->session, true);
 }
 
+static void on_event(int fd, short status, void *ctx)
+{
+    struct Event *e = ctx;
+    e->f(e, e->ctx);
+}
+
 static void on_command(int fd, short what, void *ctx)
 {
     struct ChannelServer *server = ctx;
@@ -892,6 +1053,11 @@ static void on_command(int fd, short what, void *ctx)
         *server->worker.connected = false;
         mtx_unlock(server->worker.mtx);
 
+        for (size_t i = 0; i < server->eventCount; i++) {
+            event_free(server->events[i].event);
+            close(server->events[i].fd);
+        }
+
         if (*server->worker.login != NULL) {
             bufferevent_free(*server->worker.login);
         } else {
@@ -900,8 +1066,9 @@ static void on_command(int fd, short what, void *ctx)
                 unlink(((struct sockaddr_un *)&server->addr)->sun_path);
         }
 
-        close(event_get_fd(server->commandEvent));
+        int fd = event_get_fd(server->commandEvent);
         event_free(server->commandEvent);
+        close(fd);
         evconnlistener_free(server->worker.listener);
         server->worker.listener = NULL;
         hash_set_addr_foreach_with_remove(server->sessions, do_pending_kick, NULL);
@@ -1205,11 +1372,10 @@ static void on_session_join(int fd, short what, void *ctx_)
             session->writeEnable = false;
 
             bool ret = manager->onClientJoin(session, manager->worker.userData);
-            if (ret) {
+            if (ret)
                 bufferevent_enable(session->event, EV_READ | EV_WRITE);
-            } else {
+            else
                 destroy_session(session, false);
-            }
         }
         break;
 
@@ -1592,8 +1758,16 @@ static struct Room *create_room(struct RoomManager *manager, uint32_t id)
     room->manager = manager;
     room->timerCapacity = 1;
     room->timerCount = 0;
+    room->userEvent = NULL;
 
     return room;
+}
+
+static void on_resume_room(evutil_socket_t fd, short status, void *ctx)
+{
+    struct Room *room = ctx;
+    if (room->onResume(room, fd, libevent_to_poll(status)) < 0) {
+    }
 }
 
 static int finalize_session_connect(struct Session *session)

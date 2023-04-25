@@ -339,5 +339,8 @@ void sit_on_map_seat_packet(uint16_t id, uint8_t *packet);
 #define OPEN_STORAGE_PACKET_MAX_LENGTH 23210
 size_t open_storage_packet(const struct Storage *storage, uint32_t npc, uint8_t *packet);
 
+#define BOAT_PACKET_LENGTH 4
+void boat_packet(bool state, uint8_t *packet);
+
 #endif
 
