@@ -1430,6 +1430,18 @@ size_t popup_message_packet(uint16_t len, const char *message, uint8_t *packet)
     return writer.pos;
 }
 
+size_t server_message_packet(uint16_t len, const char *message, uint8_t *packet)
+{
+    struct Writer writer;
+    writer_init(&writer, SERVER_MESSAGE_PACKET_MAX_LENGTH, packet);
+
+    writer_u16(&writer, 0x0044);
+    writer_u8(&writer, 5);
+    writer_sized_string(&writer, len, message);
+
+    return writer.pos;
+}
+
 void keymap_packet(const struct KeyMapEntry *keymap, uint8_t *packet)
 {
     struct Writer writer;
@@ -1565,6 +1577,32 @@ void boat_packet(bool state, uint8_t *packet)
     writer_u16(&writer, 0x0095);
     writer_u8(&writer, state ? 1 : 2);
     writer_u8(&writer, 0);
+}
+
+size_t show_info_packet(uint16_t len, const char *path, uint8_t *packet)
+{
+    struct Writer writer;
+    writer_init(&writer, SHOW_INFO_PACKET_MAX_LENGTH, packet);
+
+    writer_u16(&writer, 0x00CE);
+    writer_u8(&writer, 0x17);
+    writer_sized_string(&writer, len, path);
+    writer_u32(&writer, 1);
+
+    return writer.pos;
+}
+
+size_t show_intro_packet(uint16_t len, const char *path, uint8_t *packet)
+{
+    struct Writer writer;
+    writer_init(&writer, SHOW_INTRO_PACKET_MAX_LENGTH, packet);
+
+    writer_u16(&writer, 0x00CE);
+    writer_u8(&writer, 0x12);
+    writer_sized_string(&writer, len, path);
+
+    return writer.pos;
+
 }
 
 static void exp_gain_packet_internal(struct Writer *writer, int32_t exp, int32_t equip_bonus, int32_t party_bonus, bool white, bool in_chat)

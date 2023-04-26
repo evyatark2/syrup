@@ -507,7 +507,6 @@ int map_join(struct Map *map, struct Client *client, struct MapHandleContainer *
         }
     }
 
-
     if (map->playerCount == map->playerCapacity) {
         void *temp = realloc(map->players, (map->playerCapacity * 2) * sizeof(struct MapPlayer));
         if (temp == NULL)

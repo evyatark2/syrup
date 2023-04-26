@@ -34,6 +34,7 @@ static int l_client_send_ok(lua_State *L);
 static int l_client_send_prev(lua_State *L);
 static int l_client_send_prev_next(lua_State *L);
 static int l_client_send_yes_no(lua_State *L);
+static int l_client_message(lua_State *L);
 static int l_client_set_hp(lua_State *L);
 static int l_client_set_mp(lua_State *L);
 static int l_client_set_quest_info(lua_State *L);
@@ -42,6 +43,8 @@ static int l_client_to_string(lua_State *L);
 static int l_client_warp(lua_State *L);
 static int l_client_reset_stats(lua_State *L);
 static int l_client_open_storage(lua_State *L);
+static int l_client_show_info(lua_State *L);
+static int l_client_show_intro(lua_State *L);
 
 static const struct luaL_Reg clientlib[] = {
     { "activeNpc", l_client_active_npc },
@@ -58,7 +61,7 @@ static const struct luaL_Reg clientlib[] = {
     { "hasItem", l_client_has_item },
     { "hp", l_client_hp },
     { "isQuestStarted", l_client_is_quest_started },
-    { "isQuestComplete", l_client_is_quest_started },
+    { "isQuestComplete", l_client_is_quest_complete },
     { "job", l_client_job },
     { "level", l_client_level },
     { "maxHp", l_client_max_hp },
@@ -74,16 +77,18 @@ static const struct luaL_Reg clientlib[] = {
     { "sendPrev", l_client_send_prev },
     { "sendPrevNext", l_client_send_prev_next },
     { "sendYesNo", l_client_send_yes_no },
+    { "message", l_client_message },
     { "setHp", l_client_set_hp },
     { "setMp", l_client_set_mp },
     { "setQuestInfo", l_client_set_quest_info },
     { "startQuestNow", l_client_start_quest_now },
     { "warp", l_client_warp },
     { "openStorage", l_client_open_storage },
+    { "showInfo", l_client_show_info },
+    { "showIntro", l_client_show_intro },
     { "__tostring", l_client_to_string },
     { NULL, NULL }
 };
-
 int luaopen_client(lua_State *L)
 {
     luaL_newmetatable(L, SCRIPT_CLIENT_TYPE);
@@ -380,6 +385,15 @@ static int l_client_send_yes_no(lua_State *L)
     return lua_yield(L, 0);
 }
 
+static int l_client_message(lua_State *L)
+{
+    struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
+    size_t len;
+    const char *str = luaL_checklstring(L, 2, &len);
+    client_message(client, str);
+    return 1;
+}
+
 static int l_client_send_accept_decline(lua_State *L)
 {
     struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
@@ -420,6 +434,20 @@ static int l_client_open_storage(lua_State *L)
 {
     struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
     client_open_storage(client);
+    return 0;
+}
+
+static int l_client_show_info(lua_State *L)
+{
+    struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
+    client_show_info(client, luaL_checkstring(L, 2));
+    return 0;
+}
+
+static int l_client_show_intro(lua_State *L)
+{
+    struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
+    client_show_intro(client, luaL_checkstring(L, 2));
     return 0;
 }
 

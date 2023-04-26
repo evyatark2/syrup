@@ -24,6 +24,7 @@ struct Client {
         struct ScriptManager *quest;
         struct ScriptManager *npc;
         struct ScriptManager *portal;
+        struct ScriptManager *map;
     } managers;
     struct LockQueue *lockQueue;
     enum PacketType handlerType;
@@ -101,7 +102,7 @@ struct AddMonsterBookContext {
 
 static void add_monster_book_entry(void *data, void *ctx);
 
-struct Client *client_create(struct Session *session, struct DatabaseConnection *conn, struct ScriptManager *quest_manager, struct ScriptManager *portal_mananger, struct ScriptManager *npc_manager)
+struct Client *client_create(struct Session *session, struct DatabaseConnection *conn, struct ScriptManager *quest_manager, struct ScriptManager *portal_mananger, struct ScriptManager *npc_manager, struct ScriptManager *map_manager)
 {
     struct Client *client = malloc(sizeof(struct Client));
     if (client == NULL)
@@ -119,6 +120,7 @@ struct Client *client_create(struct Session *session, struct DatabaseConnection 
     client->managers.quest = quest_manager;
     client->managers.portal = portal_mananger;
     client->managers.npc = npc_manager;
+    client->managers.map = map_manager;
     client->character.quests = NULL;
     client->character.monsterQuests = NULL;
     client->character.itemQuests = NULL;
@@ -3044,6 +3046,34 @@ struct ClientResult client_npc_talk(struct Client *client, uint32_t npc)
     return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
 }
 
+struct ClientResult client_launch_map_script(struct Client *client, const char *script_name)
+{
+    char script[32];
+    snprintf(script, 32, "%s.lua", script_name);
+    client->script = script_manager_alloc(client->managers.map, script, 0);
+
+    struct ScriptResult res = script_manager_run(client->script, SCRIPT_CLIENT_TYPE, client);
+    switch (res.result) {
+    case SCRIPT_RESULT_VALUE_KICK:
+        script_manager_free(client->script);
+        client->script = NULL;
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
+    case SCRIPT_RESULT_VALUE_FAILURE:
+        script_manager_free(client->script);
+        client->script = NULL;
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_ERROR };
+    case SCRIPT_RESULT_VALUE_SUCCESS:
+        script_manager_free(client->script);
+        client->script = NULL;
+    case SCRIPT_RESULT_VALUE_NEXT:
+        break;
+    case SCRIPT_RESULT_VALUE_WARP:
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_WARP, .map = res.value.i, .portal = res.value2.i };
+    }
+
+    return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
+}
+
 struct ClientResult client_start_quest(struct Client *client, uint16_t qid, uint32_t npc, bool scripted)
 {
     struct Character *chr = &client->character;
@@ -3642,6 +3672,13 @@ void client_send_accept_decline(struct Client *client, size_t msg_len, const cha
     session_write(client->session, len, packet);
 }
 
+void client_message(struct Client *client, const char *msg)
+{
+    uint8_t packet[SERVER_MESSAGE_PACKET_MAX_LENGTH];
+    size_t len = server_message_packet(strlen(msg), msg, packet);
+    session_write(client->session, len, packet);
+}
+
 void client_warp(struct Client *client, uint32_t map, uint8_t portal)
 {
     struct Character *chr = &client->character;
@@ -3835,7 +3872,7 @@ void client_change_job(struct Client *client, enum Job job)
     }
 }
 
-struct ClientResult client_portal_script(struct Client *client, const char *portal)
+struct ClientResult client_launch_portal_script(struct Client *client, const char *portal)
 {
     if (client->script != NULL)
         return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
@@ -4026,6 +4063,20 @@ bool client_open_storage(struct Client *client)
     size_t len = open_storage_packet(&client->character.storage, client->npc, packet);
     session_write(client->session, len, packet);
     return true;
+}
+
+void client_show_info(struct Client *client, const char *path)
+{
+    uint8_t packet[SHOW_INFO_PACKET_MAX_LENGTH];
+    size_t len = show_info_packet(strlen(path), path, packet);
+    session_write(client->session, len, packet);
+}
+
+void client_show_intro(struct Client *client, const char *path)
+{
+    uint8_t packet[SHOW_INTRO_PACKET_MAX_LENGTH];
+    size_t len = show_intro_packet(strlen(path), path, packet);
+    session_write(client->session, len, packet);
 }
 
 static bool check_quest_requirements(struct Character *chr, size_t req_count, const struct QuestRequirement *reqs, uint32_t npc)

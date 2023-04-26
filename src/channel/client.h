@@ -53,7 +53,7 @@ struct ClientContResult {
     uint32_t map;
 };
 
-struct Client *client_create(struct Session *session, struct DatabaseConnection *conn, struct ScriptManager *quest_manager, struct ScriptManager *portal_mananger, struct ScriptManager *npc_manager);
+struct Client *client_create(struct Session *session, struct DatabaseConnection *conn, struct ScriptManager *quest_manager, struct ScriptManager *portal_mananger, struct ScriptManager *npc_manager, struct ScriptManager *map_manager);
 void client_destroy(struct Client *client);
 struct Session *client_get_session(struct Client *client);
 void client_login_start(struct Client *client, uint32_t id);
@@ -110,6 +110,7 @@ bool client_use_item_immediate(struct Client *client, uint32_t id);
 bool client_is_quest_started(struct Client *client, uint16_t qid);
 bool client_is_quest_complete(struct Client *client, uint16_t qid);
 struct ClientResult client_npc_talk(struct Client *client, uint32_t npc);
+struct ClientResult client_launch_map_script(struct Client *client, const char *script_name);
 struct ClientResult client_start_quest(struct Client *client, uint16_t qid, uint32_t npc, bool scripted);
 struct ClientResult client_regain_quest_item(struct Client *client, uint16_t qid, uint32_t id);
 int client_set_quest_info(struct Client *client, uint16_t info, const char *value);
@@ -134,10 +135,11 @@ void client_send_next(struct Client *client, size_t msg_len, const char *msg, ui
 void client_send_prev_next(struct Client *client, size_t msg_len, const char *msg, uint8_t speaker);
 void client_send_prev(struct Client *client, size_t msg_len, const char *msg, uint8_t speaker);
 void client_send_accept_decline(struct Client *client, size_t msg_len, const char *msg, uint8_t speaker);
+void client_message(struct Client *client, const char *msg);
 void client_warp(struct Client *client, uint32_t map, uint8_t portal);
 void client_warp_async(struct Client *client, uint32_t map, uint8_t portal);
 void client_reset_stats(struct Client *client);
-struct ClientResult client_portal_script(struct Client *client, const char *portal);
+struct ClientResult client_launch_portal_script(struct Client *client, const char *portal);
 void client_enable_actions(struct Client *client);
 void client_toggle_auto_pickup(struct Client *client);
 bool client_is_auto_pickup_enabled(struct Client *client);
@@ -149,6 +151,8 @@ bool client_sit(struct Client *client, uint32_t id);
 bool client_sit_on_map_seat(struct Client *client, uint16_t id);
 bool client_stand_up(struct Client *client);
 bool client_open_storage(struct Client *client);
+void client_show_info(struct Client *client, const char *path);
+void client_show_intro(struct Client *client, const char *path);
 
 #endif
 

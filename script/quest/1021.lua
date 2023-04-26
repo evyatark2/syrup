@@ -31,7 +31,7 @@ function start(c)
             i = i + c:sendPrev("Please take all Roger's Apples that I gave you. You will be able to see the HP bar increasing. Please talk to me again when you recover your HP 100%.")
         end
         if i == 5 then
-            --c:showInfo("UI/tutorial.img/28")
+            c:showInfo("UI/tutorial.img/28")
             break
         end
     end

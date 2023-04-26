@@ -28,6 +28,7 @@ struct GlobalContext {
     struct ScriptManager *questManager;
     struct ScriptManager *portalManager;
     struct ScriptManager *npcManager;
+    struct ScriptManager *mapManager;
     struct ScriptManager *reactorManager;
 };
 
@@ -127,9 +128,18 @@ int main(void)
         return -1;
     }
 
+    ctx.mapManager = script_manager_create(SERVER, "script/map/onUserEnter", "def.lua", 1, eps);
+    if (ctx.mapManager == NULL) {
+        script_manager_destroy(ctx.portalManager);
+        script_manager_destroy(ctx.questManager);
+        wz_terminate();
+        return -1;
+    }
+
     eps->name = "talk";
     ctx.npcManager = script_manager_create(SERVER, "script/npc", "def.lua", 1, eps);
     if (ctx.npcManager == NULL) {
+        script_manager_destroy(ctx.mapManager);
         script_manager_destroy(ctx.portalManager);
         script_manager_destroy(ctx.questManager);
         wz_terminate();
@@ -140,6 +150,7 @@ int main(void)
     ctx.reactorManager = script_manager_create(SERVER, "script/reactor", "def.lua", 1, eps);
     if (ctx.reactorManager == NULL) {
         script_manager_destroy(ctx.npcManager);
+        script_manager_destroy(ctx.mapManager);
         script_manager_destroy(ctx.portalManager);
         script_manager_destroy(ctx.questManager);
         wz_terminate();
@@ -153,6 +164,7 @@ int main(void)
     channel_server_start(SERVER);
     channel_server_destroy(SERVER);
     script_manager_destroy(ctx.reactorManager);
+    script_manager_destroy(ctx.mapManager);
     script_manager_destroy(ctx.npcManager);
     script_manager_destroy(ctx.portalManager);
     script_manager_destroy(ctx.questManager);
@@ -194,7 +206,7 @@ static void destroy_context(void *ctx)
 static int on_client_connect(struct Session *session, void *global_ctx, void *thread_ctx, struct sockaddr *addr)
 {
     struct GlobalContext *ctx = global_ctx;
-    struct Client *client = client_create(session, thread_ctx, ctx->questManager, ctx->portalManager, ctx->npcManager);
+    struct Client *client = client_create(session, thread_ctx, ctx->questManager, ctx->portalManager, ctx->npcManager, ctx->mapManager);
     if (client == NULL)
         return -1;
 
@@ -240,16 +252,17 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
     size -= 2;
     switch (opcode) {
     case 0x0026: {
-        uint32_t id;
+        uint32_t target;
         uint16_t len = PORTAL_INFO_NAME_MAX_LENGTH;
         char portal[PORTAL_INFO_NAME_MAX_LENGTH+1];
         READER_BEGIN(size, packet);
-        SKIP(1); // 0 - from dying; 1 - regular portal
-        READ_OR_ERROR(reader_u32, &id);
+        SKIP(1);
+        READ_OR_ERROR(reader_u32, &target);
         READ_OR_ERROR(reader_sized_string, &len, portal);
         SKIP(1);
+        SKIP(2); // wheel
         READER_END();
-        if (chr->hp > 0) {
+        if (target == -1) {
             portal[len] = '\0';
             uint32_t target_map = wz_get_target_map(chr->map, portal);
             if (target_map == -1)
@@ -261,14 +274,28 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
 
             return (struct OnPacketResult) { .status = 0, .room = target_map };
         } else {
-            uint32_t id = wz_get_map_nearest_town(chr->map);
-            const struct PortalInfo *portal = wz_get_portal_info_by_name(id, "sp");
+            if (chr->hp > 0) {
+                if (chr->map / 1000 == 1020) {
+                    uint32_t id = wz_get_map_forced_return(chr->map);
+                    if (id != target)
+                        return (struct OnPacketResult) { .status = -1 };
 
-            client_warp(client, id, portal->id);
+                    const struct PortalInfo *portal = wz_get_portal_info_by_name(id, "sp");
 
-            client_set_hp_now(client, 50);
+                    client_warp(client, id, portal->id);
 
-            return (struct OnPacketResult) { .status = 0, .room = id };
+                    return (struct OnPacketResult) { .status = 0, .room = id };
+                }
+            } else {
+                uint32_t id = wz_get_map_nearest_town(chr->map);
+                const struct PortalInfo *portal = wz_get_portal_info_by_name(id, "sp");
+
+                client_warp(client, id, portal->id);
+
+                client_set_hp_now(client, 50);
+
+                return (struct OnPacketResult) { .status = 0, .room = id };
+            }
         }
     }
     break;
@@ -970,7 +997,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             // The client can spam enter portal
             return (struct OnPacketResult) { .status = 0, .room = -1 };
         }
-        struct ClientResult res = client_portal_script(client, info->script);
+        struct ClientResult res = client_launch_portal_script(client, info->script);
         switch (res.type) {
         case CLIENT_RESULT_TYPE_BAN:
         case CLIENT_RESULT_TYPE_ERROR:
@@ -1398,6 +1425,19 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         //uint8_t packet[ADD_PLAYER_TO_MAP_PACKET_MAX_LENGTH];
         //size_t len = add_player_to_map_packet(chr, packet);
         //session_broadcast_to_room(session, len, packet);
+
+        if (wz_get_map_enter_script(chr->map) != NULL) {
+            struct ClientResult res = client_launch_map_script(client, wz_get_map_enter_script(chr->map));
+            switch (res.type) {
+            case CLIENT_RESULT_TYPE_BAN:
+            case CLIENT_RESULT_TYPE_ERROR:
+                return (struct OnPacketResult) { .status = -1 };
+            case CLIENT_RESULT_TYPE_WARP:
+                return (struct OnPacketResult) { .status = 0, .room = res.map };
+            default:
+            break;
+            }
+        }
 
         if (map_join(map, client, client_get_map(client)) == -2) {
             return (struct OnPacketResult) { .status = 0, .room = chr->map };

@@ -747,6 +747,8 @@ int wz_init(void)
 
                         MAP_INFOS[ctx.currentMap].forcedReturn = -1;
                         MAP_INFOS[ctx.currentMap].seats = 0;
+                        MAP_INFOS[ctx.currentMap].onUserEnter[0] = '\0';
+                        MAP_INFOS[ctx.currentMap].onFirstUserEnter[0] = '\0';
 
                         ctx.currentLife = 1;
                         MAP_INFOS[ctx.currentMap].lifeCount = 0;
@@ -1148,6 +1150,12 @@ uint32_t wz_get_map_forced_return(uint32_t id)
     return MAP_INFOS[i].forcedReturn != -1 ? MAP_INFOS[i].forcedReturn : id;
 }
 
+const char *wz_get_map_enter_script(uint32_t id)
+{
+    size_t i = cmph_search(MAP_INFO_MPH, (void *)&id, sizeof(uint32_t));
+    return strcmp(MAP_INFOS[i].onUserEnter, "") == 0 ? NULL : MAP_INFOS[i].onUserEnter;
+}
+
 uint16_t wz_get_map_seat_count(uint32_t id)
 {
     size_t i = cmph_search(MAP_INFO_MPH, (void *)&id, sizeof(uint32_t));
@@ -1477,6 +1485,7 @@ static void on_map_start(void *user_data, const XML_Char *name, const XML_Char *
 
                 if (!strcmp(key, "onFirstUserEnter")) {
                 } else if (!strcmp(key, "onUserEnter")) {
+                    strcpy(MAP_INFOS[ctx->currentMap].onUserEnter, value);
                 }
             }
         }

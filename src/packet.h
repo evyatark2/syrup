@@ -321,6 +321,9 @@ void update_skill_packet(uint32_t id, int8_t level, int8_t master_level, uint8_t
 #define POPUP_MESSAGE_PACKET_MAX_LENGTH 132 // Assuming a 128-character limit
 size_t popup_message_packet(uint16_t len, const char *message, uint8_t *packet);
 
+#define SERVER_MESSAGE_PACKET_MAX_LENGTH 65535
+size_t server_message_packet(uint16_t len, const char *message, uint8_t *packet);
+
 #define KEYMAP_PACKET_LENGTH 453
 void keymap_packet(const struct KeyMapEntry *keymap, uint8_t *packet);
 
@@ -341,6 +344,12 @@ size_t open_storage_packet(const struct Storage *storage, uint32_t npc, uint8_t 
 
 #define BOAT_PACKET_LENGTH 4
 void boat_packet(bool state, uint8_t *packet);
+
+#define SHOW_INFO_PACKET_MAX_LENGTH 128
+size_t show_info_packet(uint16_t len, const char *path, uint8_t *packet);
+
+#define SHOW_INTRO_PACKET_MAX_LENGTH 128
+size_t show_intro_packet(uint16_t len, const char *path, uint8_t *packet);
 
 #endif
 

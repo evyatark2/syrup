@@ -13,5 +13,6 @@ function enter(c)
         c:warp(1010400, 4)
     else
         c:message("Only the adventurers that have been trained by Mai may enter.");
+        c:enableActions()
     end
 end
