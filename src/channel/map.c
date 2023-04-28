@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 
 #include <unistd.h>
 #include <sys/eventfd.h>
@@ -2173,12 +2174,18 @@ static void on_drop_time_expired(struct Room *room, struct TimerHandle *handle)
     }
 }
 
+#define MIN(x, y) ((x) < (y) ? (x) : (y))
+
 static void on_respawn(struct Room *room, struct TimerHandle *handle)
 {
     struct Map *map = room_get_context(room);
 
+    size_t maxSpawnCount = ceil((0.7 + (0.05 * MIN(6, map->playerCount))) * map->spawnerCount);
+
     struct ControllerHeapNode *next = heap_top(&map->heap);
-    for (size_t i = 0; i < map->deadCount; i++) {
+    size_t count = 0;
+    while (map->monsterCount < maxSpawnCount) {
+
         if (map->monsterCount == map->monsterCapacity) {
             struct MapMonster *temp = realloc(map->monsters, (map->monsterCapacity * 2) * sizeof(struct MapMonster));
             if (temp == NULL)
@@ -2192,40 +2199,45 @@ static void on_respawn(struct Room *room, struct TimerHandle *handle)
             map->monsterCapacity *= 2;
         }
 
+        size_t i = rand() % map->deadCount;
+        size_t temp = map->dead[i];
+        map->dead[i] = map->dead[map->deadCount - 1];
+        i = temp;
+
         struct MapObject *obj = object_list_allocate(&map->objectList);
         obj->type = MAP_OBJECT_MONSTER;
         obj->index = map->monsterCount;
         map->monsters[map->monsterCount].monster.oid = obj->oid;
-        map->monsters[map->monsterCount].monster.id = map->spawners[map->dead[i]].id;
-        map->monsters[map->monsterCount].monster.x = map->spawners[map->dead[i]].x;
-        map->monsters[map->monsterCount].monster.y = map->spawners[map->dead[i]].y;
-        map->monsters[map->monsterCount].monster.fh = map->spawners[map->dead[i]].fh;
-        map->monsters[map->monsterCount].monster.hp = wz_get_monster_stats(map->spawners[map->dead[i]].id)->hp;
-        map->monsters[map->monsterCount].spawnerIndex = map->dead[i];
+        map->monsters[map->monsterCount].monster.id = map->spawners[i].id;
+        map->monsters[map->monsterCount].monster.x = map->spawners[i].x;
+        map->monsters[map->monsterCount].monster.y = map->spawners[i].y;
+        map->monsters[map->monsterCount].monster.fh = map->spawners[i].fh;
+        map->monsters[map->monsterCount].monster.hp = wz_get_monster_stats(map->spawners[i].id)->hp;
+        map->monsters[map->monsterCount].spawnerIndex = i;
         map->monsters[map->monsterCount].controller = next->controller;
         map->monsters[map->monsterCount].indexInController = next->controller->monsterCount;
         next->controller->monsters[next->controller->monsterCount] = &map->monsters[map->monsterCount];
         next->controller->monsterCount++;
         map->monsterCount++;
+        count++;
+        map->deadCount--;
     }
 
-    heap_inc(&map->heap, map->deadCount);
+    heap_inc(&map->heap, count);
 
-    for (size_t i = map->monsterCount - map->deadCount; i < map->monsterCount; i++) {
+    for (size_t i = map->monsterCount - count; i < map->monsterCount; i++) {
         const struct Monster *monster = &map->monsters[i].monster;
         uint8_t packet[SPAWN_MONSTER_PACKET_LENGTH];
         spawn_monster_packet(monster->oid, monster->id, monster->x, monster->y, monster->fh, true, packet);
         room_broadcast(map->room, SPAWN_MONSTER_PACKET_LENGTH, packet);
     }
 
-    for (size_t i = map->monsterCount - map->deadCount; i < map->monsterCount; i++) {
+    for (size_t i = map->monsterCount - count; i < map->monsterCount; i++) {
         const struct Monster *monster = &map->monsters[i].monster;
         uint8_t packet[SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH];
         spawn_monster_controller_packet(monster->oid, false, monster->id, monster->x, monster->y, monster->fh, true, packet);
         session_write(client_get_session(next->controller->client), SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH, packet);
     }
-
-    map->deadCount = 0;
 
     map->respawnHandle = room_add_timer(map->room, 10 * 1000, on_respawn, NULL, false);
 }
