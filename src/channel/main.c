@@ -1,3 +1,4 @@
+//#define _POSIX_C_SOURCE // For strtok_r
 #include <assert.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -110,7 +111,7 @@ int main(void)
         }
     };
 
-    SERVER = channel_server_create(7575, on_log, CHANNEL_CONFIG.listen, create_context, destroy_context, on_client_connect, on_client_disconnect, on_client_join, on_unassigned_client_packet, on_client_packet, on_room_create, on_room_destroy, &ctx, 2);
+    SERVER = channel_server_create(7575, on_log, CHANNEL_CONFIG.listen, create_context, destroy_context, on_client_connect, on_client_disconnect, on_client_join, on_unassigned_client_packet, on_client_packet, on_room_create, on_room_destroy, &ctx, 7);
     if (SERVER == NULL)
         return -1;
 
@@ -157,8 +158,9 @@ int main(void)
         return -1;
     }
 
-    event_ellinia_orbis_boat_init(SERVER);
-    event_orbis_ludibrium_train_init(SERVER);
+    event_boat_init(SERVER);
+    event_train_init(SERVER);
+    event_area_boss_init(SERVER);
 
     signal(SIGINT, on_sigint);
     channel_server_start(SERVER);
@@ -642,7 +644,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
 
     case 0x0031: {
         uint16_t str_len = 80;
-        char string[80];
+        char string[81];
         uint8_t show;
         READER_BEGIN(size, packet);
         READ_OR_ERROR(reader_sized_string, &str_len, string);
@@ -662,6 +664,21 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
                 for (size_t i = 0; i < count; i++)
                     client_kill_monster(client, ids[i]);
                 free(ids);
+            } else {
+                // strtok() must take a nul-terminated string
+                string[str_len] = '\0';
+                char *save;
+                char *token = strtok_r(string + 1, " ", &save);
+                if (!strcmp(token, "map")) {
+                    token = strtok_r(NULL, " ", &save);
+                    const struct MapInfo *info = wz_get_map(strtol(token, NULL, 10));
+                    if (info != NULL) {
+                        client_warp(client, info->id, 0);
+                        return (struct OnPacketResult) { .status = 0, .room = info->id };
+                    } else {
+                        client_message(client, "Requested map doesn't exist");
+                    }
+                }
             }
         } else if (string[0] != '/') {
             uint8_t packet[CHAT_PACKET_MAX_LENGTH];
@@ -1422,9 +1439,24 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         struct Map *map = room_get_context(session_get_room(session));
         session_enable_write(session);
 
-        //uint8_t packet[ADD_PLAYER_TO_MAP_PACKET_MAX_LENGTH];
-        //size_t len = add_player_to_map_packet(chr, packet);
-        //session_broadcast_to_room(session, len, packet);
+        if (map_join(map, client, client_get_map(client)) == -2) {
+            return (struct OnPacketResult) { .status = 0, .room = chr->map };
+        }
+
+        // Forced stat reset
+        session_write(session, 2, (uint8_t[]) { 0x23, 0x00 }); // Forced stat reset
+
+        struct ClientResult res = client_script_cont(client, 0);
+        switch (res.type) {
+        case CLIENT_RESULT_TYPE_BAN:
+        case CLIENT_RESULT_TYPE_ERROR:
+            return (struct OnPacketResult) { .status = -1 };
+        case CLIENT_RESULT_TYPE_SUCCESS:
+            break;
+        case CLIENT_RESULT_TYPE_WARP:
+            return (struct OnPacketResult) { .status = 0, .room = res.map };
+        break;
+        }
 
         if (wz_get_map_enter_script(chr->map) != NULL) {
             struct ClientResult res = client_launch_map_script(client, wz_get_map_enter_script(chr->map));
@@ -1437,26 +1469,6 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             default:
             break;
             }
-        }
-
-        if (map_join(map, client, client_get_map(client)) == -2) {
-            return (struct OnPacketResult) { .status = 0, .room = chr->map };
-        }
-
-        // Forced stat reset
-        session_write(session, 2, (uint8_t[]) { 0x23, 0x00 }); // Forced stat reset
-
-
-        struct ClientResult res = client_script_cont(client, 0);
-        switch (res.type) {
-        case CLIENT_RESULT_TYPE_BAN:
-        case CLIENT_RESULT_TYPE_ERROR:
-            return (struct OnPacketResult) { .status = -1 };
-        case CLIENT_RESULT_TYPE_SUCCESS:
-            return (struct OnPacketResult) { .status = 0, .room = -1 };
-        case CLIENT_RESULT_TYPE_WARP:
-            return (struct OnPacketResult) { .status = 0, .room = res.map };
-        break;
         }
     }
     break;

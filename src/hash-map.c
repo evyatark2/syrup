@@ -22,6 +22,7 @@ static int hash_set_insert(struct HashSet *set, const void *data, size_t key_siz
 static void *hash_set_get(struct HashSet *set, const void *key, size_t key_size);
 static void hash_set_remove(struct HashSet *set, const void *key, size_t key_size);
 static void hash_set_foreach_with_remove(struct HashSet *set, bool f(void *data, void *ctx), void *ctx, size_t key_size);
+static void hash_set_clear(struct HashSet *set);
 
 struct HashSetU32 {
     struct HashSet set;
@@ -79,6 +80,11 @@ void hash_set_u32_foreach(struct HashSetU32 *set, void f(void *data, void *ctx),
 void hash_set_u32_foreach_with_remove(struct HashSetU32 *set, bool f(void *data, void *ctx), void *ctx)
 {
     hash_set_foreach_with_remove(&set->set, f, ctx, sizeof(uint32_t));
+}
+
+void hash_set_u32_clear(struct HashSetU32 *set)
+{
+    hash_set_clear(&set->set);
 }
 
 struct HashSetU16 {
@@ -383,5 +389,12 @@ static void hash_set_foreach_with_remove(struct HashSet *set, bool f(void *data,
         set->states = new_states;
         set->capacity /= 2;
     }
+}
+
+static void hash_set_clear(struct HashSet *set)
+{
+    set->capacity = 1;
+    set->count = 0;
+    set->states[0] = 0;
 }
 

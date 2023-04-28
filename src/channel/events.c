@@ -1,83 +1,88 @@
 #include "events.h"
 
-static void boat_arrive(struct Event *e, void *ctx);
-static void boat_close_gates(struct Event *e, void *ctx);
-static void boat_depart(struct Event *e, void *ctx);
+#include <threads.h>
 
-static void train_arrive(struct Event *e, void *ctx);
-static void train_close_gates(struct Event *e, void *ctx);
-static void train_depart(struct Event *e, void *ctx);
+#include "../hash-map.h"
 
-void event_ellinia_orbis_boat_init(struct ChannelServer *server)
+#define DECLARE_TRANSPORT_EVENT_STATIC_FUNCTIONS(event) \
+    static void event##_arrive(struct Event *, void *); \
+    static void event##_close_gates(struct Event *, void *); \
+    static void event##_depart(struct Event *, void *);
+
+DECLARE_TRANSPORT_EVENT_STATIC_FUNCTIONS(boat)
+DECLARE_TRANSPORT_EVENT_STATIC_FUNCTIONS(train)
+DECLARE_TRANSPORT_EVENT_STATIC_FUNCTIONS(subway)
+DECLARE_TRANSPORT_EVENT_STATIC_FUNCTIONS(genie)
+DECLARE_TRANSPORT_EVENT_STATIC_FUNCTIONS(airplane)
+DECLARE_TRANSPORT_EVENT_STATIC_FUNCTIONS(elevator)
+
+static void set_and_sched(struct Event *e, uint32_t prop, uint32_t sec, void (*f)(struct Event *, void *));
+
+#define DEFINE_TRANSPORT_EVENT_FUNCTIONS(event, eid, prop, asec, csec, dsec) \
+    void event_##event##_init(struct ChannelServer *server) \
+    { \
+        event##_arrive(channel_server_get_event(server, eid), NULL); \
+    } \
+ \
+    static void event##_arrive(struct Event *e, void *ctx_) \
+    { \
+        set_and_sched(e, prop, asec, event##_close_gates); \
+    } \
+ \
+    static void event##_close_gates(struct Event *e, void *ctx_) \
+    { \
+        set_and_sched(e, prop, csec, event##_depart); \
+    } \
+ \
+    static void event##_depart(struct Event *e, void *ctx_) \
+    { \
+        set_and_sched(e, prop, dsec, event##_arrive); \
+    }
+
+DEFINE_TRANSPORT_EVENT_FUNCTIONS(boat, EVENT_BOAT, EVENT_BOAT_PROPERTY_SAILING, 10, 4, 1)
+DEFINE_TRANSPORT_EVENT_FUNCTIONS(train, EVENT_TRAIN, EVENT_TRAIN_PROPERTY_SAILING, 10, 4, 1)
+DEFINE_TRANSPORT_EVENT_FUNCTIONS(subway, EVENT_SUBWAY, EVENT_SUBWAY_PROPERTY_SAILING, 10, 4, 1)
+DEFINE_TRANSPORT_EVENT_FUNCTIONS(genie, EVENT_GENIE, EVENT_GENIE_PROPERTY_SAILING, 10, 4, 1)
+DEFINE_TRANSPORT_EVENT_FUNCTIONS(airplane, EVENT_AIRPLANE, EVENT_AIRPLANE_PROPERTY_SAILING, 10, 4, 1)
+DEFINE_TRANSPORT_EVENT_FUNCTIONS(elevator, EVENT_ELEVATOR, EVENT_ELEVATOR_PROPERTY_SAILING, 10, 4, 1)
+
+static void set_and_sched(struct Event *e, uint32_t prop, uint32_t sec, void (*f)(struct Event *, void *))
 {
-    struct Event *e = channel_server_get_event(server, EVENT_ELLINIA_ORBIS_BOAT);
-    boat_arrive(e, NULL);
+    event_set_property(e, prop, 0);
+    struct timespec tm = { .tv_sec = sec, .tv_nsec = 0 };
+    event_schedule(e, f, NULL, &tm);
 }
 
-void event_orbis_ludibrium_train_init(struct ChannelServer *server)
+static void area_boss_reset(struct Event *e, void *ctx_);
+
+static mtx_t MAPS_MTX;
+static struct HashSetU32 *MAPS;
+
+void event_area_boss_init(struct ChannelServer *server)
 {
-    struct Event *e = channel_server_get_event(server, EVENT_ORBIS_LUDIBRIUM_BOAT);
-    train_arrive(e, NULL);
+    MAPS = hash_set_u32_create(sizeof(uint32_t), 0);
+    mtx_init(&MAPS_MTX, mtx_plain);
+    area_boss_reset(channel_server_get_event(server, EVENT_AREA_BOSS), NULL);
 }
 
-static void boat_arrive(struct Event *e, void *ctx)
+bool event_area_boss_register(uint32_t map)
 {
-    event_set_property(e, EVENT_ELLINIA_ORBIS_BOAT_PROPERTY_SAILING, 0);
-    struct timespec tm = {
-        .tv_sec = 10,
-        .tv_nsec = 0
-    };
-    event_schedule(e, boat_close_gates, NULL, &tm);
+    mtx_lock(&MAPS_MTX);
+    bool spawned = hash_set_u32_get(MAPS, map) != NULL;
+    if (!spawned)
+        hash_set_u32_insert(MAPS, &map);
+
+    mtx_unlock(&MAPS_MTX);
+    return spawned;
 }
 
-static void boat_close_gates(struct Event *e, void *ctx)
+static void area_boss_reset(struct Event *e, void *ctx_)
 {
-    event_set_property(e, EVENT_ELLINIA_ORBIS_BOAT_PROPERTY_SAILING, 1);
-    struct timespec tm = {
-        .tv_sec = 5,
-        .tv_nsec = 0
-    };
-    event_schedule(e, boat_depart, NULL, &tm);
-}
-
-static void boat_depart(struct Event *e, void *ctx)
-{
-    event_set_property(e, EVENT_ELLINIA_ORBIS_BOAT_PROPERTY_SAILING, 2);
-    struct timespec tm = {
-        .tv_sec = 15,
-        .tv_nsec = 0
-    };
-    event_schedule(e, boat_arrive, NULL, &tm);
-}
-
-static void train_arrive(struct Event *e, void *ctx)
-{
-    event_set_property(e, EVENT_ORBIS_LUDIBRIUM_BOAT_PROPERTY_SAILING, 0);
-    struct timespec tm = {
-        .tv_sec = 10,
-        .tv_nsec = 0
-    };
-    event_schedule(e, train_close_gates, NULL, &tm);
-
-}
-
-static void train_close_gates(struct Event *e, void *ctx)
-{
-    event_set_property(e, EVENT_ORBIS_LUDIBRIUM_BOAT_PROPERTY_SAILING, 1);
-    struct timespec tm = {
-        .tv_sec = 5,
-        .tv_nsec = 0
-    };
-    event_schedule(e, train_depart, NULL, &tm);
-}
-
-static void train_depart(struct Event *e, void *ctx)
-{
-    event_set_property(e, EVENT_ORBIS_LUDIBRIUM_BOAT_PROPERTY_SAILING, 2);
-    struct timespec tm = {
-        .tv_sec = 15,
-        .tv_nsec = 0
-    };
-    event_schedule(e, train_arrive, NULL, &tm);
+    mtx_lock(&MAPS_MTX);
+    hash_set_u32_clear(MAPS);
+    mtx_unlock(&MAPS_MTX);
+    event_set_property(e, EVENT_AREA_BOSS_PROPERTY_RESET, 0);
+    struct timespec tm = { .tv_sec = 15, .tv_nsec = 0 };
+    event_schedule(e, area_boss_reset, NULL, &tm);
 }
 

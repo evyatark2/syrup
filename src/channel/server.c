@@ -189,6 +189,7 @@ struct Room {
     void *userData;
     struct event *userEvent;
     OnRoomResume *onResume;
+    bool keepAlive;
 };
 
 static struct Room *create_room(struct RoomManager *manager, uint32_t id);
@@ -869,6 +870,19 @@ void room_foreach(struct Room *room, void (*f)(struct Session *src, struct Sessi
     hash_set_addr_foreach(room->sessions, do_foreach, &ctx);
 }
 
+void room_keep_alive(struct Room *room)
+{
+    room->keepAlive = true;
+}
+
+void room_break_off(struct Room *room)
+{
+    room->keepAlive = false;
+    if (hash_set_addr_size(room->sessions) == 0) {
+        destroy_room(room->manager, room, false);
+    }
+}
+
 void event_set_property(struct Event *event, uint32_t property, int32_t value)
 {
     struct Property *prop = hash_set_u32_get(event->properties, property);
@@ -890,6 +904,12 @@ void event_set_property(struct Event *event, uint32_t property, int32_t value)
         }
         mtx_unlock(&prop->mtx);
     }
+}
+
+bool event_has_property(struct Event *event, uint32_t property)
+{
+    struct Property *prop = hash_set_u32_get(event->properties, property);
+    return prop != NULL;
 }
 
 int32_t event_get_property(struct Event *event, uint32_t property)
@@ -1294,6 +1314,7 @@ static bool do_kill_room(void *data, void *ctx)
 
     hash_set_addr_foreach_with_remove(room->sessions, do_kick, room);
 
+    // Ignore the room's keepAlive request
     if (hash_set_addr_size(room->sessions) == 0) {
         destroy_room(manager, room, true);
         return true;
@@ -1880,7 +1901,7 @@ static void destroy_session(struct Session *session, bool async)
 
     if (!async) {
         hash_set_addr_remove(room->sessions, (void *)&session->addr);
-        if (hash_set_addr_size(room->sessions) == 0)
+        if (hash_set_addr_size(room->sessions) == 0 && !room->keepAlive)
             destroy_room(manager, room, false);
     }
 
@@ -2225,7 +2246,7 @@ static void do_transfer(struct Session *session)
     if (sent) {
         bufferevent_free(event);
         hash_set_addr_remove(room->sessions, (void *)&addr);
-        if (hash_set_addr_size(room->sessions) == 0)
+        if (hash_set_addr_size(room->sessions) == 0 && !room->keepAlive)
             destroy_room(manager, room, false);
 
         hash_set_addr_remove(manager->sessions, (void *)&addr);

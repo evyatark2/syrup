@@ -1442,6 +1442,19 @@ size_t server_message_packet(uint16_t len, const char *message, uint8_t *packet)
     return writer.pos;
 }
 
+size_t server_notice_packet(uint16_t len, const char *message, uint8_t *packet)
+{
+    struct Writer writer;
+    writer_init(&writer, SERVER_NOTICE_PACKET_MAX_LENGTH, packet);
+
+    writer_u16(&writer, 0x0044);
+    writer_u8(&writer, 6);
+    writer_sized_string(&writer, len, message);
+    writer_u32(&writer, 0);
+
+    return writer.pos;
+}
+
 void keymap_packet(const struct KeyMapEntry *keymap, uint8_t *packet)
 {
     struct Writer writer;

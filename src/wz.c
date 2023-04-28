@@ -1138,6 +1138,15 @@ void wz_terminate_equipment(void)
     free(EQUIP_INFOS);
 }
 
+const struct MapInfo *wz_get_map(uint32_t id)
+{
+    size_t i = cmph_search(MAP_INFO_MPH, (void *)&id, sizeof(uint32_t));
+    if (MAP_INFOS[i].id != id)
+        return NULL;
+
+    return &MAP_INFOS[i];
+}
+
 uint32_t wz_get_map_nearest_town(uint32_t id)
 {
     size_t i = cmph_search(MAP_INFO_MPH, (void *)&id, sizeof(uint32_t));

@@ -27,6 +27,7 @@ enum MapObjectType {
     MAP_OBJECT_REACTOR,
     MAP_OBJECT_DROP,
     MAP_OBJECT_DROPPING,
+    MAP_OBJECT_BOSS,
 };
 
 struct MapObject {
@@ -163,6 +164,8 @@ struct Map {
     size_t dropBatchEnd;
     struct DropBatch *dropBatches;
     bool *occupiedSeats;
+    struct Spawner bossSpawner;
+    struct MapMonster boss;
 };
 
 static void on_boat_state_changed(void *ctx);
@@ -173,6 +176,8 @@ static int end_sailing(struct Room *room, int fd, int status);
 static int dock_undock_train(struct Room *room, int fd, int status);
 static int start_train(struct Room *room, int fd, int status);
 static int end_train(struct Room *room, int fd, int status);
+
+static int respawn_boss(struct Room *room, int fd, int status);
 
 static void map_kill_monster(struct Map *map, uint32_t oid);
 static bool map_calculate_drop_position(struct Map *map, struct Point *p);
@@ -399,31 +404,185 @@ struct Map *map_create(struct ChannelServer *server, struct Room *room, struct S
         map->reactors[i].keepAlive = false;
     }
 
+    map->boss.monster.oid = -1;
+
     uint32_t id = room_get_id(room);
     if (id == 101000300 || id == 200000111 ) {
         map->fd = eventfd(0, 0);
         room_set_event(room, map->fd, POLLIN, dock_undock_boat);
-        map->listener = event_add_listener(channel_server_get_event(server, EVENT_ELLINIA_ORBIS_BOAT), EVENT_ELLINIA_ORBIS_BOAT_PROPERTY_SAILING, on_boat_state_changed, map);
+        map->listener = event_add_listener(channel_server_get_event(server, EVENT_BOAT), EVENT_BOAT_PROPERTY_SAILING, on_boat_state_changed, map);
     } else if (id == 101000301 || id == 200000112) {
         map->fd = eventfd(0, 0);
         room_set_event(room, map->fd, POLLIN, start_sailing);
-        map->listener = event_add_listener(channel_server_get_event(server, EVENT_ELLINIA_ORBIS_BOAT), EVENT_ELLINIA_ORBIS_BOAT_PROPERTY_SAILING, on_boat_state_changed, map);
+        map->listener = event_add_listener(channel_server_get_event(server, EVENT_BOAT), EVENT_BOAT_PROPERTY_SAILING, on_boat_state_changed, map);
     } else if (id / 10 == 20009001 || id / 10 == 20009000) {
         map->fd = eventfd(0, 0);
         room_set_event(room, map->fd, POLLIN, end_sailing);
-        map->listener = event_add_listener(channel_server_get_event(server, EVENT_ELLINIA_ORBIS_BOAT), EVENT_ELLINIA_ORBIS_BOAT_PROPERTY_SAILING, on_boat_state_changed, map);
+        map->listener = event_add_listener(channel_server_get_event(server, EVENT_BOAT), EVENT_BOAT_PROPERTY_SAILING, on_boat_state_changed, map);
     } else if (id == 200000121 || id == 220000110) {
         map->fd = eventfd(0, 0);
         room_set_event(room, map->fd, POLLIN, dock_undock_train);
-        map->listener = event_add_listener(channel_server_get_event(server, EVENT_ORBIS_LUDIBRIUM_BOAT), EVENT_ORBIS_LUDIBRIUM_BOAT_PROPERTY_SAILING, on_boat_state_changed, map);
+        map->listener = event_add_listener(channel_server_get_event(server, EVENT_TRAIN), EVENT_TRAIN_PROPERTY_SAILING, on_boat_state_changed, map);
     } else if (id == 200000122 || id == 220000111) {
         map->fd = eventfd(0, 0);
         room_set_event(room, map->fd, POLLIN, start_train);
-        map->listener = event_add_listener(channel_server_get_event(server, EVENT_ORBIS_LUDIBRIUM_BOAT), EVENT_ORBIS_LUDIBRIUM_BOAT_PROPERTY_SAILING, on_boat_state_changed, map);
+        map->listener = event_add_listener(channel_server_get_event(server, EVENT_TRAIN), EVENT_TRAIN_PROPERTY_SAILING, on_boat_state_changed, map);
     } else if (id == 200090100 || id == 200090110) {
         map->fd = eventfd(0, 0);
         room_set_event(room, map->fd, POLLIN, end_train);
-        map->listener = event_add_listener(channel_server_get_event(server, EVENT_ORBIS_LUDIBRIUM_BOAT), EVENT_ORBIS_LUDIBRIUM_BOAT_PROPERTY_SAILING, on_boat_state_changed, map);
+        map->listener = event_add_listener(channel_server_get_event(server, EVENT_TRAIN), EVENT_TRAIN_PROPERTY_SAILING, on_boat_state_changed, map);
+    } else if (id == 100040105 || id == 100040106 || id == 101030404 || id == 104000400 || id == 105090310 ||
+            id == 107000300 || id == 110040000 || id == 200010300 || id == 220050000 || id == 220050100 ||
+            id == 220050200 || id == 221040301 || id == 222010310 || id == 230020100 || id == 240040401 ||
+            id == 250010304 || id == 250010504 || id == 251010102 || id == 260010201 || id == 261030000) {
+        map->fd = eventfd(0, 0);
+        room_set_event(room, map->fd, POLLIN, respawn_boss);
+        map->listener = event_add_listener(channel_server_get_event(server, EVENT_AREA_BOSS), EVENT_AREA_BOSS_PROPERTY_RESET, on_boat_state_changed, map);
+
+        if (!event_area_boss_register(id)) {
+            room_keep_alive(room);
+            
+            struct Point p;
+
+            switch (id) {
+            case 100040105:
+                map->bossSpawner.id = 5220002;
+                p.x = 456;
+                p.y = 278;
+            break;
+
+            case 100040106:
+                map->bossSpawner.id = 5220002;
+                p.x = 474;
+                p.y = 278;
+            break;
+
+            case 101030404:
+                map->bossSpawner.id = 3220000;
+                p.x = 800;
+                p.y = 1280;
+            break;
+
+            case 104000400:
+                map->bossSpawner.id = 2220000;
+                p.x = 279;
+                p.y = -496;
+            break;
+
+            case 105090310:
+                // TODO: Pick from the 2 spawn points randomly
+                map->bossSpawner.id = 8220008;
+                p.x = -626;
+                p.y = -604;
+                //p.x = 735;
+                //p.y = -600;
+            break;
+
+            case 107000300:
+                map->bossSpawner.id = 6220000;
+                p.x = 90;
+                p.y = 119;
+            break;
+
+            case 110040000:
+                map->bossSpawner.id = 5220001;
+                p.x = -400;
+                p.y = 140;
+            break;
+
+            case 200010300:
+                map->bossSpawner.id = 8220000;
+                p.x = 208;
+                p.y = 83;
+            break;
+
+            case 220050000:
+                map->bossSpawner.id = 5220003;
+                p.x = -300;
+                p.y = 1030;
+            break;
+
+            case 220050100:
+                map->bossSpawner.id = 5220003;
+                p.x = -385;
+                p.y = 1030;
+            break;
+
+            case 220050200:
+                map->bossSpawner.id = 5220003;
+                p.x = 0;
+                p.y = 1030;
+            break;
+
+            case 221040301:
+                map->bossSpawner.id = 6220001;
+                p.x = -4224;
+                p.y = 776;
+            break;
+
+            case 222010310:
+                map->bossSpawner.id = 7220001;
+                p.x = -150;
+                p.y = 33;
+            break;
+
+            case 230020100:
+                map->bossSpawner.id = 4220001;
+                p.x = -350;
+                p.y = 520;
+            break;
+
+            case 240040401:
+                map->bossSpawner.id = 8220003;
+                p.x = 0;
+                p.y = 1125;
+            break;
+
+            case 250010304:
+                map->bossSpawner.id = 7220000;
+                p.x = -450;
+                p.y = 390;
+            break;
+
+            case 250010504:
+                map->bossSpawner.id = 7220002;
+                p.x = 150;
+                p.y = 540;
+            break;
+
+            case 251010102:
+                map->bossSpawner.id = 5220004;
+                p.x = 560;
+                p.y = 50;
+            break;
+
+            case 260010201:
+                map->bossSpawner.id = 3220001;
+                p.x = 645;
+                p.y = 275;
+            break;
+
+            case 261030000:
+                map->bossSpawner.id = 8220002;
+                p.x = -450;
+                p.y = 180;
+            break;
+            }
+
+            map->bossSpawner.x = p.x;
+            map->bossSpawner.y = p.y;
+            map->bossSpawner.fh = foothold_tree_find_below(map->footholdTree, &p)->id;
+
+            struct MapObject *obj = object_list_allocate(&map->objectList);
+            obj->type = MAP_OBJECT_BOSS;
+            map->boss.controller = NULL;
+            map->boss.monster.oid = obj->oid;
+            map->boss.monster.id = map->bossSpawner.id;
+            map->boss.monster.x = map->bossSpawner.x;
+            map->boss.monster.y = map->bossSpawner.y;
+            map->boss.monster.fh = map->bossSpawner.fh;
+            map->boss.monster.hp = wz_get_monster_stats(map->bossSpawner.id)->hp;
+        }
     }
 
     map->server = server;
@@ -451,11 +610,11 @@ void map_destroy(struct Map *map)
 {
     uint32_t id = room_get_id(map->room);
     if (id == 101000300 || id == 101000301 || id / 10 == 20009001 || id == 200000111 || id == 200000112 || id / 10 == 20009000) {
-        event_remove_listener(channel_server_get_event(map->server, EVENT_ELLINIA_ORBIS_BOAT), EVENT_ELLINIA_ORBIS_BOAT_PROPERTY_SAILING, map->listener);
+        event_remove_listener(channel_server_get_event(map->server, EVENT_BOAT), EVENT_BOAT_PROPERTY_SAILING, map->listener);
         room_close_event(map->room);
         close(map->fd);
     } else if (id == 200000121 || id == 220000110 || id == 200000122 || id == 220000111 || id == 200090100 || id == 200090110) {
-        event_remove_listener(channel_server_get_event(map->server, EVENT_ORBIS_LUDIBRIUM_BOAT), EVENT_ORBIS_LUDIBRIUM_BOAT_PROPERTY_SAILING, map->listener);
+        event_remove_listener(channel_server_get_event(map->server, EVENT_TRAIN), EVENT_TRAIN_PROPERTY_SAILING, map->listener);
         room_close_event(map->room);
         close(map->fd);
     }
@@ -496,12 +655,12 @@ int map_join(struct Map *map, struct Client *client, struct MapHandleContainer *
     struct Session *session = client_get_session(client);
 
     if (room_get_id(map->room) == 101000301 || room_get_id(map->room) == 200000112) {
-        if (event_get_property(channel_server_get_event(map->server, EVENT_ELLINIA_ORBIS_BOAT), EVENT_ELLINIA_ORBIS_BOAT_PROPERTY_SAILING) == 2) {
+        if (event_get_property(channel_server_get_event(map->server, EVENT_BOAT), EVENT_BOAT_PROPERTY_SAILING) == 2) {
             client_warp(client, room_get_id(map->room) == 101000301 ? 200090010 : 200090000, 0);
             return -2;
         }
     } else if (room_get_id(map->room) / 10 == 20009001 || room_get_id(map->room) / 10 == 20009000) {
-        if (event_get_property(channel_server_get_event(map->server, EVENT_ELLINIA_ORBIS_BOAT), EVENT_ELLINIA_ORBIS_BOAT_PROPERTY_SAILING) != 2) {
+        if (event_get_property(channel_server_get_event(map->server, EVENT_BOAT), EVENT_BOAT_PROPERTY_SAILING) != 2) {
             client_warp(client, room_get_id(map->room) / 10 == 20009001 ? 200000100 : 101000300, 0);
             return -2;
         }
@@ -637,6 +796,17 @@ int map_join(struct Map *map, struct Client *client, struct MapHandleContainer *
         }
     }
 
+    if (map->boss.monster.oid != -1) {
+        client_announce_monster(client, &map->boss.monster);
+        if (map->boss.controller == NULL) {
+            map->boss.controller = player->player;
+            const struct Monster *monster = &map->boss.monster;
+            uint8_t packet[SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH];
+            spawn_monster_controller_packet(monster->oid, false, monster->id, monster->x, monster->y, monster->fh, false, packet);
+            session_write(session, SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH, packet);
+        }
+    }
+
     player->player->container = player;
     player->player->script = NULL;
     map->playerCount++;
@@ -657,8 +827,17 @@ void map_leave(struct Map *map, struct MapPlayer *player)
                 next->controller->monsterCount++;
             }
             free(player->monsters);
+
             for (size_t i = 0; i < next->controller->monsterCount; i++) {
                 struct Monster *monster = &next->controller->monsters[i]->monster;
+                uint8_t packet[SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH];
+                spawn_monster_controller_packet(monster->oid, false, monster->id, monster->x, monster->y, monster->fh, false, packet);
+                session_write(client_get_session(next->controller->client), SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH, packet);
+            }
+
+            if (map->boss.monster.oid != -1 && map->boss.controller == player) {
+                map->boss.controller = next->controller;
+                struct Monster *monster = &map->boss.monster;
                 uint8_t packet[SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH];
                 spawn_monster_controller_packet(monster->oid, false, monster->id, monster->x, monster->y, monster->fh, false, packet);
                 session_write(client_get_session(next->controller->client), SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH, packet);
@@ -685,6 +864,9 @@ void map_leave(struct Map *map, struct MapPlayer *player)
             for (size_t i = 0; i < player->monsterCount; i++)
                 player->monsters[i]->controller = NULL;
             free(player->monsters);
+
+            // Since this is the last player, they must have the control over the boss
+            map->boss.controller = NULL;
 
             for (size_t i = 0; i < player->dropCount; i++)
                 player->drops[i]->owner = NULL;
@@ -719,10 +901,10 @@ void map_for_each_drop(struct Map *map, void (*f)(struct Drop *, void *), void *
 bool map_monster_is_alive(struct Map *map, uint32_t id, uint32_t oid)
 {
     struct MapObject *object = object_list_get(&map->objectList, oid);
-    if (object == NULL || object->type != MAP_OBJECT_MONSTER)
+    if (object == NULL || (object->type != MAP_OBJECT_MONSTER && object->type != MAP_OBJECT_BOSS))
         return false;
 
-    struct Monster *monster = &map->monsters[object->index].monster;
+    struct Monster *monster = object->type == MAP_OBJECT_MONSTER ? &map->monsters[object->index].monster : &map->boss.monster;
     if (monster->id != id)
         return false;
 
@@ -732,22 +914,26 @@ bool map_monster_is_alive(struct Map *map, uint32_t id, uint32_t oid)
 uint32_t map_damage_monster_by(struct Map *map, struct MapPlayer *player, uint32_t char_id, uint32_t oid, size_t hit_count, int32_t *damage)
 {
     struct MapObject *object = object_list_get(&map->objectList, oid);
-    if (object == NULL || object->type != MAP_OBJECT_MONSTER)
+    if (object == NULL || (object->type != MAP_OBJECT_MONSTER && object->type != MAP_OBJECT_BOSS))
         return -1;
 
-    struct MapMonster *monster = &map->monsters[object->index];
+    struct MapMonster *monster = object->type == MAP_OBJECT_MONSTER ? &map->monsters[object->index] : &map->boss;
 
     if (monster->monster.hp > 0) {
         if (monster->controller != player) {
             // Switch the control of the monster
             struct MapPlayer *old = monster->controller;
-            old->monsterCount--;
-            old->monsters[monster->indexInController] = old->monsters[old->monsterCount];
-            old->monsters[monster->indexInController]->indexInController = monster->indexInController;
-            monster->controller = player;
-            monster->indexInController = player->monsterCount;
-            player->monsters[player->monsterCount] = monster;
-            player->monsterCount++;
+            if (object->type == MAP_OBJECT_MONSTER) {
+                old->monsterCount--;
+                old->monsters[monster->indexInController] = old->monsters[old->monsterCount];
+                old->monsters[monster->indexInController]->indexInController = monster->indexInController;
+                monster->controller = player;
+                monster->indexInController = player->monsterCount;
+                player->monsters[player->monsterCount] = monster;
+                player->monsterCount++;
+            } else {
+                map->boss.controller = player;
+            }
 
             {
                 uint8_t packet[REMOVE_MONSTER_CONTROLLER_PACKET_LENGTH];
@@ -778,11 +964,16 @@ uint32_t map_damage_monster_by(struct Map *map, struct MapPlayer *player, uint32
             const struct MonsterDropInfo *info = drop_info_find(monster->monster.id);
 
             // Remove the controller from the monster
+            // TODO: Why is there a NULL check here?
             if (monster->controller != NULL) {
-                monster->controller->monsters[monster->indexInController] = monster->controller->monsters[monster->controller->monsterCount - 1];
-                monster->controller->monsters[monster->indexInController]->indexInController = monster->indexInController;
-                monster->controller->monsterCount--;
-                monster->controller = NULL;
+                if (object->type == MAP_OBJECT_MONSTER) {
+                    monster->controller->monsters[monster->indexInController] = monster->controller->monsters[monster->controller->monsterCount - 1];
+                    monster->controller->monsters[monster->indexInController]->indexInController = monster->indexInController;
+                    monster->controller->monsterCount--;
+                    monster->controller = NULL;
+                } else {
+                    monster->controller = NULL;
+                }
             }
 
             if (info != NULL) {
@@ -1000,10 +1191,10 @@ uint32_t map_get_npc(struct Map *map, uint32_t oid)
 bool map_move_monster(struct Map *map, struct MapPlayer *controller, uint8_t activity, uint32_t oid, int16_t x, int16_t y, uint16_t fh, uint8_t stance, size_t len, uint8_t *raw_data)
 {
     struct MapObject *obj = object_list_get(&map->objectList, oid);
-    if (obj == NULL || obj->type != MAP_OBJECT_MONSTER)
+    if (obj == NULL || (obj->type != MAP_OBJECT_MONSTER && obj->type != MAP_OBJECT_BOSS))
         return false;
 
-    struct MapMonster *monster = &map->monsters[obj->index];
+    struct MapMonster *monster = obj->type == MAP_OBJECT_MONSTER ? &map->monsters[obj->index] : &map->boss;
     if (monster->monster.hp <= 0 || monster->controller != controller)
         return false;
 
@@ -1472,7 +1663,7 @@ static int dock_undock_boat(struct Room *room, int fd, int status)
     uint64_t one;
     read(fd, &one, sizeof(uint64_t));
     uint8_t packet[BOAT_PACKET_LENGTH];
-    int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_ELLINIA_ORBIS_BOAT), EVENT_ELLINIA_ORBIS_BOAT_PROPERTY_SAILING);
+    int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_BOAT), EVENT_BOAT_PROPERTY_SAILING);
     if (state != 1) {
         if (state == 2) {
             boat_packet(false, packet);
@@ -1489,7 +1680,7 @@ static int start_sailing(struct Room *room, int fd, int status)
     struct Map *map = room_get_context(room);
     uint64_t one;
     read(fd, &one, sizeof(uint64_t));
-    int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_ELLINIA_ORBIS_BOAT), EVENT_ELLINIA_ORBIS_BOAT_PROPERTY_SAILING);
+    int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_BOAT), EVENT_BOAT_PROPERTY_SAILING);
     if (state == 2) {
         for (size_t i = 0; i < map->playerCount; i++) {
             client_warp_async(map->players[i].client, room_get_id(room) == 101000301 ? 200090010 : 200090000, 0);
@@ -1504,7 +1695,7 @@ static int end_sailing(struct Room *room, int fd, int status)
     struct Map *map = room_get_context(room);
     uint64_t one;
     read(fd, &one, sizeof(uint64_t));
-    int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_ELLINIA_ORBIS_BOAT), EVENT_ELLINIA_ORBIS_BOAT_PROPERTY_SAILING);
+    int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_BOAT), EVENT_BOAT_PROPERTY_SAILING);
     if (state == 0) {
         for (size_t i = 0; i < map->playerCount; i++) {
             client_warp_async(map->players[i].client, room_get_id(room) / 10 == 20009001 ? 200000100 : 101000300, 0);
@@ -1521,7 +1712,7 @@ static int dock_undock_train(struct Room *room, int fd, int status)
     uint64_t one;
     read(fd, &one, sizeof(uint64_t));
     uint8_t packet[BOAT_PACKET_LENGTH];
-    int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_ORBIS_LUDIBRIUM_BOAT), EVENT_ORBIS_LUDIBRIUM_BOAT_PROPERTY_SAILING);
+    int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_TRAIN), EVENT_TRAIN_PROPERTY_SAILING);
     if (state != 1) {
         if (state == 2) {
             boat_packet(false, packet);
@@ -1538,7 +1729,7 @@ static int start_train(struct Room *room, int fd, int status)
     struct Map *map = room_get_context(room);
     uint64_t one;
     read(fd, &one, sizeof(uint64_t));
-    int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_ORBIS_LUDIBRIUM_BOAT), EVENT_ORBIS_LUDIBRIUM_BOAT_PROPERTY_SAILING);
+    int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_TRAIN), EVENT_TRAIN_PROPERTY_SAILING);
     if (state == 2) {
         for (size_t i = 0; i < map->playerCount; i++) {
             client_warp_async(map->players[i].client, room_get_id(room) == 200000122 ? 200090100 : 200090110, 0);
@@ -1553,7 +1744,7 @@ static int end_train(struct Room *room, int fd, int status)
     struct Map *map = room_get_context(room);
     uint64_t one;
     read(fd, &one, sizeof(uint64_t));
-    int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_ORBIS_LUDIBRIUM_BOAT), EVENT_ORBIS_LUDIBRIUM_BOAT_PROPERTY_SAILING);
+    int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_TRAIN), EVENT_TRAIN_PROPERTY_SAILING);
     if (state == 0) {
         for (size_t i = 0; i < map->playerCount; i++) {
             client_warp_async(map->players[i].client, room_get_id(room) == 200090100 ? 220000110 : 200000100, 0);
@@ -1563,23 +1754,143 @@ static int end_train(struct Room *room, int fd, int status)
     return 0;
 }
 
+static int respawn_boss(struct Room *room, int fd, int status)
+{
+    struct Map *map = room_get_context(room);
+    uint64_t one;
+    read(fd, &one, sizeof(uint64_t));
+    event_area_boss_register(room_get_id(room));
+    if (map->boss.monster.oid == -1) {
+        room_keep_alive(room);
+
+        struct MapObject *obj = object_list_allocate(&map->objectList);
+        obj->type = MAP_OBJECT_BOSS;
+
+        struct ControllerHeapNode *next = heap_top(&map->heap);
+
+        map->boss.controller = next->controller;
+        map->boss.monster.oid = obj->oid;
+        map->boss.monster.x = map->bossSpawner.x;
+        map->boss.monster.y = map->bossSpawner.y;
+        map->boss.monster.fh = map->bossSpawner.fh;
+        map->boss.monster.hp = wz_get_monster_stats(map->boss.monster.id)->hp;
+
+        struct Monster *monster = &map->boss.monster;
+        for (size_t i = 0; i < map->playerCount; i++) {
+            uint8_t packet[SPAWN_MONSTER_PACKET_LENGTH];
+            spawn_monster_packet(monster->oid, monster->id, monster->x, monster->y, monster->fh, true, packet);
+            room_broadcast(map->room, SPAWN_MONSTER_PACKET_LENGTH, packet);
+        }
+
+        {
+            uint8_t packet[SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH];
+            spawn_monster_controller_packet(monster->oid, false, monster->id, monster->x, monster->y, monster->fh, true, packet);
+            session_write(client_get_session(next->controller->client), SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH, packet);
+        }
+
+        const char *msg;
+        switch (map->boss.monster.id) {
+        case 2220000:
+            msg = "A cool breeze was felt when Mano appeared.";
+        break;
+
+        case 3220000:
+            msg = "Stumpy has appeared with a stumping sound that rings the Stone Mountain.";
+        break;
+
+        case 3220001:
+            msg = "Deo slowly appeared out of the sand dust.";
+        break;
+
+        case 4220001:
+            msg = "A strange shell has appeared from a grove of seaweed";
+        break;
+
+        case 5220001:
+            msg = "A strange turban shell has appeared on the beach.";
+        break;
+
+        case 5220002:
+            msg = "Faust appeared amidst the blue fog.";
+        break;
+
+        case 5220003:
+            msg = "Tick-Tock Tick-Tock! Timer makes it's presence known.";
+        break;
+
+        case 5220004:
+            msg = "From the mists surrounding the herb garden, the gargantuous Giant Centipede appears.";
+        break;
+
+        case 6220000:
+            msg = "The huge crocodile Dyle has come out from the swamp.";
+        break;
+
+        case 6220001:
+            msg = "Zeno has appeared with a heavy sound of machinery.";
+        break;
+
+        case 7220000:
+            msg = "Tae Roon has appeared with a soft whistling sound.";
+        break;
+
+        case 7220001:
+            msg = "As the moon light dims, a long fox cry can be heard and the presence of the old fox can be felt";
+        break;
+
+        case 7220002:
+            msg = "The ghostly air around here has become stronger. The unpleasant sound of a cat crying can be heard.";
+        break;
+
+        case 8220000:
+            msg = "Eliza has appeared with a black whirlwind.";
+        break;
+
+        case 8220002:
+            msg = "Kimera has appeared out of the darkness of the underground with a glitter in her eyes.";
+        break;
+
+        case 8220003:
+            msg = "Leviathan emerges from the canyon and the cold icy wind blows.";
+        break;
+
+        case 8220008:
+            msg = "Slowly, a suspicious food stand opens up on a strangely remote place.";
+        break;
+        }
+        uint8_t packet[SERVER_NOTICE_PACKET_MAX_LENGTH];
+        size_t len = server_notice_packet(strlen(msg), msg, packet);
+        room_broadcast(room, len, packet);
+    }
+
+    return 0;
+}
+
 static void map_kill_monster(struct Map *map, uint32_t oid)
 {
     struct MapObject *object = object_list_get(&map->objectList, oid);
-    struct MapMonster *monster = &map->monsters[object->index];
-    if (monster->spawnerIndex != -1) {
-        map->dead[map->deadCount] = monster->spawnerIndex;
-        map->deadCount++;
+    if (object->type == MAP_OBJECT_MONSTER) {
+        struct MapMonster *monster = &map->monsters[object->index];
+        if (monster->spawnerIndex != -1) {
+            map->dead[map->deadCount] = monster->spawnerIndex;
+            map->deadCount++;
+        }
+        map->monsters[object->index] = map->monsters[map->monsterCount - 1];
+        if (map->monsters[object->index].controller != NULL)
+            map->monsters[object->index].controller->monsters[map->monsters[object->index].indexInController] = &map->monsters[object->index];
+        object_list_get(&map->objectList, map->monsters[object->index].monster.oid)->index = object->index;
+        map->monsterCount--;
+        object_list_free(&map->objectList, oid);
+        uint8_t packet[KILL_MONSTER_PACKET_LENGTH];
+        kill_monster_packet(oid, true, packet);
+        room_broadcast(map->room, KILL_MONSTER_PACKET_LENGTH, packet);
+    } else { // MAP_OBJECT_BOSS
+        object_list_free(&map->objectList, map->boss.monster.oid);
+        map->boss.monster.oid = -1;
+        uint8_t packet[KILL_MONSTER_PACKET_LENGTH];
+        kill_monster_packet(oid, true, packet);
+        room_broadcast(map->room, KILL_MONSTER_PACKET_LENGTH, packet);
     }
-    map->monsters[object->index] = map->monsters[map->monsterCount - 1];
-    if (map->monsters[object->index].controller != NULL)
-        map->monsters[object->index].controller->monsters[map->monsters[object->index].indexInController] = &map->monsters[object->index];
-    object_list_get(&map->objectList, map->monsters[object->index].monster.oid)->index = object->index;
-    map->monsterCount--;
-    object_list_free(&map->objectList, oid);
-    uint8_t packet[KILL_MONSTER_PACKET_LENGTH];
-    kill_monster_packet(oid, true, packet);
-    room_broadcast(map->room, KILL_MONSTER_PACKET_LENGTH, packet);
 }
 
 static void map_destroy_reactor(struct Map *map, uint32_t oid)
@@ -1788,10 +2099,10 @@ static void on_next_drop(struct Room *room, struct TimerHandle *handle)
         map->dropBatchEnd++;
 
         object = object_list_get(&map->objectList, batch->dropperOid);
-        if (object->type == MAP_OBJECT_MONSTER)
-            map_kill_monster(map, batch->dropperOid);
-        else
+        if (object->type == MAP_OBJECT_REACTOR)
             map_destroy_reactor(map, batch->dropperOid);
+        else // monster or boss
+            map_kill_monster(map, batch->dropperOid);
 
         if (batch->owner != NULL && client_is_auto_pickup_enabled(batch->owner->client))
             do_client_auto_pickup(map, batch->owner->client, drop);
