@@ -18,7 +18,6 @@ struct ScriptEntryPoint {
     char *name;
     size_t argCount;
     enum ScriptValueType *args;
-    enum ScriptValueType result;
 };
 
 struct ScriptManager;
@@ -29,29 +28,17 @@ struct PortalScriptManager;
 struct QuestScriptManager;
 struct ReactorScriptManager;
 
-enum ScriptResultValue {
+enum ScriptResult {
     SCRIPT_RESULT_VALUE_KICK = -2,
     SCRIPT_RESULT_VALUE_FAILURE,
     SCRIPT_RESULT_VALUE_SUCCESS,
     SCRIPT_RESULT_VALUE_NEXT,
-    SCRIPT_RESULT_VALUE_WARP,
-};
-
-union ScriptValue {
-    bool b;
-    int32_t i;
-};
-
-struct ScriptResult {
-    enum ScriptResultValue result;
-    union ScriptValue value;
-    union ScriptValue value2;
 };
 
 struct ScriptManager *script_manager_create(struct ChannelServer *server, const char *dir_name, const char *def, size_t entry_point_count, struct ScriptEntryPoint *entry_points);
 void script_manager_destroy(struct ScriptManager *manager);
 struct ScriptInstance *script_manager_alloc(struct ScriptManager *manager, const char *name, size_t entry);
-struct ScriptResult script_manager_run(struct ScriptInstance *handle, ...);
+enum ScriptResult script_manager_run(struct ScriptInstance *handle, ...);
 void script_manager_free(struct ScriptInstance *handle);
 
 #endif

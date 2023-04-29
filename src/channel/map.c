@@ -1174,9 +1174,9 @@ struct ClientResult map_hit_reactor(struct Map *map, struct MapPlayer *player, u
 
         player->rm = reactor_manager_create(map, player->client, object->index, oid);
 
-        struct ScriptResult res = script_manager_run(player->script, SCRIPT_REACTOR_MANAGER_TYPE, player->rm);
+        enum ScriptResult res = script_manager_run(player->script, SCRIPT_REACTOR_MANAGER_TYPE, player->rm);
 
-        switch (res.result) {
+        switch (res) {
         case SCRIPT_RESULT_VALUE_KICK:
             reactor_manager_destroy(player->rm);
             script_manager_free(player->script);
@@ -1201,10 +1201,6 @@ struct ClientResult map_hit_reactor(struct Map *map, struct MapPlayer *player, u
         /* FALLTHROUGH */
         case SCRIPT_RESULT_VALUE_NEXT:
             return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
-        break;
-
-        case SCRIPT_RESULT_VALUE_WARP:
-            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_WARP, .map = res.value.i, .portal = res.value2.i };
         break;
         }
     } else {
@@ -1737,7 +1733,7 @@ static int start_sailing(struct Room *room, int fd, int status)
     int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_BOAT), EVENT_BOAT_PROPERTY_SAILING);
     if (state == 2) {
         for (size_t i = 0; i < map->playerCount; i++) {
-            client_warp_async(map->players[i].client, room_get_id(room) == 101000301 ? 200090010 : 200090000, 0);
+            client_warp(map->players[i].client, room_get_id(room) == 101000301 ? 200090010 : 200090000, 0);
         }
     }
 
@@ -1752,7 +1748,7 @@ static int end_sailing(struct Room *room, int fd, int status)
     int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_BOAT), EVENT_BOAT_PROPERTY_SAILING);
     if (state == 0) {
         for (size_t i = 0; i < map->playerCount; i++) {
-            client_warp_async(map->players[i].client, room_get_id(room) / 10 == 20009001 ? 200000100 : 101000300, 0);
+            client_warp(map->players[i].client, room_get_id(room) / 10 == 20009001 ? 200000100 : 101000300, 0);
         }
     }
 
@@ -1787,7 +1783,7 @@ static int start_train(struct Room *room, int fd, int status)
     int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_TRAIN), EVENT_TRAIN_PROPERTY_SAILING);
     if (state == 2) {
         for (size_t i = 0; i < map->playerCount; i++) {
-            client_warp_async(map->players[i].client, room_get_id(room) == 200000122 ? 200090100 : 200090110, 0);
+            client_warp(map->players[i].client, room_get_id(room) == 200000122 ? 200090100 : 200090110, 0);
         }
     }
 
@@ -1802,7 +1798,7 @@ static int end_train(struct Room *room, int fd, int status)
     int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_TRAIN), EVENT_TRAIN_PROPERTY_SAILING);
     if (state == 0) {
         for (size_t i = 0; i < map->playerCount; i++) {
-            client_warp_async(map->players[i].client, room_get_id(room) == 200090100 ? 220000110 : 200000100, 0);
+            client_warp(map->players[i].client, room_get_id(room) == 200090100 ? 220000110 : 200000100, 0);
         }
     }
 
@@ -1836,7 +1832,7 @@ static int start_genie(struct Room *room, int fd, int status)
     int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_GENIE), EVENT_GENIE_PROPERTY_SAILING);
     if (state == 2) {
         for (size_t i = 0; i < map->playerCount; i++) {
-            client_warp_async(map->players[i].client, room_get_id(room) == 200000152 ? 200090400 : 200090410, 0);
+            client_warp(map->players[i].client, room_get_id(room) == 200000152 ? 200090400 : 200090410, 0);
         }
     }
 
@@ -1851,7 +1847,7 @@ static int end_genie(struct Room *room, int fd, int status)
     int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_GENIE), EVENT_GENIE_PROPERTY_SAILING);
     if (state == 0) {
         for (size_t i = 0; i < map->playerCount; i++) {
-            client_warp_async(map->players[i].client, room_get_id(room) == 200090400 ? 260000100 : 200000100, 0);
+            client_warp(map->players[i].client, room_get_id(room) == 200090400 ? 260000100 : 200000100, 0);
         }
     }
 
@@ -1882,7 +1878,7 @@ static int start_subway(struct Room *room, int fd, int status)
     int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_SUBWAY), EVENT_SUBWAY_PROPERTY_SAILING);
     if (state == 2) {
         for (size_t i = 0; i < map->playerCount; i++) {
-            client_warp_async(map->players[i].client, room_get_id(room) == 600010004 ? 600010005 : 600010003, 0);
+            client_warp(map->players[i].client, room_get_id(room) == 600010004 ? 600010005 : 600010003, 0);
         }
     }
 
@@ -1897,7 +1893,7 @@ static int end_subway(struct Room *room, int fd, int status)
     int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_SUBWAY), EVENT_SUBWAY_PROPERTY_SAILING);
     if (state == 0) {
         for (size_t i = 0; i < map->playerCount; i++) {
-            client_warp_async(map->players[i].client, room_get_id(room) == 600010005 ? 600010001 : 103000100, 0);
+            client_warp(map->players[i].client, room_get_id(room) == 600010005 ? 600010001 : 103000100, 0);
         }
     }
 

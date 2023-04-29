@@ -430,7 +430,7 @@ static int l_client_warp(lua_State *L)
     uint32_t map = luaL_checkinteger(L, 2);
     uint8_t portal = luaL_checkinteger(L, 3);
     client_warp(client, map, portal);
-    return lua_yield(L, 2);
+    return lua_yield(L, 0);
 }
 
 static int l_client_reset_stats(lua_State *L)

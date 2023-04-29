@@ -190,7 +190,7 @@ struct ClientContResult client_cont(struct Client *client, int status)
 
         if (client->databaseState == 1) {
             if (status != 0)
-                session_close_event(client->session);
+                close(session_close_event(client->session));
 
             struct RequestParams params = {
                 .type = DATABASE_REQUEST_TYPE_GET_CHARACTER,
@@ -675,7 +675,7 @@ struct ClientContResult client_cont(struct Client *client, int status)
 
         if (client->databaseState == 1) {
             if (status != 0)
-                session_close_event(client->session);
+                close(session_close_event(client->session));
 
             struct RequestParams params = {
                 .type = DATABASE_REQUEST_TYPE_UPDATE_CHARACTER,
@@ -3030,8 +3030,8 @@ struct ClientResult client_npc_talk(struct Client *client, uint32_t npc)
     client->script = script_manager_alloc(client->managers.npc, script, 0);
     if (client->script == NULL)
         return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_ERROR };
-    struct ScriptResult res = script_manager_run(client->script, SCRIPT_CLIENT_TYPE, client);
-    switch (res.result) {
+    enum ScriptResult res = script_manager_run(client->script, SCRIPT_CLIENT_TYPE, client);
+    switch (res) {
     case SCRIPT_RESULT_VALUE_KICK:
         script_manager_free(client->script);
         client->script = NULL;
@@ -3045,8 +3045,6 @@ struct ClientResult client_npc_talk(struct Client *client, uint32_t npc)
         client->script = NULL;
     case SCRIPT_RESULT_VALUE_NEXT:
     break;
-    case SCRIPT_RESULT_VALUE_WARP:
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_WARP, .map = res.value.i, .portal = res.value2.i };
     }
 
     return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
@@ -3058,8 +3056,8 @@ struct ClientResult client_launch_map_script(struct Client *client, const char *
     snprintf(script, 32, "%s.lua", script_name);
     client->script = script_manager_alloc(client->managers.map, script, 0);
 
-    struct ScriptResult res = script_manager_run(client->script, SCRIPT_CLIENT_TYPE, client);
-    switch (res.result) {
+    enum ScriptResult res = script_manager_run(client->script, SCRIPT_CLIENT_TYPE, client);
+    switch (res) {
     case SCRIPT_RESULT_VALUE_KICK:
         script_manager_free(client->script);
         client->script = NULL;
@@ -3073,8 +3071,6 @@ struct ClientResult client_launch_map_script(struct Client *client, const char *
         client->script = NULL;
     case SCRIPT_RESULT_VALUE_NEXT:
         break;
-    case SCRIPT_RESULT_VALUE_WARP:
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_WARP, .map = res.value.i, .portal = res.value2.i };
     }
 
     return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
@@ -3119,8 +3115,8 @@ struct ClientResult client_start_quest(struct Client *client, uint16_t qid, uint
         char script[10];
         snprintf(script, 10, "%d.lua", qid);
         client->script = script_manager_alloc(client->managers.quest, script, 0);
-        struct ScriptResult res = script_manager_run(client->script, SCRIPT_CLIENT_TYPE, client);
-        switch (res.result) {
+        enum ScriptResult res = script_manager_run(client->script, SCRIPT_CLIENT_TYPE, client);
+        switch (res) {
         case SCRIPT_RESULT_VALUE_KICK:
             script_manager_free(client->script);
             client->script = NULL;
@@ -3135,8 +3131,6 @@ struct ClientResult client_start_quest(struct Client *client, uint16_t qid, uint
             return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
         case SCRIPT_RESULT_VALUE_NEXT:
             return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
-        case SCRIPT_RESULT_VALUE_WARP:
-            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_WARP, .map = res.value.i, .portal = res.value2.i };
         }
     }
 
@@ -3285,8 +3279,8 @@ struct ClientResult client_end_quest(struct Client *client, uint16_t qid, uint32
         char script[10];
         snprintf(script, 10, "%d.lua", qid);
         client->script = script_manager_alloc(client->managers.quest, script, 1);
-        struct ScriptResult res = script_manager_run(client->script, SCRIPT_CLIENT_TYPE, client);
-        switch (res.result) {
+        enum ScriptResult res = script_manager_run(client->script, SCRIPT_CLIENT_TYPE, client);
+        switch (res) {
         case SCRIPT_RESULT_VALUE_KICK:
             script_manager_free(client->script);
             client->script = NULL;
@@ -3301,8 +3295,6 @@ struct ClientResult client_end_quest(struct Client *client, uint16_t qid, uint32
             return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
         case SCRIPT_RESULT_VALUE_NEXT:
             return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
-        case SCRIPT_RESULT_VALUE_WARP:
-            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_WARP, .map = res.value.i, .portal = res.value2.i };
         }
     }
 
@@ -3362,7 +3354,7 @@ struct ClientResult client_script_cont(struct Client *client, uint32_t action)
     if (client->script == NULL)
         return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
 
-    struct ScriptResult res;
+    enum ScriptResult res;
     if (client->scriptState != SCRIPT_STATE_WARP && action == -1) {
         script_manager_free(client->script);
         client->script = NULL;
@@ -3396,7 +3388,7 @@ struct ClientResult client_script_cont(struct Client *client, uint32_t action)
     break;
     }
 
-    switch (res.result) {
+    switch (res) {
     case SCRIPT_RESULT_VALUE_KICK:
         script_manager_free(client->script);
         client->script = NULL;
@@ -3410,8 +3402,6 @@ struct ClientResult client_script_cont(struct Client *client, uint32_t action)
         client->script = NULL;
     case SCRIPT_RESULT_VALUE_NEXT:
         return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
-    case SCRIPT_RESULT_VALUE_WARP:
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_WARP, .map = res.value.i, .portal = res.value2.i };
     }
 }
 
@@ -3715,28 +3705,8 @@ void client_warp(struct Client *client, uint32_t map, uint8_t portal)
         change_map_packet(&client->character, client->character.map, client->character.spawnPoint, packet);
         session_write(client->session, CHANGE_MAP_PACKET_LENGTH, packet);
     }
-}
 
-static struct OnResumeResult on_warp(struct Session *session, int fd, int status)
-{
-    struct Client *c = session_get_context(session);
-    close(fd);
-    client_warp(c, c->character.map, c->character.spawnPoint);
-    return (struct OnResumeResult) { .status = 0, .room = c->character.map };
-}
-
-void client_warp_async(struct Client *client, uint32_t map, uint8_t portal)
-{
-    script_manager_free(client->script);
-    client->script = NULL;
-
-    client->character.map = map;
-    client->character.spawnPoint = portal;
-    int fd = eventfd(0, 0);
-    // TODO: Check if an event is already underway before overwriting it
-    session_set_event(client->session, POLLIN, fd, on_warp);
-    uint64_t one = 1;
-    write(fd, &one, sizeof(uint64_t));
+    session_change_room(client->session, map);
 }
 
 void client_reset_stats(struct Client *client)
@@ -3896,8 +3866,8 @@ struct ClientResult client_launch_portal_script(struct Client *client, const cha
     char script[21];
     snprintf(script, 21, "%s.lua", portal);
     client->script = script_manager_alloc(client->managers.portal, script, 0);
-    struct ScriptResult res = script_manager_run(client->script, SCRIPT_CLIENT_TYPE, client);
-    switch (res.result) {
+    enum ScriptResult res = script_manager_run(client->script, SCRIPT_CLIENT_TYPE, client);
+    switch (res) {
     case SCRIPT_RESULT_VALUE_KICK:
         script_manager_free(client->script);
         client->script = NULL;
@@ -3911,8 +3881,6 @@ struct ClientResult client_launch_portal_script(struct Client *client, const cha
         client->script = NULL;
     case SCRIPT_RESULT_VALUE_NEXT:
         break;
-    case SCRIPT_RESULT_VALUE_WARP:
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_WARP, .map = res.value.i, .portal = res.value2.i };
     }
 
     return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };

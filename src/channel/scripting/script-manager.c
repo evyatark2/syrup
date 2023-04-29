@@ -188,7 +188,7 @@ struct ScriptInstance *script_manager_alloc(struct ScriptManager *sm, const char
     return handle;
 }
 
-struct ScriptResult script_manager_run(struct ScriptInstance *handle, ...)
+enum ScriptResult script_manager_run(struct ScriptInstance *handle, ...)
 {
     va_list list;
     va_start(list, handle);
@@ -219,37 +219,17 @@ struct ScriptResult script_manager_run(struct ScriptInstance *handle, ...)
         int results;
         int res = lua_resume(handle->L, NULL, handle->entry->argCount, &results);
         if (res == LUA_OK) {
-            union ScriptValue value;
-            switch (handle->entry->result) {
-            case SCRIPT_VALUE_TYPE_BOOLEAN:
-                value.b = lua_toboolean(handle->L, -1);
-            break;
-
-            case SCRIPT_VALUE_TYPE_INTEGER:
-                value.i = lua_tointeger(handle->L, -1);
-            break;
-            }
-            lua_pop(handle->L, results);
-            return (struct ScriptResult) { .result = SCRIPT_RESULT_VALUE_SUCCESS, .value = value };
+            return SCRIPT_RESULT_VALUE_SUCCESS;
         } else if (res == LUA_YIELD) {
-            // this is a ridicolous way to do this but for now it works
-            if (results == 2) {
-                struct ScriptResult res = {
-                    .result = SCRIPT_RESULT_VALUE_WARP,
-                    .value.i = lua_tointeger(handle->L, -2),
-                    .value2.i = lua_tointeger(handle->L, -1),
-                };
-                lua_pop(handle->L, results);
-                return res;
-            } else if (results == 1) {
-                return (struct ScriptResult) { .result = SCRIPT_RESULT_VALUE_KICK };
+            if (results == 1) {
+                return SCRIPT_RESULT_VALUE_KICK;
             } else {
-                return (struct ScriptResult) { .result = SCRIPT_RESULT_VALUE_NEXT };
+                return SCRIPT_RESULT_VALUE_NEXT;
             }
         } else {
             fprintf(stderr, "Lua error: %s\n", lua_tostring(handle->L, -1));
             lua_pop(handle->L, results);
-            return (struct ScriptResult) { .result = SCRIPT_RESULT_VALUE_FAILURE };
+            return SCRIPT_RESULT_VALUE_FAILURE;
         }
     } else {
         // For now, an yield can only return an integer
@@ -258,37 +238,19 @@ struct ScriptResult script_manager_run(struct ScriptInstance *handle, ...)
         int results;
         int res = lua_resume(handle->L, NULL, 1, &results);
         if (res == LUA_OK) {
-            union ScriptValue value;
-            switch (handle->entry->result) {
-            case SCRIPT_VALUE_TYPE_BOOLEAN:
-                value.b = lua_toboolean(handle->L, -1);
-            break;
-
-            case SCRIPT_VALUE_TYPE_INTEGER:
-                value.i = lua_tointeger(handle->L, -1);
-            break;
-            }
             lua_pop(handle->L, results);
-            return (struct ScriptResult) { .result = SCRIPT_RESULT_VALUE_SUCCESS, .value = value };
+            return SCRIPT_RESULT_VALUE_SUCCESS;
         } else if (res == LUA_YIELD) {
             // this is a ridicolous way to do this but for now it works
-            if (results == 2) {
-                struct ScriptResult res = {
-                    .result = SCRIPT_RESULT_VALUE_WARP,
-                    .value.i = lua_tointeger(handle->L, -2),
-                    .value2.i = lua_tointeger(handle->L, -1),
-                };
-                lua_pop(handle->L, results);
-                return res;
-            } else if (results == 1) {
-                return (struct ScriptResult) { .result = SCRIPT_RESULT_VALUE_KICK };
+            if (results == 1) {
+                return SCRIPT_RESULT_VALUE_KICK;
             } else {
-                return (struct ScriptResult) { .result = SCRIPT_RESULT_VALUE_NEXT };
+                return SCRIPT_RESULT_VALUE_NEXT;
             }
         } else {
             fprintf(stderr, "Lua error: %s\n", lua_tostring(handle->L, -1));
             lua_pop(handle->L, results);
-            return (struct ScriptResult) { .result = SCRIPT_RESULT_VALUE_FAILURE };
+            return SCRIPT_RESULT_VALUE_FAILURE;
         }
     }
 }

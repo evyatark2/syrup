@@ -37,12 +37,12 @@ static void on_log(enum LogType type, const char *fmt, ...);
 
 static void *create_context(void);
 static void destroy_context(void *ctx);
-static int on_client_connect(struct Session *session, void *global_ctx, void *thread_ctx, struct sockaddr *addr);
+static void on_client_connect(struct Session *session, void *global_ctx, void *thread_ctx, struct sockaddr *addr);
 static void on_client_disconnect(struct Session *session);
-static bool on_client_join(struct Session *session, void *thread_ctx);
-static struct OnPacketResult on_client_packet(struct Session *session, size_t size, uint8_t *packet);
-static struct OnPacketResult on_unassigned_client_packet(struct Session *session, size_t size, uint8_t *packet);
-static struct OnResumeResult on_client_resume(struct Session *session, int fd, int status);
+static void on_client_join(struct Session *session, void *thread_ctx);
+static void on_client_packet(struct Session *session, size_t size, uint8_t *packet);
+static void on_unassigned_client_packet(struct Session *session, size_t size, uint8_t *packet);
+static void on_client_resume(struct Session *session, int fd, int status);
 static int on_room_create(struct Room *room, void *thread_ctx);
 static void on_room_destroy(struct Room *room);
 
@@ -101,13 +101,11 @@ int main(void)
             .name = "start",
             .argCount = 1,
             .args = &arg1,
-            .result = SCRIPT_VALUE_TYPE_VOID
         },
         {
             .name = "end_",
             .argCount = 1,
             .args = &arg2,
-            .result = SCRIPT_VALUE_TYPE_VOID
         }
     };
 
@@ -207,15 +205,17 @@ static void destroy_context(void *ctx)
     database_connection_destroy(ctx);
 }
 
-static int on_client_connect(struct Session *session, void *global_ctx, void *thread_ctx, struct sockaddr *addr)
+static void on_client_connect(struct Session *session, void *global_ctx, void *thread_ctx, struct sockaddr *addr)
 {
     struct GlobalContext *ctx = global_ctx;
+    if (!session_accept(session))
+        return;
+
     struct Client *client = client_create(session, thread_ctx, ctx->questManager, ctx->portalManager, ctx->npcManager, ctx->mapManager);
     if (client == NULL)
-        return -1;
+        session_kick(session);
 
     session_set_context(session, client);
-    return 0;
 }
 
 #define READER_BEGIN(size, packet) { \
@@ -227,7 +227,7 @@ static int on_client_connect(struct Session *session, void *global_ctx, void *th
 
 #define READ_OR_ERROR(func, ...) \
         if (!func(&reader__, ##__VA_ARGS__)) \
-            return (struct OnPacketResult) { .status = -1 };
+            session_kick(session); \
 
 #define READER_AVAILABLE() \
         (reader__.size - reader__.pos)
@@ -236,10 +236,10 @@ static int on_client_connect(struct Session *session, void *global_ctx, void *th
     }
 
 
-static struct OnPacketResult on_client_packet(struct Session *session, size_t size, uint8_t *packet)
+static void on_client_packet(struct Session *session, size_t size, uint8_t *packet)
 {
     if (size < 2)
-        return (struct OnPacketResult) { .status = -1 };
+        session_kick(session);
 
     struct Client *client = session_get_context(session);
     const struct Character *chr = client_get_character(client);
@@ -264,35 +264,29 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             portal[len] = '\0';
             uint32_t target_map = wz_get_target_map(chr->map, portal);
             if (target_map == -1)
-                return (struct OnPacketResult) { .status = 0, .room = -1 };
+                session_kick(session);
             uint8_t target_portal = wz_get_target_portal(chr->map, portal);
             if (target_portal == (uint8_t)-1)
-                return (struct OnPacketResult) { .status = 0, .room = -1 };
+                return;
             client_warp(client, target_map, target_portal);
-
-            return (struct OnPacketResult) { .status = 0, .room = target_map };
         } else {
             if (chr->hp > 0) {
                 if (chr->map / 1000 == 1020) {
                     uint32_t id = wz_get_map_forced_return(chr->map);
                     if (id != target)
-                        return (struct OnPacketResult) { .status = -1 };
+                        session_kick(session);
 
                     const struct PortalInfo *portal = wz_get_portal_info_by_name(id, "sp");
 
                     client_warp(client, id, portal->id);
-
-                    return (struct OnPacketResult) { .status = 0, .room = id };
                 }
             } else {
                 uint32_t id = wz_get_map_nearest_town(chr->map);
                 const struct PortalInfo *portal = wz_get_portal_info_by_name(id, "sp");
 
-                client_warp(client, id, portal->id);
-
                 client_set_hp_now(client, 50);
 
-                return (struct OnPacketResult) { .status = 0, .room = id };
+                client_warp(client, id, portal->id);
             }
         }
     }
@@ -300,7 +294,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
 
     case 0x0029: {
         if (client_get_map(client)->player == NULL)
-            return (struct OnPacketResult) { .status = 0, .room = -1 };
+            return;
 
         size_t len = 1;
         uint8_t count;
@@ -409,10 +403,10 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
 
         if (id == (uint16_t)-1) {
             if (!client_stand_up(client))
-                return (struct OnPacketResult) { .status = -1 };
+                session_kick(session);
         } else {
             if (!client_sit_on_map_seat(client, id))
-                return (struct OnPacketResult) { .status = -1 };
+                session_kick(session);
         }
     }
     break;
@@ -424,7 +418,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         READER_END();
 
         if (!client_sit(client, id))
-            return (struct OnPacketResult) { .status = -1 };
+            session_kick(session);
     }
     break;
 
@@ -468,7 +462,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         uint8_t skill_level = 0;
         if (skill != 0) {
             if (!client_apply_skill(client, skill, &skill_level))
-                return (struct OnPacketResult) { .status = -1 };
+                session_kick(session);
         }
 
         {
@@ -531,7 +525,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             client_use_projectile(client, 1, &success);
         } else {
             if (!client_apply_skill(client, skill, &skill_level))
-                return (struct OnPacketResult) { .status = -1 };
+                session_kick(session);
         }
 
         {
@@ -588,7 +582,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         uint8_t skill_level = 0;
         if (skill != 0) {
             if (!client_apply_skill(client, skill, &skill_level))
-                return (struct OnPacketResult) { .status = -1 };
+                session_kick(session);
         }
 
         {
@@ -670,7 +664,6 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
                     const struct MapInfo *info = wz_get_map(strtol(token, NULL, 10));
                     if (info != NULL) {
                         client_warp(client, info->id, 0);
-                        return (struct OnPacketResult) { .status = 0, .room = info->id };
                     } else {
                         client_message(client, "Requested map doesn't exist");
                     }
@@ -701,7 +694,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
 
     case 0x003A: {
         if (client_get_map(client)->player == NULL)
-            return (struct OnPacketResult) { .status = 0, .room = -1 };
+            session_kick(session);
 
         struct Map *map = room_get_context(session_get_room(session));
         uint32_t oid;
@@ -711,17 +704,16 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
 
         uint32_t id = map_get_npc(map, oid);
         if (id == -1)
-            return (struct OnPacketResult) { .status = -1 };
+            session_kick(session);
 
         struct ClientResult res = client_npc_talk(client, id);
             switch (res.type) {
             case CLIENT_RESULT_TYPE_BAN:
             case CLIENT_RESULT_TYPE_ERROR:
-                return (struct OnPacketResult) { .status = -1 };
+                session_kick(session);
             case CLIENT_RESULT_TYPE_SUCCESS:
-                return (struct OnPacketResult) { .status = 0, .room = -1 };
             case CLIENT_RESULT_TYPE_WARP:
-                return (struct OnPacketResult) { .status = 0, .room = res.map };
+                return;
             }
     }
     break;
@@ -752,11 +744,10 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         switch (res.type) {
         case CLIENT_RESULT_TYPE_BAN:
         case CLIENT_RESULT_TYPE_ERROR:
-            return (struct OnPacketResult) { .status = -1 };
+            session_kick(session);
         case CLIENT_RESULT_TYPE_SUCCESS:
-            return (struct OnPacketResult) { .status = 0, .room = -1 };
         case CLIENT_RESULT_TYPE_WARP:
-            return (struct OnPacketResult) { .status = 0, .room = res.map };
+            return;
         }
     }
     break;
@@ -777,9 +768,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             READ_OR_ERROR(reader_i32, &price);
             struct ClientResult res = client_buy(client, slot, id, quantity, price);
             if (res.type < 0)
-                return (struct OnPacketResult) { .status = -1 };
-
-            return (struct OnPacketResult) { .status = 0, .room = -1 };
+                session_kick(session);
         }
         break;
 
@@ -792,9 +781,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             READ_OR_ERROR(reader_i16, &quantity);
             struct ClientResult res = client_sell(client, slot, id, quantity);
             if (res.type < 0)
-                return (struct OnPacketResult) { .status = -1 };
-
-            return (struct OnPacketResult) { .status = 0, .room = -1 };
+                session_kick(session);
         }
         break;
 
@@ -803,16 +790,13 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             READ_OR_ERROR(reader_u16, &slot);
             struct ClientResult res = client_recharge(client, slot);
             if (res.type < 0)
-                return (struct OnPacketResult) { .status = -1 };
-
+                session_kick(session);
         }
         break;
 
         case 3: // Leave
             if (!client_close_shop(client))
-                return (struct OnPacketResult) { .status = -1 };
-
-            return (struct OnPacketResult) { .status = 0, .room = -1 };
+                session_kick(session);
         break;
 
         }
@@ -824,7 +808,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         struct Map *map = room_get_context(session_get_room(session));
 
         if (client_is_in_shop(client))
-            return (struct OnPacketResult) { .status = 0, .room = -1 };
+            return;
 
         uint8_t inventory;
         int16_t src;
@@ -840,7 +824,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
 
         if (dst == 0) {
             if (quantity <= 0)
-                return (struct OnPacketResult) { .status = -1 };
+                session_kick(session);
 
             struct Drop drop;
 
@@ -850,47 +834,47 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
                 drop.type = DROP_TYPE_ITEM;
                 bool success;
                 if (!client_remove_item(client, inventory, src, quantity, &success, &drop.item))
-                    return (struct OnPacketResult) { .status = -1 };
+                    session_kick(session);
 
                 if (!success)
-                    return (struct OnPacketResult) { .status = 0, .room = -1 };
+                    return;
             } else {
                 if (quantity > 1)
-                    return (struct OnPacketResult) { .status = -1 };
+                    session_kick(session);
 
                 drop.type = DROP_TYPE_EQUIP;
                 if (src < 0) {
                     bool success;
                     if (!client_remove_equip(client, true, -src, &success, &drop.equip))
-                        return (struct OnPacketResult) { .status = -1 };
+                        session_kick(session);
 
                     if (!success)
-                        return (struct OnPacketResult) { .status = 0, .room = -1 };
+                        return;
                 } else {
                     bool success;
                     if (!client_remove_equip(client, false, src, &success, &drop.equip))
-                        return (struct OnPacketResult) { .status = -1 };
+                        session_kick(session);
 
                     if (!success)
-                        return (struct OnPacketResult) { .status = 0, .room = -1 };
+                        return;
                 }
             }
 
             map_add_player_drop(map, client_get_map(client)->player, &drop);
         } else {
             if (quantity != -1)
-                return (struct OnPacketResult) { .status = -1 };
+                session_kick(session);
 
             if (inventory != 1 || (src > 0 && dst > 0)) {
                 if (!client_move_item(client, inventory, src, dst))
-                    return (struct OnPacketResult) { .status = -1 };
+                    session_kick(session);
             } else {
                 if (dst < 0) {
                     if (!client_equip(client, src, -dst))
-                        return (struct OnPacketResult) { .status = -1 };
+                        session_kick(session);
                 } else {
                     if (!client_unequip(client, -src, dst))
-                        return (struct OnPacketResult) { .status = -1 };
+                        session_kick(session);
                 }
             }
         }
@@ -907,7 +891,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         READER_END();
 
         if (!client_use_item(client, slot, item_id))
-            return (struct OnPacketResult) { .status = -1 };
+            session_kick(session);
     }
     break;
 
@@ -932,11 +916,10 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             client_adjust_luk(client, 1);
         break;
         default:
-            return (struct OnPacketResult) { .status = -1 };
+            session_kick(session);
         }
 
         client_commit_stats(client);
-        return (struct OnPacketResult) { .status = 0, .room = -1 };
     }
     break;
 
@@ -965,7 +948,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         READER_END();
 
         if (!client_assign_sp(client, id))
-            return (struct OnPacketResult) { .status = -1 };
+            session_kick(session);
     }
     break;
 
@@ -977,10 +960,10 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         READER_END();
 
         if (amount < 10 || amount > 50000)
-            return (struct OnPacketResult) { .status = -1 };
+            session_kick(session);
 
         if (chr->mesos < amount)
-            return (struct OnPacketResult) { .status = 0, .room = -1 };
+            return;
 
         client_gain_meso(client, -amount, false, false);
         client_commit_stats(client);
@@ -1007,18 +990,17 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         str[len] = '\0';
         const struct PortalInfo *info = wz_get_portal_info_by_name(chr->map, str);
         if (info == NULL) {
-            // The client can spam enter portal
-            return (struct OnPacketResult) { .status = 0, .room = -1 };
+            // The client can spam enter portal which will cause a search for the portal in the destination map
+            return;
         }
         struct ClientResult res = client_launch_portal_script(client, info->script);
         switch (res.type) {
         case CLIENT_RESULT_TYPE_BAN:
         case CLIENT_RESULT_TYPE_ERROR:
-            return (struct OnPacketResult) { .status = -1 };
+            session_kick(session);
         case CLIENT_RESULT_TYPE_SUCCESS:
-            return (struct OnPacketResult) { .status = 0, .room = -1 };
         case CLIENT_RESULT_TYPE_WARP:
-            return (struct OnPacketResult) { .status = 0, .room = res.map };
+            return;
         break;
         }
     }
@@ -1041,12 +1023,10 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             switch (res.type) {
             case CLIENT_RESULT_TYPE_BAN:
             case CLIENT_RESULT_TYPE_ERROR:
-                return (struct OnPacketResult) { .status = -1 };
+                session_kick(session);
             case CLIENT_RESULT_TYPE_SUCCESS:
-                return (struct OnPacketResult) { .status = 0, .room = -1 };
             case CLIENT_RESULT_TYPE_WARP:
-                return (struct OnPacketResult) { .status = 0, .room = res.map };
-            break;
+                return;
             }
         }
         break;
@@ -1061,11 +1041,10 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             switch (res.type) {
             case CLIENT_RESULT_TYPE_BAN:
             case CLIENT_RESULT_TYPE_ERROR:
-                return (struct OnPacketResult) { .status = -1 };
+                session_kick(session);
             case CLIENT_RESULT_TYPE_SUCCESS:
-                return (struct OnPacketResult) { .status = 0, .room = -1 };
             case CLIENT_RESULT_TYPE_WARP:
-                return (struct OnPacketResult) { .status = 0, .room = res.map };
+                return;
             }
         }
         break;
@@ -1081,18 +1060,17 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             switch (res.type) {
             case CLIENT_RESULT_TYPE_BAN:
             case CLIENT_RESULT_TYPE_ERROR:
-                return (struct OnPacketResult) { .status = -1 };
+                session_kick(session);
             case CLIENT_RESULT_TYPE_SUCCESS:
-                return (struct OnPacketResult) { .status = 0, .room = -1 };
             case CLIENT_RESULT_TYPE_WARP:
-                return (struct OnPacketResult) { .status = 0, .room = res.map };
+                return;
             }
         }
         break;
 
         case 3: {
             if (!client_forfeit_quest(client, qid))
-                return (struct OnPacketResult) { .status = -1 };
+                session_kick(session);
         }
         break;
 
@@ -1106,11 +1084,10 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             switch (res.type) {
             case CLIENT_RESULT_TYPE_BAN:
             case CLIENT_RESULT_TYPE_ERROR:
-                return (struct OnPacketResult) { .status = -1 };
+                session_kick(session);
             case CLIENT_RESULT_TYPE_SUCCESS:
-                return (struct OnPacketResult) { .status = 0, .room = -1 };
             case CLIENT_RESULT_TYPE_WARP:
-                return (struct OnPacketResult) { .status = 0, .room = res.map };
+                return;
             }
         }
         break;
@@ -1125,17 +1102,16 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             switch (res.type) {
             case CLIENT_RESULT_TYPE_BAN:
             case CLIENT_RESULT_TYPE_ERROR:
-                return (struct OnPacketResult) { .status = -1 };
+                session_kick(session);
             case CLIENT_RESULT_TYPE_SUCCESS:
-                return (struct OnPacketResult) { .status = 0, .room = -1 };
             case CLIENT_RESULT_TYPE_WARP:
-                return (struct OnPacketResult) { .status = 0, .room = res.map };
+                return;
             }
         }
         break;
 
         default:
-            return (struct OnPacketResult) { .status = -1 };
+            session_kick(session);
         }
         READER_END();
     }
@@ -1143,7 +1119,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
 
     case 0x0087: {
         if (client_get_map(client)->player == NULL)
-            return (struct OnPacketResult) { .status = 0, .room = -1 };
+            return;
 
         uint32_t mode;
         READER_BEGIN(size, packet);
@@ -1161,21 +1137,21 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
                 if (type > 0) {
                     if (type == 1) {
                         if (!client_add_skill_key(client, key, action))
-                            return (struct OnPacketResult) { .status = 0, .room = -1 };
+                            return;
                     } else {
                         if (!client_add_key(client, key, type, action))
-                            return (struct OnPacketResult) { .status = 0, .room = -1 };
+                            return;
                     }
                 } else {
                     if (!client_remove_key(client, key, action))
-                        return (struct OnPacketResult) { .status = 0, .room = -1 };
+                        return;
                 }
             }
         } else if (mode == 1) { // Auto-HP
         } else if (mode == 2) { // Auto-MP
         } else {
             // Illegal mode
-            return (struct OnPacketResult) { .status = 0, .room = -1 };
+            return;
         }
         READER_END();
     }
@@ -1187,7 +1163,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
 
     case 0x00BC: {
         if (client_get_map(client)->player == NULL)
-            return (struct OnPacketResult) { .status = 0, .room = -1 };
+            return;
 
         struct Map *map = room_get_context(session_get_room(session));
         uint32_t oid;
@@ -1285,7 +1261,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
 
     case 0x00C5: {
         if (client_get_map(client)->player == NULL)
-            return (struct OnPacketResult) { .status = 0, .room = -1 };
+            return;
 
         READER_BEGIN(size, packet);
         if (size == 6) {
@@ -1301,7 +1277,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             npc_action_packet(size - 9, data, out);
             session_write(session, size - 7, out);
         } else {
-            return (struct OnPacketResult) { .status = -1 };
+            session_kick(session);
         }
 
         READER_END();
@@ -1331,7 +1307,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
                 uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
                 size_t len = stat_change_packet(true, 0, NULL, packet);
                 session_write(session, len, packet);
-                return (struct OnPacketResult) { .status = 0, .room = -1 };
+                return;
             }
 
             enum InventoryGainResult result = false;
@@ -1341,16 +1317,16 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
                 client_gain_meso(client, drop->meso, true, false);
                 client_commit_stats(client);
                 map_remove_drop(room_get_context(session_get_room(session)), chr->id, oid);
-                return (struct OnPacketResult) { .status = 0, .room = -1 };
+                return;
             break;
 
             case DROP_TYPE_ITEM:
                 if (drop->item.item.itemId / 1000000 == 2 && wz_get_consumable_info(drop->item.item.itemId)->consumeOnPickup) {
                     client_use_item_immediate(client, drop->item.item.itemId);
                     map_remove_drop(room_get_context(session_get_room(session)), chr->id, oid);
-                    return (struct OnPacketResult) { .status = 0, .room = -1 };
+                    return;
                 } else if (!client_gain_inventory_item(client, &drop->item, &result)) {
-                    return (struct OnPacketResult) { .status = -1 };
+                    session_kick(session);
                 }
 
                 id = drop->item.item.itemId;
@@ -1358,7 +1334,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
 
             case DROP_TYPE_EQUIP:
                 if (!client_gain_equipment(client, &drop->equip, false, &result))
-                    return (struct OnPacketResult) { .status = -1 };
+                    session_kick(session);
 
                 id = drop->equip.item.itemId;
             break;
@@ -1422,14 +1398,11 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         switch (res.type) {
         case CLIENT_RESULT_TYPE_BAN:
         case CLIENT_RESULT_TYPE_ERROR:
-            return (struct OnPacketResult) { .status = -1 };
+            session_kick(session);
         case CLIENT_RESULT_TYPE_SUCCESS:
-            return (struct OnPacketResult) { .status = 0, .room = -1 };
         case CLIENT_RESULT_TYPE_WARP:
-            return (struct OnPacketResult) { .status = 0, .room = res.map };
-        break;
+            return;
         }
-        return (struct OnPacketResult) { .status = 0, .room = -1 };
     }
     break;
 
@@ -1440,7 +1413,7 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         session_enable_write(session);
 
         if (map_join(map, client, client_get_map(client)) == -2) {
-            return (struct OnPacketResult) { .status = 0, .room = chr->map };
+            return;
         }
 
         // Forced stat reset
@@ -1450,12 +1423,10 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
         switch (res.type) {
         case CLIENT_RESULT_TYPE_BAN:
         case CLIENT_RESULT_TYPE_ERROR:
-            return (struct OnPacketResult) { .status = -1 };
+            session_kick(session);
         case CLIENT_RESULT_TYPE_SUCCESS:
-            break;
         case CLIENT_RESULT_TYPE_WARP:
-            return (struct OnPacketResult) { .status = 0, .room = res.map };
-        break;
+            return;
         }
 
         if (wz_get_map_enter_script(chr->map) != NULL) {
@@ -1463,63 +1434,59 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             switch (res.type) {
             case CLIENT_RESULT_TYPE_BAN:
             case CLIENT_RESULT_TYPE_ERROR:
-                return (struct OnPacketResult) { .status = -1 };
+                session_kick(session);
+            case CLIENT_RESULT_TYPE_SUCCESS:
             case CLIENT_RESULT_TYPE_WARP:
-                return (struct OnPacketResult) { .status = 0, .room = res.map };
-            default:
-            break;
+                return;
             }
         }
     }
     break;
 
-    default: {
-        return (struct OnPacketResult) { .status = 0, .room = -1 };
-    }
+    default:
     break;
     }
-
-    return (struct OnPacketResult) { .status = 0, .room = -1 };
 }
 
-static struct OnPacketResult on_unassigned_client_packet(struct Session *session, size_t size, uint8_t *packet)
+static void on_unassigned_client_packet(struct Session *session, size_t size, uint8_t *packet)
 {
     if (size < 2)
-        return (struct OnPacketResult) { .status = -1 };
+        session_kick(session);
 
     struct Client *client = session_get_context(session);
     const struct Character *chr = client_get_character(client);
     uint16_t opcode;
     memcpy(&opcode, packet, sizeof(uint16_t));
 
-    if (opcode != 0x0014)
-        return (struct OnPacketResult) { .status = -1 };
+    if (opcode != 0x0014 && opcode != 223)
+        session_kick(session);
 
-    uint32_t token;
-    READER_BEGIN(size - 2, packet + 2);
-    READ_OR_ERROR(reader_u32, &token);
-    SKIP(2);
-    READER_END();
-    uint32_t id;
-    if (!session_assign_token(session, token, &id))
-        return (struct OnPacketResult) { .status = -1 };
+    if (opcode == 0x0014) {
+        uint32_t token;
+        READER_BEGIN(size - 2, packet + 2);
+        READ_OR_ERROR(reader_u32, &token);
+        SKIP(2);
+        READER_END();
+        uint32_t id;
+        if (!session_assign_token(session, token, &id))
+            session_kick(session);
 
-    client_login_start(client, id);
-    struct ClientContResult res = client_cont(client, 0);
+        client_login_start(client, id);
+        struct ClientContResult res = client_cont(client, 0);
 
-    if (res.status > 0) {
-        session_set_event(session, res.status, res.fd, on_client_resume);
-    } else if (res.status == 0) {
-        uint8_t packet[KEYMAP_PACKET_LENGTH];
-        keymap_packet(chr->keyMap, packet);
-        session_write(session, KEYMAP_PACKET_LENGTH, packet);
+        if (res.status > 0) {
+            session_set_event(session, res.status, res.fd, on_client_resume);
+            return;
+        } else if (res.status == 0) {
+            uint8_t packet[KEYMAP_PACKET_LENGTH];
+            keymap_packet(chr->keyMap, packet);
+            session_write(session, KEYMAP_PACKET_LENGTH, packet);
+            session_change_room(session, chr->map);
+        }
     }
-
-
-    return (struct OnPacketResult) { .status = res.status, .room = chr->map };
 }
 
-static struct OnResumeResult on_client_resume(struct Session *session, int fd, int status)
+static void on_client_resume(struct Session *session, int fd, int status)
 {
     struct Client *client = session_get_context(session);
     const struct Character *chr = client_get_character(client);
@@ -1527,25 +1494,26 @@ static struct OnResumeResult on_client_resume(struct Session *session, int fd, i
     struct ClientContResult res = client_cont(client, status);
     if (res.status > 0 && (res.fd != session_get_event_fd(session) || res.status != session_get_event_disposition(session))) {
         session_set_event(session, res.status, res.fd, on_client_resume);
+        return;
     } else if (res.status == 0) {
+        session_close_event(session);
         uint8_t packet[KEYMAP_PACKET_LENGTH];
         keymap_packet(chr->keyMap, packet);
         session_write(session, KEYMAP_PACKET_LENGTH, packet);
+        session_change_room(session, chr->map);
     }
-
-    return (struct OnResumeResult) { .status = res.status, .room = res.map };
 }
 
-static struct OnResumeResult on_client_resume_disconnect(struct Session *session, int fd, int status)
+static void on_client_resume_disconnect(struct Session *session, int fd, int status)
 {
     struct Client *client = session_get_context(session);
 
     struct ClientContResult res = client_cont(client, status);
     if (res.status > 0 && (res.fd != session_get_event_fd(session) || res.status != session_get_event_disposition(session))) {
         session_set_event(session, res.status, res.fd, on_client_resume_disconnect);
+    } else if (res.status <= 0) {
+        session_close_event(session);
     }
-
-    return (struct OnResumeResult) { .status = res.status, .room = res.map };
 }
 
 static void on_client_disconnect(struct Session *session)
@@ -1562,11 +1530,10 @@ static void on_client_disconnect(struct Session *session)
     struct ClientContResult res = client_cont(client, 0);
     if (res.status > 0) {
         session_set_event(session, res.status, res.fd, on_client_resume_disconnect);
-        return;
     }
 }
 
-static bool on_client_join(struct Session *session, void *thread_ctx)
+static void on_client_join(struct Session *session, void *thread_ctx)
 {
     struct Client *client = session_get_context(session);
     const struct Character *chr = client_get_character(client);
@@ -1577,8 +1544,6 @@ static bool on_client_join(struct Session *session, void *thread_ctx)
     //session_write(session, 2, (uint8_t[]) { 0x23, 0x00 }); // Force stat reset
     const struct PortalInfo *info = wz_get_portal_info(chr->map, chr->spawnPoint);
     client_update_player_pos(client, info->x, info->y, 0, 6);
-
-    return true;
 }
 
 static int on_room_create(struct Room *room, void *thread_ctx)
