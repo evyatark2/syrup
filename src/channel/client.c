@@ -3211,6 +3211,16 @@ struct ClientResult client_regain_quest_item(struct Client *client, uint16_t qid
     return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
 }
 
+const char *client_get_quest_info(struct Client *client, uint16_t info)
+{
+    struct Character *chr = &client->character;
+    struct QuestInfoProgress *qi = hash_set_u16_get(chr->questInfos, info);
+    if (qi == NULL)
+        return NULL;
+
+    return qi->value;
+}
+
 int client_set_quest_info(struct Client *client, uint16_t info, const char *value)
 {
     struct Character *chr = &client->character;

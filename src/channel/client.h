@@ -113,6 +113,7 @@ struct ClientResult client_npc_talk(struct Client *client, uint32_t npc);
 struct ClientResult client_launch_map_script(struct Client *client, const char *script_name);
 struct ClientResult client_start_quest(struct Client *client, uint16_t qid, uint32_t npc, bool scripted);
 struct ClientResult client_regain_quest_item(struct Client *client, uint16_t qid, uint32_t id);
+const char *client_get_quest_info(struct Client *client, uint16_t info);
 int client_set_quest_info(struct Client *client, uint16_t info, const char *value);
 bool client_start_quest_now(struct Client *client, bool *success);
 struct ClientResult client_end_quest(struct Client *client, uint16_t qid, uint32_t npc, bool scripted);

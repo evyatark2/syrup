@@ -2222,6 +2222,8 @@ static void on_quest_check_start(void *user_data, const XML_Char *name, const XM
                         quest->endRequirementCount++;
                     }
 
+                    // It seems that if infoNumber isn't present then it refers to the ID of the current quest
+                    req->info.number = quest->id;
                     req->info.infos = malloc(sizeof(char *));
                     req->info.infoCount = 0;
 

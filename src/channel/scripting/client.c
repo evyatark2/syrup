@@ -37,6 +37,7 @@ static int l_client_send_yes_no(lua_State *L);
 static int l_client_message(lua_State *L);
 static int l_client_set_hp(lua_State *L);
 static int l_client_set_mp(lua_State *L);
+static int l_client_get_quest_info(lua_State *L);
 static int l_client_set_quest_info(lua_State *L);
 static int l_client_start_quest_now(lua_State *L);
 static int l_client_to_string(lua_State *L);
@@ -80,6 +81,7 @@ static const struct luaL_Reg clientlib[] = {
     { "message", l_client_message },
     { "setHp", l_client_set_hp },
     { "setMp", l_client_set_mp },
+    { "getQuestInfo", l_client_get_quest_info },
     { "setQuestInfo", l_client_set_quest_info },
     { "startQuestNow", l_client_start_quest_now },
     { "warp", l_client_warp },
@@ -314,6 +316,14 @@ static int l_client_meso(lua_State *L)
     return 1;
 }
 
+static int l_client_get_quest_info(lua_State *L)
+{
+    struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
+    uint16_t info = luaL_checkinteger(L, 2);
+    lua_pushstring(L, client_get_quest_info(client, info));
+    return 1;
+}
+
 static int l_client_set_quest_info(lua_State *L)
 {
     struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
@@ -338,9 +348,9 @@ static int l_client_start_quest_now(lua_State *L)
 static int l_client_send_ok(lua_State *L)
 {
     struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
-    uint8_t speaker = lua_isinteger(L, 2) ? lua_tointeger(L, 2) : 0;
     size_t len;
     const char *str = luaL_checklstring(L, 2, &len);
+    uint8_t speaker = lua_isinteger(L, 3) ? lua_tointeger(L, 3) : 0;
     client_send_ok(client, len, str, speaker);
     return lua_yield(L, 0);
 }
@@ -348,9 +358,9 @@ static int l_client_send_ok(lua_State *L)
 static int l_client_send_next(lua_State *L)
 {
     struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
-    uint8_t speaker = lua_isinteger(L, 2) ? lua_tointeger(L, 2) : 0;
     size_t len;
     const char *str = luaL_checklstring(L, 2, &len);
+    uint8_t speaker = lua_isinteger(L, 3) ? lua_tointeger(L, 3) : 0;
     client_send_next(client, len, str, speaker);
     return lua_yield(L, 0);
 }
@@ -358,9 +368,9 @@ static int l_client_send_next(lua_State *L)
 static int l_client_send_prev_next(lua_State *L)
 {
     struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
-    uint8_t speaker = lua_isinteger(L, 2) ? lua_tointeger(L, 2) : 0;
     size_t len;
     const char *str = luaL_checklstring(L, 2, &len);
+    uint8_t speaker = lua_isinteger(L, 3) ? lua_tointeger(L, 3) : 0;
     client_send_prev_next(client, len, str, speaker);
     return lua_yield(L, 0);
 }
@@ -368,9 +378,9 @@ static int l_client_send_prev_next(lua_State *L)
 static int l_client_send_prev(lua_State *L)
 {
     struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
-    uint8_t speaker = lua_isinteger(L, 2) ? lua_tointeger(L, 2) : 0;
     size_t len;
     const char *str = luaL_checklstring(L, 2, &len);
+    uint8_t speaker = lua_isinteger(L, 3) ? lua_tointeger(L, 3) : 0;
     client_send_prev(client, len, str, speaker);
     return lua_yield(L, 0);
 }
@@ -378,9 +388,9 @@ static int l_client_send_prev(lua_State *L)
 static int l_client_send_yes_no(lua_State *L)
 {
     struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
-    uint8_t speaker = lua_isinteger(L, 2) ? lua_tointeger(L, 2) : 0;
     size_t len;
     const char *str = luaL_checklstring(L, 2, &len);
+    uint8_t speaker = lua_isinteger(L, 3) ? lua_tointeger(L, 3) : 0;
     client_send_yes_no(client, len, str, speaker);
     return lua_yield(L, 0);
 }
@@ -397,9 +407,9 @@ static int l_client_message(lua_State *L)
 static int l_client_send_accept_decline(lua_State *L)
 {
     struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
-    uint8_t speaker = lua_isinteger(L, 2) ? lua_tointeger(L, 2) : 0;
     size_t len;
     const char *str = luaL_checklstring(L, 2, &len);
+    uint8_t speaker = lua_isinteger(L, 3) ? lua_tointeger(L, 3) : 0;
     client_send_accept_decline(client, len, str, speaker);
     return lua_yield(L, 0);
 }
@@ -407,9 +417,9 @@ static int l_client_send_accept_decline(lua_State *L)
 static int l_client_send_simple(lua_State *L)
 {
     struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
-    uint8_t speaker = lua_isinteger(L, 2) ? lua_tointeger(L, 2) : 0;
     size_t len;
     const char *str = luaL_checklstring(L, 2, &len);
+    uint8_t speaker = lua_isinteger(L, 3) ? lua_tointeger(L, 3) : 0;
     client_send_simple(client, len, str, speaker);
     return lua_yield(L, 0);
 }
