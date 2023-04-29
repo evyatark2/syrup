@@ -692,12 +692,9 @@ size_t move_monster_packet(uint32_t oid, uint8_t activity, size_t len, uint8_t *
 
     writer_u16(&writer, 0x00EF);
     writer_u32(&writer, oid);
-    writer_u8(&writer, 0);
-    writer_u8(&writer, 0);
-    writer_u8(&writer, activity);
-    writer_u8(&writer, 0);
-    writer_u8(&writer, 0);
     writer_u16(&writer, 0);
+    writer_u8(&writer, activity);
+    writer_u32(&writer, 0);
     writer_array(&writer, len, data);
 
     return writer.pos;
@@ -994,7 +991,7 @@ void show_foreign_effect_packet(uint32_t id, uint8_t effect, uint8_t *packet)
     writer_u8(&writer, effect);
 }
 
-void drop_item_from_object_packet(uint32_t oid, uint32_t item_id, uint32_t owner_id, int16_t from_x, int16_t from_y, int16_t to_x, int16_t to_y, uint32_t dropper_oid, bool player_drop, uint8_t *packet)
+void drop_item_from_object_packet(uint32_t oid, uint32_t item_id, uint32_t owner_id, uint8_t type, int16_t from_x, int16_t from_y, int16_t to_x, int16_t to_y, uint32_t dropper_oid, bool player_drop, uint8_t *packet)
 {
     struct Writer writer;
     writer_init(&writer, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet);
@@ -1005,7 +1002,7 @@ void drop_item_from_object_packet(uint32_t oid, uint32_t item_id, uint32_t owner
     writer_bool(&writer, false);
     writer_u32(&writer, item_id);
     writer_u32(&writer, owner_id);
-    writer_u8(&writer, 2); // Free for all
+    writer_u8(&writer, type);
     writer_i16(&writer, to_x);
     writer_i16(&writer, to_y);
     writer_u32(&writer, dropper_oid);
@@ -1018,7 +1015,7 @@ void drop_item_from_object_packet(uint32_t oid, uint32_t item_id, uint32_t owner
     writer_bool(&writer, !player_drop);
 }
 
-void spawn_item_drop_packet(uint32_t oid, uint32_t item_id, uint32_t owner_id, int16_t to_x, int16_t to_y, uint32_t dropper_oid, bool player_drop, uint8_t *packet)
+void spawn_item_drop_packet(uint32_t oid, uint32_t item_id, uint32_t owner_id, uint8_t type, int16_t x, int16_t y, bool player_drop, uint8_t *packet)
 {
     struct Writer writer;
     writer_init(&writer, SPAWN_ITEM_DROP_PACKET_LENGTH, packet);
@@ -1029,10 +1026,10 @@ void spawn_item_drop_packet(uint32_t oid, uint32_t item_id, uint32_t owner_id, i
     writer_bool(&writer, false);
     writer_u32(&writer, item_id);
     writer_u32(&writer, owner_id);
-    writer_u8(&writer, 2); // Free for all
-    writer_i16(&writer, to_x);
-    writer_i16(&writer, to_y);
-    writer_u32(&writer, dropper_oid);
+    writer_u8(&writer, type);
+    writer_i16(&writer, x);
+    writer_i16(&writer, y);
+    writer_u32(&writer, 0); // Dropper OID, why is this needed?
 
     writer_u64(&writer, 150842304000000000L); // DEFAULT_TIME
 
@@ -1072,7 +1069,7 @@ void pet_pickup_drop_packet(uint32_t oid, bool is_exploding, uint32_t char_id, u
     writer_u8(&writer, pet);
 }
 
-void drop_meso_from_object_packet(uint32_t oid, int32_t meso, uint32_t owner_id, int16_t from_x, int16_t from_y, int16_t to_x, int16_t to_y, uint32_t dropper_oid, bool player_drop, uint8_t *packet)
+void drop_meso_from_object_packet(uint32_t oid, int32_t meso, uint32_t owner_id, uint8_t type, int16_t from_x, int16_t from_y, int16_t to_x, int16_t to_y, uint32_t dropper_oid, bool player_drop, uint8_t *packet)
 {
     struct Writer writer;
     writer_init(&writer, DROP_MESO_FROM_OBJECT_PACKET_LENGTH, packet);
@@ -1083,7 +1080,7 @@ void drop_meso_from_object_packet(uint32_t oid, int32_t meso, uint32_t owner_id,
     writer_bool(&writer, true);
     writer_i32(&writer, meso);
     writer_u32(&writer, owner_id);
-    writer_u8(&writer, 2); // Free for all
+    writer_u8(&writer, type);
     writer_i16(&writer, to_x);
     writer_i16(&writer, to_y);
     writer_u32(&writer, dropper_oid);
@@ -1093,7 +1090,7 @@ void drop_meso_from_object_packet(uint32_t oid, int32_t meso, uint32_t owner_id,
     writer_bool(&writer, !player_drop);
 }
 
-void spawn_meso_drop_packet(uint32_t oid, int32_t meso, uint32_t owner_id, int16_t x, int16_t y, uint32_t dropper_oid, bool player_drop, uint8_t *packet)
+void spawn_meso_drop_packet(uint32_t oid, int32_t meso, uint32_t owner_id, uint8_t type, int16_t x, int16_t y, bool player_drop, uint8_t *packet)
 {
     struct Writer writer;
     writer_init(&writer, SPAWN_MESO_DROP_PACKET_LENGTH, packet);
@@ -1104,10 +1101,10 @@ void spawn_meso_drop_packet(uint32_t oid, int32_t meso, uint32_t owner_id, int16
     writer_bool(&writer, true);
     writer_i32(&writer, meso);
     writer_u32(&writer, owner_id);
-    writer_u8(&writer, 2); // Free for all
+    writer_u8(&writer, type);
     writer_i16(&writer, x);
     writer_i16(&writer, y);
-    writer_u32(&writer, dropper_oid);
+    writer_u32(&writer, 0); // Dropper OID, Why is this needed?
     writer_bool(&writer, !player_drop);
 }
 

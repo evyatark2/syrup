@@ -1461,6 +1461,12 @@ static enum bufferevent_filter_result input_filter(struct evbuffer *src, struct 
 
     evbuffer_remove(src, data, packet_len);
     decryption_context_decrypt(session->recieveContext, packet_len, data);
+
+    printf("Received packet with opcode %04hx from %hu\n", ((uint16_t *)data)[0], ((struct sockaddr_in *)&session->addr)->sin_port);
+    for (uint16_t i = 0; i < packet_len; i++)
+        printf("%02X ", data[i]);
+    printf("\n\n");
+
     evbuffer_add(dst, &packet_len, sizeof(uint16_t));
     evbuffer_add(dst, data, packet_len);
     free(data);
@@ -1487,7 +1493,7 @@ static enum bufferevent_filter_result output_filter(struct evbuffer *src, struct
 
     evbuffer_remove(src, data, packet_len);
 
-    printf("Sending packet with opcode %hd\n", ((uint16_t *)data)[0]);
+    printf("Sending packet with opcode %04hx to %hu\n", ((uint16_t *)data)[0], ((struct sockaddr_in *)&session->addr)->sin_port);
     for (uint16_t i = 0; i < packet_len; i++)
         printf("%02X ", data[i]);
     printf("\n\n");
@@ -1683,10 +1689,12 @@ static void on_session_event(struct bufferevent *event, short what, void *ctx)
 {
     struct Session *session = ctx;
 
-    if (what & BEV_EVENT_READING && (what & BEV_EVENT_EOF || what & BEV_EVENT_ERROR))
+    if (what & BEV_EVENT_READING && (what & BEV_EVENT_EOF || what & BEV_EVENT_ERROR)) {
+        printf("Client %hu disconnected\n", ((struct sockaddr_in *)&session->addr)->sin_port);
         kick_session(session, false);
-    else if (what & BEV_EVENT_WRITING)
+    } else if (what & BEV_EVENT_WRITING) {
         shutdown(bufferevent_getfd(session->event), SHUT_RD);
+    }
 }
 
 static int start_worker(void *ctx_)
@@ -1780,6 +1788,7 @@ static struct Room *create_room(struct RoomManager *manager, uint32_t id)
     room->timerCapacity = 1;
     room->timerCount = 0;
     room->userEvent = NULL;
+    room->keepAlive = false;
 
     return room;
 }

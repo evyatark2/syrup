@@ -210,10 +210,10 @@ void show_effect_packet(uint8_t effect, uint8_t *packet);
 void show_foreign_effect_packet(uint32_t id, uint8_t effect, uint8_t *packet);
 
 #define DROP_ITEM_FROM_OBJECT_PACKET_LENGTH 40
-void drop_item_from_object_packet(uint32_t oid, uint32_t item_id, uint32_t owner_id, int16_t from_x, int16_t from_y, int16_t to_x, int16_t to_y, uint32_t dropper_oid, bool player_drop, uint8_t *packet);
+void drop_item_from_object_packet(uint32_t oid, uint32_t item_id, uint32_t owner_id, uint8_t type, int16_t from_x, int16_t from_y, int16_t to_x, int16_t to_y, uint32_t dropper_oid, bool player_drop, uint8_t *packet);
 
 #define SPAWN_ITEM_DROP_PACKET_LENGTH 34
-void spawn_item_drop_packet(uint32_t oid, uint32_t item_id, uint32_t owner_id, int16_t to_x, int16_t to_y, uint32_t dropper_oid, bool player_drop, uint8_t *packet);
+void spawn_item_drop_packet(uint32_t oid, uint32_t item_id, uint32_t owner_id, uint8_t type, int16_t x, int16_t y, bool player_drop, uint8_t *packet);
 
 #define REMOVE_DROP_PACKET_LENGTH 7
 void remove_drop_packet(uint32_t oid, uint8_t *packet);
@@ -225,10 +225,10 @@ void pickup_drop_packet(uint32_t oid, bool is_exploding, uint32_t char_id, uint8
 void pet_pickup_drop_packet(uint32_t oid, bool is_exploding, uint32_t char_id, uint8_t pet, uint8_t *packet);
 
 #define DROP_MESO_FROM_OBJECT_PACKET_LENGTH 32
-void drop_meso_from_object_packet(uint32_t oid, int32_t meso, uint32_t owner_id, int16_t from_x, int16_t from_y, int16_t to_x, int16_t to_y, uint32_t dropper_oid, bool player_drop, uint8_t *packet);
+void drop_meso_from_object_packet(uint32_t oid, int32_t meso, uint32_t owner_id, uint8_t type, int16_t from_x, int16_t from_y, int16_t to_x, int16_t to_y, uint32_t dropper_oid, bool player_drop, uint8_t *packet);
 
 #define SPAWN_MESO_DROP_PACKET_LENGTH 26
-void spawn_meso_drop_packet(uint32_t oid, int32_t meso, uint32_t owner_id, int16_t x, int16_t y, uint32_t dropper_oid, bool player_drop, uint8_t *packet);
+void spawn_meso_drop_packet(uint32_t oid, int32_t meso, uint32_t owner_id, uint8_t type, int16_t x, int16_t y, bool player_drop, uint8_t *packet);
 
 #define MESO_GAIN_PACKET_LENGTH 11
 void meso_gain_packet(int32_t amount, uint8_t *packet);

@@ -1053,16 +1053,19 @@ void client_announce_monster(struct Client *client, const struct Monster *monste
     session_write(client->session, SPAWN_MONSTER_PACKET_LENGTH, packet);
 }
 
-bool client_announce_drop(struct Client *client, uint32_t owner_id, uint32_t dropper_oid, bool player_drop, const struct Drop *drop)
+bool client_announce_drop(struct Client *client, uint32_t owner_id, uint32_t dropper_oid, uint8_t type, bool player_drop, const struct Drop *drop)
 {
     struct Character *chr = &client->character;
     if (hash_set_u32_insert(client->visibleMapObjects, &drop->oid) == -1)
         return false;
 
+    if (type < 3 && owner_id == chr->id)
+        type = 2;
+
     switch (drop->type) {
     case DROP_TYPE_MESO: {
         uint8_t packet[DROP_MESO_FROM_OBJECT_PACKET_LENGTH];
-        drop_meso_from_object_packet(drop->oid, drop->meso, owner_id,
+        drop_meso_from_object_packet(drop->oid, drop->meso, owner_id, type,
                 drop->x, drop->y, drop->x, drop->y, dropper_oid, player_drop, packet);
         session_write(client->session, DROP_MESO_FROM_OBJECT_PACKET_LENGTH, packet);
     }
@@ -1073,13 +1076,13 @@ bool client_announce_drop(struct Client *client, uint32_t owner_id, uint32_t dro
             struct Quest *quest = hash_set_u16_get(client->character.quests, drop->qid);
             if (quest != NULL && hash_set_u32_get(chr->itemQuests, drop->item.item.itemId) != NULL) {
                 uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
-                drop_item_from_object_packet(drop->oid, drop->item.item.itemId, owner_id,
+                drop_item_from_object_packet(drop->oid, drop->item.item.itemId, owner_id, type,
                     drop->x, drop->y, drop->x, drop->y, dropper_oid, player_drop, packet);
                 session_write(client->session, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet);
             }
         } else {
             uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
-            drop_item_from_object_packet(drop->oid, drop->item.item.itemId, owner_id,
+            drop_item_from_object_packet(drop->oid, drop->item.item.itemId, owner_id, type,
                     drop->x, drop->y, drop->x, drop->y, dropper_oid, player_drop, packet);
             session_write(client->session, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet);
         }
@@ -1088,7 +1091,7 @@ bool client_announce_drop(struct Client *client, uint32_t owner_id, uint32_t dro
 
     case DROP_TYPE_EQUIP: {
             uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
-            drop_item_from_object_packet(drop->oid, drop->equip.item.itemId, owner_id,
+            drop_item_from_object_packet(drop->oid, drop->equip.item.itemId, owner_id, type,
                     drop->x, drop->y, drop->x, drop->y, dropper_oid, player_drop, packet);
             session_write(client->session, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet);
     }
@@ -1098,16 +1101,19 @@ bool client_announce_drop(struct Client *client, uint32_t owner_id, uint32_t dro
     return true;
 }
 
-bool client_announce_spawn_drop(struct Client *client, uint32_t owner_id, uint32_t dropper_oid, bool player_drop, const struct Drop *drop)
+bool client_announce_spawn_drop(struct Client *client, uint32_t owner_id, uint32_t dropper_oid, uint8_t type, bool player_drop, const struct Drop *drop)
 {
     struct Character *chr = &client->character;
     if (hash_set_u32_insert(client->visibleMapObjects, &drop->oid) == -1)
         return false;
 
+    if (type < 3 && owner_id == chr->id)
+        type = 2;
+
     switch (drop->type) {
     case DROP_TYPE_MESO: {
         uint8_t packet[SPAWN_MESO_DROP_PACKET_LENGTH];
-        spawn_meso_drop_packet(drop->oid, drop->meso, owner_id, drop->x, drop->y, dropper_oid, player_drop, packet);
+        spawn_meso_drop_packet(drop->oid, drop->meso, owner_id, type, drop->x, drop->y, player_drop, packet);
         session_write(client->session, SPAWN_MESO_DROP_PACKET_LENGTH, packet);
     }
     break;
@@ -1117,12 +1123,12 @@ bool client_announce_spawn_drop(struct Client *client, uint32_t owner_id, uint32
             struct Quest *quest = hash_set_u16_get(client->character.quests, drop->qid);
             if (quest != NULL && hash_set_u32_get(chr->itemQuests, drop->item.item.itemId) != NULL) {
                 uint8_t packet[SPAWN_ITEM_DROP_PACKET_LENGTH];
-                spawn_item_drop_packet(drop->oid, drop->item.item.itemId, owner_id, drop->x, drop->y, dropper_oid, player_drop, packet);
+                spawn_item_drop_packet(drop->oid, drop->item.item.itemId, owner_id, type, drop->x, drop->y, player_drop, packet);
                 session_write(client->session, SPAWN_ITEM_DROP_PACKET_LENGTH, packet);
             }
         } else {
             uint8_t packet[SPAWN_ITEM_DROP_PACKET_LENGTH];
-            spawn_item_drop_packet(drop->oid, drop->item.item.itemId, owner_id, drop->x, drop->y, dropper_oid, player_drop, packet);
+            spawn_item_drop_packet(drop->oid, drop->item.item.itemId, owner_id, type, drop->x, drop->y, player_drop, packet);
             session_write(client->session, SPAWN_ITEM_DROP_PACKET_LENGTH, packet);
         }
     }
@@ -1130,7 +1136,7 @@ bool client_announce_spawn_drop(struct Client *client, uint32_t owner_id, uint32
 
     case DROP_TYPE_EQUIP: {
             uint8_t packet[SPAWN_ITEM_DROP_PACKET_LENGTH];
-            spawn_item_drop_packet(drop->oid, drop->equip.item.itemId, owner_id, drop->x, drop->y, dropper_oid, player_drop, packet);
+            spawn_item_drop_packet(drop->oid, drop->equip.item.itemId, owner_id, type, drop->x, drop->y, player_drop, packet);
             session_write(client->session, SPAWN_ITEM_DROP_PACKET_LENGTH, packet);
     }
     break;

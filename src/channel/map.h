@@ -162,6 +162,8 @@ void map_add_player_drop(struct Map *map, struct MapPlayer *player, struct Drop 
  */
 const struct Drop *map_get_drop(struct Map *map, uint32_t oid);
 
+bool map_player_can_pick_up_drop(struct Map *map, struct MapPlayer *player, uint32_t oid);
+
 /**
  * Remove a drop from a map.
  * The drop must exist. Use \p map_get_drop to check if the drop exists before removing it

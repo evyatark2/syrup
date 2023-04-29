@@ -244,12 +244,6 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
     uint16_t opcode;
     memcpy(&opcode, packet, sizeof(uint16_t));
 
-    printf("Got packet with opcode %hu\n", opcode);
-    for (size_t i = 0; i < size; i++) {
-        printf("%02X ", packet[i]);
-    }
-    printf("\n\n");
-
     packet += 2;
     size -= 2;
     switch (opcode) {
@@ -1269,23 +1263,21 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
             }
         }
         SKIP(9);
+        READER_END();
 
         if (map_move_monster(map, client_get_map(client)->player, activity, oid, x, y, fh, stance, len, packet + 25)) {
             {
-                uint8_t packet[MOVE_MONSTER_PACKET_MAX_LENGTH];
-                size_t packet_len = move_monster_packet(oid, activity, len, packet + 25, packet);
-                session_broadcast_to_room(session, packet_len, packet);
+                uint8_t send[MOVE_MONSTER_PACKET_MAX_LENGTH];
+                size_t packet_len = move_monster_packet(oid, -1, len, packet + 25, send);
+                session_broadcast_to_room(session, packet_len, send);
             }
 
             {
-                uint8_t send[MOVE_MONSTER_RESPONSE_PACKET_LENGTH];
-                move_monster_response_packet(oid, moveid, send);
-                session_write(session, MOVE_MONSTER_RESPONSE_PACKET_LENGTH, send);
+                uint8_t packet[MOVE_MONSTER_RESPONSE_PACKET_LENGTH];
+                move_monster_response_packet(oid, moveid, packet);
+                session_write(session, MOVE_MONSTER_RESPONSE_PACKET_LENGTH, packet);
             }
         }
-
-        READER_END();
-
     }
     break;
 
@@ -1333,7 +1325,13 @@ static struct OnPacketResult on_client_packet(struct Session *session, size_t si
                 session_write(session, len, packet);
             }
         } else {
-            // TODO: Check if this client is allowed to pick up the drop
+            if (!map_player_can_pick_up_drop(room_get_context(session_get_room(session)), client_get_map(client)->player, oid)) {
+                uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
+                size_t len = stat_change_packet(true, 0, NULL, packet);
+                session_write(session, len, packet);
+                return (struct OnPacketResult) { .status = 0, .room = -1 };
+            }
+
             enum InventoryGainResult result = false;
             uint32_t id;
             switch (drop->type) {
