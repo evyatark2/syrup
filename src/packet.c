@@ -1612,7 +1612,18 @@ size_t show_intro_packet(uint16_t len, const char *path, uint8_t *packet)
     writer_sized_string(&writer, len, path);
 
     return writer.pos;
+}
 
+size_t play_sound_packet(uint16_t len, const char *path, uint8_t *packet)
+{
+    struct Writer writer;
+    writer_init(&writer, PLAY_SOUND_PACKET_MAX_LENGTH, packet);
+
+    writer_u16(&writer, 0x008A);
+    writer_u8(&writer, 4);
+    writer_sized_string(&writer, len, path);
+
+    return writer.pos;
 }
 
 static void exp_gain_packet_internal(struct Writer *writer, int32_t exp, int32_t equip_bonus, int32_t party_bonus, bool white, bool in_chat)

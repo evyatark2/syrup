@@ -8,7 +8,6 @@ function talk(c)
         return;
     end
 
-
     if i == 1 then
         if (e:getProperty(0) == 0) then
             c:warp(200000112, 0)

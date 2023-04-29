@@ -179,6 +179,14 @@ static int dock_undock_train(struct Room *room, int fd, int status);
 static int start_train(struct Room *room, int fd, int status);
 static int end_train(struct Room *room, int fd, int status);
 
+static int dock_undock_genie(struct Room *room, int fd, int status);
+static int start_genie(struct Room *room, int fd, int status);
+static int end_genie(struct Room *room, int fd, int status);
+
+static int dock_undock_subway(struct Room *room, int fd, int status);
+static int start_subway(struct Room *room, int fd, int status);
+static int end_subway(struct Room *room, int fd, int status);
+
 static int respawn_boss(struct Room *room, int fd, int status);
 
 static void map_kill_monster(struct Map *map, uint32_t oid);
@@ -426,6 +434,30 @@ struct Map *map_create(struct ChannelServer *server, struct Room *room, struct S
         map->fd = eventfd(0, 0);
         room_set_event(room, map->fd, POLLIN, end_train);
         map->listener = event_add_listener(channel_server_get_event(server, EVENT_TRAIN), EVENT_TRAIN_PROPERTY_SAILING, on_boat_state_changed, map);
+    } else if (id == 200000151 || id == 260000100) {
+        map->fd = eventfd(0, 0);
+        room_set_event(room, map->fd, POLLIN, dock_undock_genie);
+        map->listener = event_add_listener(channel_server_get_event(server, EVENT_GENIE), EVENT_GENIE_PROPERTY_SAILING, on_boat_state_changed, map);
+    } else if (id == 200000152 || id == 260000110) {
+        map->fd = eventfd(0, 0);
+        room_set_event(room, map->fd, POLLIN, start_genie);
+        map->listener = event_add_listener(channel_server_get_event(server, EVENT_GENIE), EVENT_GENIE_PROPERTY_SAILING, on_boat_state_changed, map);
+    } else if (id == 200090400 || id == 200090410) {
+        map->fd = eventfd(0, 0);
+        room_set_event(room, map->fd, POLLIN, end_genie);
+        map->listener = event_add_listener(channel_server_get_event(server, EVENT_GENIE), EVENT_GENIE_PROPERTY_SAILING, on_boat_state_changed, map);
+    } else if (id == 103000100 || id == 600010001) {
+        map->fd = eventfd(0, 0);
+        room_set_event(room, map->fd, POLLIN, dock_undock_subway);
+        map->listener = event_add_listener(channel_server_get_event(server, EVENT_SUBWAY), EVENT_SUBWAY_PROPERTY_SAILING, on_boat_state_changed, map);
+    } else if (id == 600010004 || id == 600010002) {
+        map->fd = eventfd(0, 0);
+        room_set_event(room, map->fd, POLLIN, start_subway);
+        map->listener = event_add_listener(channel_server_get_event(server, EVENT_SUBWAY), EVENT_SUBWAY_PROPERTY_SAILING, on_boat_state_changed, map);
+    } else if (id == 600010005 || id == 600010003) {
+        map->fd = eventfd(0, 0);
+        room_set_event(room, map->fd, POLLIN, end_subway);
+        map->listener = event_add_listener(channel_server_get_event(server, EVENT_SUBWAY), EVENT_SUBWAY_PROPERTY_SAILING, on_boat_state_changed, map);
     } else if (id == 100040105 || id == 100040106 || id == 101030404 || id == 104000400 || id == 105090310 ||
             id == 107000300 || id == 110040000 || id == 200010300 || id == 220050000 || id == 220050100 ||
             id == 220050200 || id == 221040301 || id == 222010310 || id == 230020100 || id == 240040401 ||
@@ -610,6 +642,21 @@ void map_destroy(struct Map *map)
         close(map->fd);
     } else if (id == 200000121 || id == 220000110 || id == 200000122 || id == 220000111 || id == 200090100 || id == 200090110) {
         event_remove_listener(channel_server_get_event(map->server, EVENT_TRAIN), EVENT_TRAIN_PROPERTY_SAILING, map->listener);
+        room_close_event(map->room);
+        close(map->fd);
+    } else if (id == 200000151 || id == 260000100 || id == 200000152 || id == 260000110 || id == 200090400 || id == 200090410) {
+        event_remove_listener(channel_server_get_event(map->server, EVENT_GENIE), EVENT_GENIE_PROPERTY_SAILING, map->listener);
+        room_close_event(map->room);
+        close(map->fd);
+    } else if (id == 103000100 || id == 600010001 || id == 600010004 || id == 600010002 || id == 600010005 || id == 600010003) {
+        event_remove_listener(channel_server_get_event(map->server, EVENT_SUBWAY), EVENT_SUBWAY_PROPERTY_SAILING, map->listener);
+        room_close_event(map->room);
+        close(map->fd);
+    } else if (id == 100040105 || id == 100040106 || id == 101030404 || id == 104000400 || id == 105090310 ||
+            id == 107000300 || id == 110040000 || id == 200010300 || id == 220050000 || id == 220050100 ||
+            id == 220050200 || id == 221040301 || id == 222010310 || id == 230020100 || id == 240040401 ||
+            id == 250010304 || id == 250010504 || id == 251010102 || id == 260010201 || id == 261030000) {
+        event_remove_listener(channel_server_get_event(map->server, EVENT_AREA_BOSS), EVENT_AREA_BOSS_PROPERTY_RESET, map->listener);
         room_close_event(map->room);
         close(map->fd);
     }
@@ -1668,9 +1715,9 @@ static int dock_undock_boat(struct Room *room, int fd, int status)
     struct Map *map = room_get_context(room);
     uint64_t one;
     read(fd, &one, sizeof(uint64_t));
-    uint8_t packet[BOAT_PACKET_LENGTH];
     int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_BOAT), EVENT_BOAT_PROPERTY_SAILING);
     if (state != 1) {
+        uint8_t packet[BOAT_PACKET_LENGTH];
         if (state == 2) {
             boat_packet(false, packet);
         } else if (state == 0) {
@@ -1678,6 +1725,7 @@ static int dock_undock_boat(struct Room *room, int fd, int status)
         }
         room_broadcast(room, BOAT_PACKET_LENGTH, packet);
     }
+
     return 0;
 }
 
@@ -1717,9 +1765,9 @@ static int dock_undock_train(struct Room *room, int fd, int status)
     struct Map *map = room_get_context(room);
     uint64_t one;
     read(fd, &one, sizeof(uint64_t));
-    uint8_t packet[BOAT_PACKET_LENGTH];
     int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_TRAIN), EVENT_TRAIN_PROPERTY_SAILING);
     if (state != 1) {
+        uint8_t packet[BOAT_PACKET_LENGTH];
         if (state == 2) {
             boat_packet(false, packet);
         } else if (state == 0) {
@@ -1727,6 +1775,7 @@ static int dock_undock_train(struct Room *room, int fd, int status)
         }
         room_broadcast(room, BOAT_PACKET_LENGTH, packet);
     }
+
     return 0;
 }
 
@@ -1754,6 +1803,101 @@ static int end_train(struct Room *room, int fd, int status)
     if (state == 0) {
         for (size_t i = 0; i < map->playerCount; i++) {
             client_warp_async(map->players[i].client, room_get_id(room) == 200090100 ? 220000110 : 200000100, 0);
+        }
+    }
+
+    return 0;
+}
+
+static int dock_undock_genie(struct Room *room, int fd, int status)
+{
+    struct Map *map = room_get_context(room);
+    uint64_t one;
+    read(fd, &one, sizeof(uint64_t));
+    int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_GENIE), EVENT_GENIE_PROPERTY_SAILING);
+    if (state != 1) {
+        uint8_t packet[BOAT_PACKET_LENGTH];
+        if (state == 2) {
+            boat_packet(false, packet);
+        } else if (state == 0) {
+            boat_packet(true, packet);
+        }
+        room_broadcast(room, BOAT_PACKET_LENGTH, packet);
+    }
+
+    return 0;
+}
+
+static int start_genie(struct Room *room, int fd, int status)
+{
+    struct Map *map = room_get_context(room);
+    uint64_t one;
+    read(fd, &one, sizeof(uint64_t));
+    int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_GENIE), EVENT_GENIE_PROPERTY_SAILING);
+    if (state == 2) {
+        for (size_t i = 0; i < map->playerCount; i++) {
+            client_warp_async(map->players[i].client, room_get_id(room) == 200000152 ? 200090400 : 200090410, 0);
+        }
+    }
+
+    return 0;
+}
+
+static int end_genie(struct Room *room, int fd, int status)
+{
+    struct Map *map = room_get_context(room);
+    uint64_t one;
+    read(fd, &one, sizeof(uint64_t));
+    int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_GENIE), EVENT_GENIE_PROPERTY_SAILING);
+    if (state == 0) {
+        for (size_t i = 0; i < map->playerCount; i++) {
+            client_warp_async(map->players[i].client, room_get_id(room) == 200090400 ? 260000100 : 200000100, 0);
+        }
+    }
+
+    return 0;
+}
+
+static int dock_undock_subway(struct Room *room, int fd, int status)
+{
+    struct Map *map = room_get_context(room);
+    uint64_t one;
+    read(fd, &one, sizeof(uint64_t));
+    int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_SUBWAY), EVENT_SUBWAY_PROPERTY_SAILING);
+    if (state != 1) {
+        uint8_t packet[PLAY_SOUND_PACKET_MAX_LENGTH];
+        const char *sound = "subway/whistle";
+        size_t len = play_sound_packet(strlen(sound), sound, packet);
+        room_broadcast(room, len, packet);
+    }
+
+    return 0;
+}
+
+static int start_subway(struct Room *room, int fd, int status)
+{
+    struct Map *map = room_get_context(room);
+    uint64_t one;
+    read(fd, &one, sizeof(uint64_t));
+    int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_SUBWAY), EVENT_SUBWAY_PROPERTY_SAILING);
+    if (state == 2) {
+        for (size_t i = 0; i < map->playerCount; i++) {
+            client_warp_async(map->players[i].client, room_get_id(room) == 600010004 ? 600010005 : 600010003, 0);
+        }
+    }
+
+    return 0;
+}
+
+static int end_subway(struct Room *room, int fd, int status)
+{
+    struct Map *map = room_get_context(room);
+    uint64_t one;
+    read(fd, &one, sizeof(uint64_t));
+    int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_SUBWAY), EVENT_SUBWAY_PROPERTY_SAILING);
+    if (state == 0) {
+        for (size_t i = 0; i < map->playerCount; i++) {
+            client_warp_async(map->players[i].client, room_get_id(room) == 600010005 ? 600010001 : 103000100, 0);
         }
     }
 

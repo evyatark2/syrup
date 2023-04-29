@@ -356,5 +356,8 @@ size_t show_info_packet(uint16_t len, const char *path, uint8_t *packet);
 #define SHOW_INTRO_PACKET_MAX_LENGTH 128
 size_t show_intro_packet(uint16_t len, const char *path, uint8_t *packet);
 
+#define PLAY_SOUND_PACKET_MAX_LENGTH 128
+size_t play_sound_packet(uint16_t len, const char *path, uint8_t *packet);
+
 #endif
 

@@ -160,6 +160,8 @@ int main(void)
 
     event_boat_init(SERVER);
     event_train_init(SERVER);
+    event_genie_init(SERVER);
+    event_subway_init(SERVER);
     event_area_boss_init(SERVER);
 
     signal(SIGINT, on_sigint);

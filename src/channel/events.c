@@ -16,7 +16,7 @@ DECLARE_TRANSPORT_EVENT_STATIC_FUNCTIONS(genie)
 DECLARE_TRANSPORT_EVENT_STATIC_FUNCTIONS(airplane)
 DECLARE_TRANSPORT_EVENT_STATIC_FUNCTIONS(elevator)
 
-static void set_and_sched(struct Event *e, uint32_t prop, uint32_t sec, void (*f)(struct Event *, void *));
+static void set_and_sched(struct Event *e, uint32_t prop, int32_t value, uint32_t sec, void (*f)(struct Event *, void *));
 
 #define DEFINE_TRANSPORT_EVENT_FUNCTIONS(event, eid, prop, asec, csec, dsec) \
     void event_##event##_init(struct ChannelServer *server) \
@@ -26,17 +26,17 @@ static void set_and_sched(struct Event *e, uint32_t prop, uint32_t sec, void (*f
  \
     static void event##_arrive(struct Event *e, void *ctx_) \
     { \
-        set_and_sched(e, prop, asec, event##_close_gates); \
+        set_and_sched(e, prop, 0, csec, event##_close_gates); \
     } \
  \
     static void event##_close_gates(struct Event *e, void *ctx_) \
     { \
-        set_and_sched(e, prop, csec, event##_depart); \
+        set_and_sched(e, prop, 1, dsec, event##_depart); \
     } \
  \
     static void event##_depart(struct Event *e, void *ctx_) \
     { \
-        set_and_sched(e, prop, dsec, event##_arrive); \
+        set_and_sched(e, prop, 2, asec, event##_arrive); \
     }
 
 DEFINE_TRANSPORT_EVENT_FUNCTIONS(boat, EVENT_BOAT, EVENT_BOAT_PROPERTY_SAILING, 10, 4, 1)
@@ -46,9 +46,9 @@ DEFINE_TRANSPORT_EVENT_FUNCTIONS(genie, EVENT_GENIE, EVENT_GENIE_PROPERTY_SAILIN
 DEFINE_TRANSPORT_EVENT_FUNCTIONS(airplane, EVENT_AIRPLANE, EVENT_AIRPLANE_PROPERTY_SAILING, 10, 4, 1)
 DEFINE_TRANSPORT_EVENT_FUNCTIONS(elevator, EVENT_ELEVATOR, EVENT_ELEVATOR_PROPERTY_SAILING, 10, 4, 1)
 
-static void set_and_sched(struct Event *e, uint32_t prop, uint32_t sec, void (*f)(struct Event *, void *))
+static void set_and_sched(struct Event *e, uint32_t prop, int32_t value, uint32_t sec, void (*f)(struct Event *, void *))
 {
-    event_set_property(e, prop, 0);
+    event_set_property(e, prop, value);
     struct timespec tm = { .tv_sec = sec, .tv_nsec = 0 };
     event_schedule(e, f, NULL, &tm);
 }
