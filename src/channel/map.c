@@ -1918,7 +1918,7 @@ static int respawn_boss(struct Room *room, int fd, int status)
 
         struct ControllerHeapNode *next = heap_top(&map->heap);
 
-        map->boss.controller = next->controller;
+        map->boss.controller = next != NULL ? next->controller : NULL;
         map->boss.monster.oid = obj->oid;
         map->boss.monster.x = map->bossSpawner.x;
         map->boss.monster.y = map->bossSpawner.y;
@@ -1932,7 +1932,7 @@ static int respawn_boss(struct Room *room, int fd, int status)
             room_broadcast(map->room, SPAWN_MONSTER_PACKET_LENGTH, packet);
         }
 
-        {
+        if (next != NULL) {
             uint8_t packet[SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH];
             spawn_monster_controller_packet(monster->oid, false, monster->id, monster->x, monster->y, monster->fh, true, packet);
             session_write(client_get_session(next->controller->client), SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH, packet);
