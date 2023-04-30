@@ -116,7 +116,7 @@ int drops_load_from_db(struct DatabaseConnection *conn)
             REACTOR_DROP_INFOS[REACTOR_DROP_INFO_COUNT].info.drops[REACTOR_DROP_INFOS[REACTOR_DROP_INFO_COUNT].info.count].isQuest = false;
             REACTOR_DROP_INFOS[REACTOR_DROP_INFO_COUNT].info.drops[REACTOR_DROP_INFOS[REACTOR_DROP_INFO_COUNT].info.count].min = 1;
             REACTOR_DROP_INFOS[REACTOR_DROP_INFO_COUNT].info.drops[REACTOR_DROP_INFOS[REACTOR_DROP_INFO_COUNT].info.count].max = 1;
-            REACTOR_DROP_INFOS[REACTOR_DROP_INFO_COUNT].info.drops[REACTOR_DROP_INFOS[REACTOR_DROP_INFO_COUNT].info.count].chance = 1000000 / reactor->itemDrops.drops[i].chance;
+            REACTOR_DROP_INFOS[REACTOR_DROP_INFO_COUNT].info.drops[REACTOR_DROP_INFOS[REACTOR_DROP_INFO_COUNT].info.count].chance = reactor->itemDrops.drops[i].chance;
             REACTOR_DROP_INFOS[REACTOR_DROP_INFO_COUNT].info.count++;
         }
 
@@ -126,7 +126,7 @@ int drops_load_from_db(struct DatabaseConnection *conn)
             REACTOR_DROP_INFOS[REACTOR_DROP_INFO_COUNT].info.drops[REACTOR_DROP_INFOS[REACTOR_DROP_INFO_COUNT].info.count].questId = reactor->questItemDrops.drops[i].questId;
             REACTOR_DROP_INFOS[REACTOR_DROP_INFO_COUNT].info.drops[REACTOR_DROP_INFOS[REACTOR_DROP_INFO_COUNT].info.count].min = 1;
             REACTOR_DROP_INFOS[REACTOR_DROP_INFO_COUNT].info.drops[REACTOR_DROP_INFOS[REACTOR_DROP_INFO_COUNT].info.count].max = 1;
-            REACTOR_DROP_INFOS[REACTOR_DROP_INFO_COUNT].info.drops[REACTOR_DROP_INFOS[REACTOR_DROP_INFO_COUNT].info.count].chance = 1000000 / reactor->questItemDrops.drops[i].chance;
+            REACTOR_DROP_INFOS[REACTOR_DROP_INFO_COUNT].info.drops[REACTOR_DROP_INFOS[REACTOR_DROP_INFO_COUNT].info.count].chance = reactor->questItemDrops.drops[i].chance;
             REACTOR_DROP_INFOS[REACTOR_DROP_INFO_COUNT].info.count++;
         }
 

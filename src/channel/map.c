@@ -1291,31 +1291,81 @@ int map_drop_batch_from_reactor(struct Map *map, struct MapPlayer *player, uint3
 
     const struct MapReactorInfo *reactor = &wz_get_reactors_for_map(map_get_id(map), NULL)[object->index];
     const struct MonsterDropInfo *info = reactor_drop_info_find(reactor->id);
-    struct Drop drops[info->count];
 
+    struct DropInfo drops_copy[info->count];
+    for (size_t i = 0; i < info->count; i++)
+        drops_copy[i] = info->drops[i];
+
+    size_t max_drops = 0;
+    for (size_t i = 0; i < info->count; i++) {
+        drops_copy[i].chance *= 16;
+        max_drops += drops_copy[i].chance / 1000000 + 1;
+    }
+    struct Drop drops[max_drops];
     size_t drop_count = 0;
     for (size_t i = 0; i < info->count; i++) {
-        if (rand() % 1000000 < info->drops[i].chance * 16) {
-            drops[drop_count].type = info->drops[i].itemId == 0 ? DROP_TYPE_MESO : (info->drops[i].itemId / 1000000 == 1 ? DROP_TYPE_EQUIP : DROP_TYPE_ITEM);
-            switch (drops[drop_count].type) {
+        if (drops_copy[i].chance > 1000000) {
+            enum DropType type = drops_copy[i].itemId == 0 ? DROP_TYPE_MESO :
+                (drops_copy[i].itemId / 1000000 == 1 ? DROP_TYPE_EQUIP : DROP_TYPE_ITEM);
+            switch (type) {
             case DROP_TYPE_MESO:
-                drops[drop_count].meso = rand() % (info->drops[i].max - info->drops[i].min + 1) + info->drops[i].min;
+                drops[drop_count].type = DROP_TYPE_MESO;
+                drops[drop_count].meso = rand() % (drops_copy[i].max - drops_copy[i].min + 1) + drops_copy[i].min;
+                drop_count++;
             break;
 
             case DROP_TYPE_ITEM:
-                drops[drop_count].qid = info->drops[i].isQuest ? info->drops[i].questId : 0;
+                for (size_t j = 0; j < drops_copy[i].chance / 1000000; j++) {
+                    drops[drop_count].type = DROP_TYPE_ITEM;
+                    drops[drop_count].qid = drops_copy[i].isQuest ? drops_copy[i].questId : 0;
+                    drops[drop_count].item.id = 0;
+                    drops[drop_count].item.item.id = 0;
+                    drops[drop_count].item.item.itemId = drops_copy[i].itemId;
+                    drops[drop_count].item.item.ownerLength = 0;
+                    drops[drop_count].item.item.flags = 0;
+                    drops[drop_count].item.item.expiration = -1;
+                    drops[drop_count].item.item.giftFromLength = 0;
+                    drops[drop_count].item.quantity = rand() % (drops_copy[i].max - drops_copy[i].min + 1) + drops_copy[i].min;
+                    drop_count++;
+                }
+
+                drops_copy[i].chance %= 1000000;
+            break;
+
+            case DROP_TYPE_EQUIP:
+                for (size_t j = 0; j < drops_copy[i].chance / 1000000; j++) {
+                    drops[drop_count].type = DROP_TYPE_EQUIP;
+                    drops[drop_count].equip = equipment_from_info(wz_get_equip_info(drops_copy[i].itemId));
+                    drop_count++;
+                }
+
+                drops_copy[i].chance %= 1000000;
+            break;
+            }
+
+        }
+
+        if (rand() % 1000000 < drops_copy[i].chance) {
+            drops[drop_count].type = drops_copy[i].itemId == 0 ? DROP_TYPE_MESO : (drops_copy[i].itemId / 1000000 == 1 ? DROP_TYPE_EQUIP : DROP_TYPE_ITEM);
+            switch (drops[drop_count].type) {
+            case DROP_TYPE_MESO:
+                drops[drop_count].meso = rand() % (drops_copy[i].max - drops_copy[i].min + 1) + drops_copy[i].min;
+            break;
+
+            case DROP_TYPE_ITEM:
+                drops[drop_count].qid = drops_copy[i].isQuest ? drops_copy[i].questId : 0;
                 drops[drop_count].item.id = 0;
                 drops[drop_count].item.item.id = 0;
-                drops[drop_count].item.item.itemId = info->drops[i].itemId;
+                drops[drop_count].item.item.itemId = drops_copy[i].itemId;
                 drops[drop_count].item.item.ownerLength = 0;
                 drops[drop_count].item.item.flags = 0;
                 drops[drop_count].item.item.expiration = -1;
                 drops[drop_count].item.item.giftFromLength = 0;
-                drops[drop_count].item.quantity = rand() % (info->drops[i].max - info->drops[i].min + 1) + info->drops[i].min;
+                drops[drop_count].item.quantity = rand() % (drops_copy[i].max - drops_copy[i].min + 1) + drops_copy[i].min;
             break;
 
             case DROP_TYPE_EQUIP:
-                drops[drop_count].equip = equipment_from_info(wz_get_equip_info(info->drops[i].itemId));
+                drops[drop_count].equip = equipment_from_info(wz_get_equip_info(drops_copy[i].itemId));
             break;
             }
             drop_count++;
