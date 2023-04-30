@@ -3437,8 +3437,30 @@ void client_kill_monster(struct Client *client, uint32_t id)
     struct CheckProgressContext ctx = {
         .session = client->session,
         .monsterQuests = chr->monsterQuests,
-        .id = id
     };
+
+    // I could load Mob.wz/QuestCountGroup and parse the files there
+    // but since there are a measly 4 records there it seems better to just
+    // make a special case for them here
+    if (id == 1110100 || id == 1110130) {
+        ctx.id = 9101000;
+        if (hash_set_u32_get(client->character.monsterQuests, ctx.id) != NULL)
+            hash_set_u16_foreach(chr->quests, check_progress, &ctx);
+    } else if (id == 2230101 || id == 2230131) {
+        ctx.id = 9101001;
+        if (hash_set_u32_get(client->character.monsterQuests, ctx.id) != NULL)
+            hash_set_u16_foreach(chr->quests, check_progress, &ctx);
+    } else if (id == 1140100 || id == 1140130) {
+        ctx.id = 9101002;
+        if (hash_set_u32_get(client->character.monsterQuests, ctx.id) != NULL)
+            hash_set_u16_foreach(chr->quests, check_progress, &ctx);
+    } else if (id == 8830003 || id == 8830010) {
+        ctx.id = 9101003;
+        if (hash_set_u32_get(client->character.monsterQuests, ctx.id) != NULL)
+            hash_set_u16_foreach(chr->quests, check_progress, &ctx);
+    }
+
+    ctx.id = id;
 
     if (hash_set_u32_get(client->character.monsterQuests, id) != NULL)
         hash_set_u16_foreach(chr->quests, check_progress, &ctx);
