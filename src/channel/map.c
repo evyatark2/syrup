@@ -461,7 +461,8 @@ struct Map *map_create(struct ChannelServer *server, struct Room *room, struct S
     } else if (id == 100040105 || id == 100040106 || id == 101030404 || id == 104000400 || id == 105090310 ||
             id == 107000300 || id == 110040000 || id == 200010300 || id == 220050000 || id == 220050100 ||
             id == 220050200 || id == 221040301 || id == 222010310 || id == 230020100 || id == 240040401 ||
-            id == 250010304 || id == 250010504 || id == 251010102 || id == 260010201 || id == 261030000) {
+            id == 250010304 || id == 250010504 || id == 251010102 || id == 260010201 || id == 261030000 ||
+            id == 677000001 || id == 677000003 || id == 677000005 || id == 677000007 || id == 677000009 || id == 677000012) {
         map->fd = eventfd(0, 0);
         room_set_event(room, map->fd, POLLIN, respawn_boss);
         map->listener = event_add_listener(channel_server_get_event(server, EVENT_AREA_BOSS), EVENT_AREA_BOSS_PROPERTY_RESET, on_boat_state_changed, map);
@@ -594,6 +595,42 @@ struct Map *map_create(struct ChannelServer *server, struct Room *room, struct S
                 p.x = -450;
                 p.y = 180;
             break;
+
+            case 677000001:
+                map->bossSpawner.id = 9400612;
+                p.x = 461;
+                p.y = 61;
+            break;
+
+            case 677000003:
+                map->bossSpawner.id = 9400610;
+                p.x = 467;
+                p.y = 0;
+            break;
+
+            case 677000005:
+                map->bossSpawner.id = 9400609;
+                p.x = 201;
+                p.y = 80;
+            break;
+
+            case 677000007:
+                map->bossSpawner.id = 9400611;
+                p.x = 171;
+                p.y = 50;
+            break;
+
+            case 677000009:
+                map->bossSpawner.id = 9400613;
+                p.x = 251;
+                p.y = -841;
+            break;
+
+            case 677000012:
+                map->bossSpawner.id = 9400633;
+                p.x = 842;
+                p.y = 0;
+            break;
             }
 
             map->bossSpawner.x = p.x;
@@ -655,7 +692,8 @@ void map_destroy(struct Map *map)
     } else if (id == 100040105 || id == 100040106 || id == 101030404 || id == 104000400 || id == 105090310 ||
             id == 107000300 || id == 110040000 || id == 200010300 || id == 220050000 || id == 220050100 ||
             id == 220050200 || id == 221040301 || id == 222010310 || id == 230020100 || id == 240040401 ||
-            id == 250010304 || id == 250010504 || id == 251010102 || id == 260010201 || id == 261030000) {
+            id == 250010304 || id == 250010504 || id == 251010102 || id == 260010201 || id == 261030000 ||
+            id == 677000001 || id == 677000003 || id == 677000005 || id == 677000007 || id == 677000009 || id == 677000012) {
         event_remove_listener(channel_server_get_event(map->server, EVENT_AREA_BOSS), EVENT_AREA_BOSS_PROPERTY_RESET, map->listener);
         room_close_event(map->room);
         close(map->fd);
@@ -2002,6 +2040,30 @@ static int respawn_boss(struct Room *room, int fd, int status)
 
         case 8220008:
             msg = "Slowly, a suspicious food stand opens up on a strangely remote place.";
+        break;
+
+        case 9400609:
+            msg = "Andras has appeared";
+        break;
+
+        case 9400610:
+            msg = "Amdusias has appeared";
+        break;
+
+        case 9400611:
+            msg = "Crocell has appeared";
+        break;
+
+        case 9400612:
+            msg = "Marbas has appeared";
+        break;
+
+        case 9400613:
+            msg = "Valefor has appeared";
+        break;
+
+        case 9400633:
+            msg = "Astaroth has appeared";
         break;
         }
         uint8_t packet[SERVER_NOTICE_PACKET_MAX_LENGTH];
