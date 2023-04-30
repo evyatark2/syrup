@@ -1820,8 +1820,12 @@ static int start_sailing(struct Room *room, int fd, int status)
     read(fd, &one, sizeof(uint64_t));
     int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_BOAT), EVENT_BOAT_PROPERTY_SAILING);
     if (state == 2) {
+        // client_warp() calls map_leave() which in turn swaps the last player in the array
+        // with the current one so we need to decrease i to check the same index again
         for (size_t i = 0; i < map->playerCount; i++) {
+            client_close_script(map->players[i].client);
             client_warp(map->players[i].client, room_get_id(room) == 101000301 ? 200090010 : 200090000, 0);
+            i--;
         }
     }
 
@@ -1835,8 +1839,10 @@ static int end_sailing(struct Room *room, int fd, int status)
     read(fd, &one, sizeof(uint64_t));
     int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_BOAT), EVENT_BOAT_PROPERTY_SAILING);
     if (state == 0) {
+        // There is no suspending script when on the sail map so client_close_script() is unnecessary
         for (size_t i = 0; i < map->playerCount; i++) {
             client_warp(map->players[i].client, room_get_id(room) / 10 == 20009001 ? 200000100 : 101000300, 0);
+            i--;
         }
     }
 
@@ -1871,7 +1877,9 @@ static int start_train(struct Room *room, int fd, int status)
     int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_TRAIN), EVENT_TRAIN_PROPERTY_SAILING);
     if (state == 2) {
         for (size_t i = 0; i < map->playerCount; i++) {
+            client_close_script(map->players[i].client);
             client_warp(map->players[i].client, room_get_id(room) == 200000122 ? 200090100 : 200090110, 0);
+            i--;
         }
     }
 
@@ -1887,6 +1895,7 @@ static int end_train(struct Room *room, int fd, int status)
     if (state == 0) {
         for (size_t i = 0; i < map->playerCount; i++) {
             client_warp(map->players[i].client, room_get_id(room) == 200090100 ? 220000110 : 200000100, 0);
+            i--;
         }
     }
 
@@ -1920,7 +1929,9 @@ static int start_genie(struct Room *room, int fd, int status)
     int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_GENIE), EVENT_GENIE_PROPERTY_SAILING);
     if (state == 2) {
         for (size_t i = 0; i < map->playerCount; i++) {
+            client_close_script(map->players[i].client);
             client_warp(map->players[i].client, room_get_id(room) == 200000152 ? 200090400 : 200090410, 0);
+            i--;
         }
     }
 
@@ -1936,6 +1947,7 @@ static int end_genie(struct Room *room, int fd, int status)
     if (state == 0) {
         for (size_t i = 0; i < map->playerCount; i++) {
             client_warp(map->players[i].client, room_get_id(room) == 200090400 ? 260000100 : 200000100, 0);
+            i--;
         }
     }
 
@@ -1966,7 +1978,9 @@ static int start_subway(struct Room *room, int fd, int status)
     int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_SUBWAY), EVENT_SUBWAY_PROPERTY_SAILING);
     if (state == 2) {
         for (size_t i = 0; i < map->playerCount; i++) {
+            client_close_script(map->players[i].client);
             client_warp(map->players[i].client, room_get_id(room) == 600010004 ? 600010005 : 600010003, 0);
+            i--;
         }
     }
 
@@ -1981,7 +1995,9 @@ static int end_subway(struct Room *room, int fd, int status)
     int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_SUBWAY), EVENT_SUBWAY_PROPERTY_SAILING);
     if (state == 0) {
         for (size_t i = 0; i < map->playerCount; i++) {
+            client_close_script(map->players[i].client);
             client_warp(map->players[i].client, room_get_id(room) == 600010005 ? 600010001 : 103000100, 0);
+            i--;
         }
     }
 

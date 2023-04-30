@@ -117,6 +117,7 @@ struct ClientResult client_end_quest(struct Client *client, uint16_t qid, uint32
 bool client_end_quest_now(struct Client *client, bool *success);
 bool client_forfeit_quest(struct Client *client, uint16_t qid);
 struct ClientResult client_script_cont(struct Client *client, uint32_t action);
+void client_close_script(struct Client *client);
 void client_kill_monster(struct Client *client, uint32_t id);
 void client_destroy_reactor(struct Client *client);
 struct ClientResult client_open_shop(struct Client *client, uint32_t id);

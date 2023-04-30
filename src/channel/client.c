@@ -3414,6 +3414,12 @@ struct ClientResult client_script_cont(struct Client *client, uint32_t action)
     }
 }
 
+void client_close_script(struct Client *client)
+{
+    script_manager_free(client->script);
+    client->script = NULL;
+}
+
 struct CheckProgressContext {
     struct Session *session;
     struct HashSetU32 *monsterQuests;
@@ -3706,8 +3712,6 @@ void client_warp(struct Client *client, uint32_t map, uint8_t portal)
 {
     struct Character *chr = &client->character;
     client->scriptState = SCRIPT_STATE_WARP;
-    client->character.map = map;
-    client->character.spawnPoint = portal;
     {
         uint8_t packet[REMOVE_PLAYER_FROM_MAP_PACKET_LENGTH];
         remove_player_from_map_packet(chr->id, packet);
@@ -3719,9 +3723,12 @@ void client_warp(struct Client *client, uint32_t map, uint8_t portal)
 
     {
         uint8_t packet[CHANGE_MAP_PACKET_LENGTH];
-        change_map_packet(&client->character, client->character.map, client->character.spawnPoint, packet);
+        change_map_packet(&client->character, map, portal, packet);
         session_write(client->session, CHANGE_MAP_PACKET_LENGTH, packet);
     }
+
+    client->character.map = map;
+    client->character.spawnPoint = portal;
 
     session_change_room(client->session, map);
 }
