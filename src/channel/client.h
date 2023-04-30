@@ -21,6 +21,7 @@ enum PacketType {
 enum ScriptState {
     SCRIPT_STATE_OK,
     SCRIPT_STATE_YES_NO,
+    SCRIPT_STATE_GET_NUMBER,
     SCRIPT_STATE_SIMPLE,
     SCRIPT_STATE_NEXT,
     SCRIPT_STATE_PREV_NEXT,
@@ -84,7 +85,7 @@ void client_gain_exp(struct Client *client, int32_t exp, bool reward);
 void client_gain_meso(struct Client *client, int32_t mesos, bool pickup, bool reward);
 void client_adjust_fame(struct Client *client, int16_t fame);
 void client_commit_stats(struct Client *client);
-bool client_has_item(struct Client *client, uint32_t id);
+bool client_has_item(struct Client *client, uint32_t id, int16_t qty);
 bool client_gain_items(struct Client *client, size_t len, const uint32_t *ids, const int16_t *counts, bool reward, bool *success);
 
 enum InventoryGainResult {
@@ -132,6 +133,7 @@ void client_send_next(struct Client *client, size_t msg_len, const char *msg, ui
 void client_send_prev_next(struct Client *client, size_t msg_len, const char *msg, uint8_t speaker);
 void client_send_prev(struct Client *client, size_t msg_len, const char *msg, uint8_t speaker);
 void client_send_accept_decline(struct Client *client, size_t msg_len, const char *msg, uint8_t speaker);
+void client_send_get_number(struct Client *client, size_t msg_len, const char *msg, uint8_t speaker, int32_t def, int32_t min, int32_t max);
 void client_message(struct Client *client, const char *msg);
 void client_warp(struct Client *client, uint32_t map, uint8_t portal);
 void client_reset_stats(struct Client *client);

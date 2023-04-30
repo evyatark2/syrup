@@ -1572,19 +1572,27 @@ void client_adjust_fame(struct Client *client, int16_t fame)
     client->stats |= STAT_FAME;
 }
 
-bool client_has_item(struct Client *client, uint32_t id)
+bool client_has_item(struct Client *client, uint32_t id, int16_t qty)
 {
     uint8_t inv = id / 1000000;
     if (inv == 1) {
         for (uint8_t i = 0; i < client->character.equipmentInventory.slotCount; i++) {
-            if (!client->character.equipmentInventory.items[i].isEmpty && client->character.equipmentInventory.items[i].equip.item.itemId == id)
-                return true;
+            if (!client->character.equipmentInventory.items[i].isEmpty && client->character.equipmentInventory.items[i].equip.item.itemId == id) {
+                qty--;
+
+                if (qty == 0)
+                    return true;
+            }
         }
     } else {
         inv -= 2;
         for (uint8_t i = 0; i < client->character.inventory[inv].slotCount; i++) {
-            if (!client->character.inventory[inv].items[i].isEmpty && client->character.inventory[inv].items[i].item.item.itemId == id)
-                return true;
+            if (!client->character.inventory[inv].items[i].isEmpty && client->character.inventory[inv].items[i].item.item.itemId == id) {
+                qty -= client->character.inventory[inv].items[i].item.quantity;
+
+                if (qty <= 0)
+                    return true;
+            }
         }
     }
 
@@ -3158,7 +3166,7 @@ struct ClientResult client_regain_quest_item(struct Client *client, uint16_t qid
     if (hash_set_u16_get(chr->quests, qid) == NULL)
         return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
 
-    if (client_has_item(client, item_id))
+    if (client_has_item(client, item_id, 1))
         return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
 
     size_t i;
@@ -3368,6 +3376,7 @@ struct ClientResult client_script_cont(struct Client *client, uint32_t action)
     case SCRIPT_STATE_YES_NO:
         res = script_manager_run(client->script, action == 0 ? -1 : 1);
     break;
+    case SCRIPT_STATE_GET_NUMBER:
     case SCRIPT_STATE_SIMPLE:
         res = script_manager_run(client->script, action);
     break;
@@ -3678,6 +3687,14 @@ void client_send_accept_decline(struct Client *client, size_t msg_len, const cha
     session_write(client->session, len, packet);
 }
 
+void client_send_get_number(struct Client *client, size_t msg_len, const char *msg, uint8_t speaker, int32_t def, int32_t min, int32_t max)
+{
+    client->scriptState = SCRIPT_STATE_GET_NUMBER;
+    uint8_t packet[NPC_DIALOGUE_PACKET_MAX_LENGTH];
+    size_t len = npc_get_number_packet(client->npc, msg_len, msg, speaker, def, min, max, packet);
+    session_write(client->session, len, packet);
+}
+
 void client_message(struct Client *client, const char *msg)
 {
     uint8_t packet[SERVER_MESSAGE_PACKET_MAX_LENGTH];
@@ -3980,7 +3997,7 @@ bool client_sit(struct Client *client, uint32_t id)
     if (chr->chair != 0 || chr->seat != (uint16_t)-1)
         return false;
 
-    if (!client_has_item(client, id))
+    if (!client_has_item(client, id, 1))
         return true;
 
     chr->chair = id;
@@ -4296,7 +4313,7 @@ static bool start_quest(struct Client *client, uint16_t qid, uint32_t npc, bool 
             }
 
             for (int8_t i = 0; i < item_count; i++) {
-                if (client_has_item(client, ids[i])) {
+                if (client_has_item(client, ids[i], 1)) {
                     item_count--;
                     ids[i] = ids[item_count];
                     amounts[i] = amounts[item_count];

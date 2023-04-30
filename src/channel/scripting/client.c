@@ -34,6 +34,7 @@ static int l_client_send_ok(lua_State *L);
 static int l_client_send_prev(lua_State *L);
 static int l_client_send_prev_next(lua_State *L);
 static int l_client_send_yes_no(lua_State *L);
+static int l_client_send_get_number(lua_State *L);
 static int l_client_message(lua_State *L);
 static int l_client_set_hp(lua_State *L);
 static int l_client_set_mp(lua_State *L);
@@ -78,6 +79,7 @@ static const struct luaL_Reg clientlib[] = {
     { "sendPrev", l_client_send_prev },
     { "sendPrevNext", l_client_send_prev_next },
     { "sendYesNo", l_client_send_yes_no },
+    { "sendGetNumber", l_client_send_get_number },
     { "message", l_client_message },
     { "setHp", l_client_set_hp },
     { "setMp", l_client_set_mp },
@@ -220,7 +222,8 @@ static int l_client_has_item(lua_State *L)
 {
     struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
     uint32_t id = luaL_checkinteger(L, 2);
-    lua_pushboolean(L, client_has_item(client, id));
+    int16_t qty = lua_isinteger(L, 3) ? lua_tointeger(L, 3) : 1;
+    lua_pushboolean(L, client_has_item(client, id, qty));
     return 1;
 }
 
@@ -392,6 +395,19 @@ static int l_client_send_yes_no(lua_State *L)
     const char *str = luaL_checklstring(L, 2, &len);
     uint8_t speaker = lua_isinteger(L, 3) ? lua_tointeger(L, 3) : 0;
     client_send_yes_no(client, len, str, speaker);
+    return lua_yield(L, 0);
+}
+
+static int l_client_send_get_number(lua_State *L)
+{
+    struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
+    size_t len;
+    const char *str = luaL_checklstring(L, 2, &len);
+    int32_t def = luaL_checkinteger(L, 3);
+    int32_t min = luaL_checkinteger(L, 4);
+    int32_t max = luaL_checkinteger(L, 5);
+    uint8_t speaker = lua_isinteger(L, 6) ? lua_tointeger(L, 6) : 0;
+    client_send_get_number(client, len, str, speaker, def, min, max);
     return lua_yield(L, 0);
 }
 

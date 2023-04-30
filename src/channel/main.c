@@ -725,7 +725,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
         READER_BEGIN(size, packet);
         READ_OR_ERROR(reader_u8, &last);
         READ_OR_ERROR(reader_u8, &action);
-        if (last == NPC_DIALOGUE_TYPE_SIMPLE) {
+        if (last == NPC_DIALOGUE_TYPE_SIMPLE || last == 3) {
             if (READER_AVAILABLE() >= 4) {
                 READ_OR_ERROR(reader_u32, &selection);
             } else if (READER_AVAILABLE() > 0) {
@@ -737,8 +737,8 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
 
         READER_END();
 
-        uint32_t action_u32 = last == NPC_DIALOGUE_TYPE_SIMPLE ?
-            selection :
+        uint32_t action_u32 = last == NPC_DIALOGUE_TYPE_SIMPLE || last == 3 ?
+            (action == 1 ? selection : (action == 0 ? -1 : action)) :
             (action == (uint8_t)-1 ? -1 : action);
         struct ClientResult res = client_script_cont(client, action_u32);
         switch (res.type) {
