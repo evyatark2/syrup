@@ -1347,13 +1347,13 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
                     session_write(session, ITEM_GAIN_PACKET_LENGTH, packet);
                 }
 
+                map_remove_drop(room_get_context(session_get_room(session)), chr->id, oid);
+
                 {
                     uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
                     size_t len = stat_change_packet(true, 0, NULL, packet);
                     session_write(session, len, packet);
                 }
-
-                map_remove_drop(room_get_context(session_get_room(session)), chr->id, oid);
             } else if (result == INVENTORY_GAIN_RESULT_FULL) {
                 {
                     uint8_t packet[INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH];

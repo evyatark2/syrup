@@ -855,7 +855,6 @@ int map_join(struct Map *map, struct Client *client, struct MapHandleContainer *
     for (size_t i = 0; i < map->droppingBatchCount; i++) {
         if (map->droppingBatches[i]->ownerId == client_get_character(client)->id) {
             map->droppingBatches[i]->owner = player->player;
-            map->droppingBatches[i]->indexInPlayer = player->player->droppingCount;
             drop_count++;
         }
 
@@ -2241,34 +2240,6 @@ static bool do_client_auto_pickup(struct Map *map, struct Client *client, struct
 
         map_remove_drop(map, client_get_character(client)->id, drop->oid);
         return true;
-    } else if (result == INVENTORY_GAIN_RESULT_FULL) {
-        {
-            uint8_t packet[INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH];
-            inventory_full_notification_packet(packet);
-            session_write(client_get_session(client), INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH, packet);
-        }
-
-        {
-            uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
-            size_t len = modify_items_packet(0, NULL, packet);
-            session_write(client_get_session(client), len, packet);
-        }
-
-        return false;
-    } else if (result == INVENTORY_GAIN_RESULT_FULL) {
-        {
-            uint8_t packet[ITEM_UNAVAILABLE_NOTIFICATION_PACKET_LENGTH];
-            item_unavailable_notification_packet(packet);
-            session_write(client_get_session(client), ITEM_UNAVAILABLE_NOTIFICATION_PACKET_LENGTH, packet);
-        }
-
-        {
-            uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
-            size_t len = stat_change_packet(true, 0, NULL, packet);
-            session_write(client_get_session(client), len, packet);
-        }
-
-        return false;
     }
 
     return false;
