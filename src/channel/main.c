@@ -271,7 +271,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
             client_warp(client, target_map, target_portal);
         } else {
             if (chr->hp > 0) {
-                if (chr->map / 1000 == 1020) {
+                if (chr->map == 0 || chr->map / 1000 == 1020) {
                     uint32_t id = wz_get_map_forced_return(chr->map);
                     if (id != target)
                         session_kick(session);
