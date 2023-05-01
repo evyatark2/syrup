@@ -396,10 +396,11 @@ int assign_channel(uint32_t id, uint8_t world, uint8_t channel, uint32_t *token)
     }
 
     mtx_lock(&CHANNELS[world][channel].clientsMtx);
-    do {
-        pending.token = rand() % 32768 << 16 | rand() % 32768;
-    // 0 is an invalid token
-    } while (pending.token == 0 || hash_set_u32_get(CHANNELS[world][channel].clients, pending.token) != NULL);
+    //do {
+    //    pending.token = rand() % 32768 << 16 | rand() % 32768;
+    //// 0 is an invalid token
+    //} while (pending.token == 0 || hash_set_u32_get(CHANNELS[world][channel].clients, pending.token) != NULL);
+    pending.token = id;
     if (hash_set_u32_insert(CHANNELS[world][channel].clients, &pending) == -1) {
         mtx_unlock(&CHANNELS[world][channel].clientsMtx);
         mtx_unlock(&CHANNELS[world][channel].mtx);
