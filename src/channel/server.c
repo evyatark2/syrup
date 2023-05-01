@@ -1759,12 +1759,14 @@ static void on_session_write(struct bufferevent *event, void *ctx)
         if (bufferevent_get_underlying(event) != NULL) {
             void *temp = bufferevent_get_underlying(event);
             bufferevent_free(event);
-            event = temp;
-        }
-        if (evbuffer_get_length(bufferevent_get_output(event)) != 0)
-            bufferevent_setcb(event, NULL, on_session_write, on_session_event, session);
-        else
+            session->event = temp;
+            if (evbuffer_get_length(bufferevent_get_output(session->event)) != 0)
+                bufferevent_setcb(session->event, NULL, on_session_write, on_session_event, session);
+            else
+                do_transfer(session);
+        } else {
             do_transfer(session);
+        }
     }
 }
 
