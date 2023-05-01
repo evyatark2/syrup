@@ -17,7 +17,7 @@ for i = 1, #maps do
     str = str .. "\r\n#L" .. i .. "##m" .. maps[i] .. "# (" .. (costs[i] // multiplier) .. " mesos)#l"
 end
 
-local sel = c:sendSimple(str);
+local sel = c:sendSimple(str, #maps);
 
 local cost
 if c:job() == Job.BEGINNER then

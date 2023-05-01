@@ -435,8 +435,8 @@ static int l_client_send_simple(lua_State *L)
     struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
     size_t len;
     const char *str = luaL_checklstring(L, 2, &len);
-    uint8_t speaker = lua_isinteger(L, 3) ? lua_tointeger(L, 3) : 0;
-    client_send_simple(client, len, str, speaker);
+    uint8_t speaker = lua_isinteger(L, 4) ? lua_tointeger(L, 4) : 0;
+    client_send_simple(client, len, str, speaker, lua_tointeger(L, 3));
     return lua_yield(L, 0);
 }
 

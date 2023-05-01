@@ -19,7 +19,7 @@ function talk(c)
             selStr = selStr .. "\r\n#L" .. i .. "#" .. names[i] .. "#l"
         end
 
-        local i = c:sendSimple(selStr)
+        local i = c:sendSimple(selStr, zones)
 
         c:warp(maps[i], 0)
     end

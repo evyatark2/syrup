@@ -737,10 +737,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
 
         READER_END();
 
-        uint32_t action_u32 = last == NPC_DIALOGUE_TYPE_SIMPLE || last == 3 ?
-            (action == 1 ? selection : (action == 0 ? -1 : action)) :
-            (action == (uint8_t)-1 ? -1 : action);
-        struct ClientResult res = client_script_cont(client, action_u32);
+        struct ClientResult res = client_script_cont(client, last, action, selection);
         switch (res.type) {
         case CLIENT_RESULT_TYPE_BAN:
         case CLIENT_RESULT_TYPE_ERROR:
@@ -1418,7 +1415,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
         // Forced stat reset
         session_write(session, 2, (uint8_t[]) { 0x23, 0x00 }); // Forced stat reset
 
-        struct ClientResult res = client_script_cont(client, 0);
+        struct ClientResult res = client_script_cont(client, 0, 0, 0);
         if (res.type == CLIENT_RESULT_TYPE_BAN || res.type == CLIENT_RESULT_TYPE_ERROR)
             session_kick(session);
 

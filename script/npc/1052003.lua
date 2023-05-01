@@ -5,7 +5,7 @@ function talk(c)
         selStr = selStr .. "\r\n#L" .. i .. "# " .. options[i] .. "#l"
     end
 
-    local i = c:sendSimple(selStr);
+    local i = c:sendSimple(selStr, #options);
 
     local items
     local materials
@@ -18,7 +18,7 @@ function talk(c)
             selStr = selStr .. "\r\n#L" .. i .. "# " .. minerals[i] .. "#l";
         end
 
-        i = c:sendSimple(selStr);
+        i = c:sendSimple(selStr, #minerals);
 
         items = { 4011000, 4011001, 4011002, 4011003, 4011004, 4011005, 4011006 }
         materials = { 4010000, 4010001, 4010002, 4010003, 4010004, 4010005, 4010006 }
@@ -31,7 +31,7 @@ function talk(c)
             selStr = selStr .. "\r\n#L" .. i .. "# " .. jewels[i] .. "#l";
         end
 
-        i = c:sendSimple(selStr);
+        i = c:sendSimple(selStr, #jewels);
 
         items = { 4021000, 4021001, 4021002, 4021003, 4021004, 4021005, 4021006, 4021007, 4021008 }
         materials = { 4020000, 4020001, 4020002, 4020003, 4020004, 4020005, 4020006, 4020007, 4020008 }

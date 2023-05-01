@@ -32,7 +32,14 @@ struct Client {
     void *handler;
     struct Character character;
     struct ScriptInstance *script;
-    enum ScriptState scriptState;
+    
+    // Values related to the current script state
+    struct {
+        enum ScriptState scriptState;
+        uint32_t min;
+        uint32_t max;
+    };
+
     uint16_t qid;
     uint32_t npc;
     uint32_t shop;
@@ -3371,18 +3378,67 @@ bool client_forfeit_quest(struct Client *client, uint16_t qid)
     return true;
 }
 
-struct ClientResult client_script_cont(struct Client *client, uint32_t action)
+struct ClientResult client_script_cont(struct Client *client, uint8_t prev, uint8_t action, uint32_t selection)
 {
     if (client->script == NULL)
         return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
 
-    enum ScriptResult res;
-    if (client->scriptState != SCRIPT_STATE_WARP && action == -1) {
+    // Check if prev matches the actual previous state
+    if (client->scriptState != SCRIPT_STATE_WARP) {
+        switch (prev) {
+        case 0:
+            if (client->scriptState != SCRIPT_STATE_OK && client->scriptState != SCRIPT_STATE_NEXT && client->scriptState != SCRIPT_STATE_PREV_NEXT && client->scriptState != SCRIPT_STATE_PREV)
+                return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
+        break;
+        case 1:
+            if (client->scriptState != SCRIPT_STATE_YES_NO)
+                return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
+        break;
+        case 3:
+            if (client->scriptState != SCRIPT_STATE_GET_NUMBER)
+                return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
+        break;
+        case 4:
+            if (client->scriptState != SCRIPT_STATE_SIMPLE)
+                return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
+        break;
+        case 12:
+            if (client->scriptState != SCRIPT_STATE_ACCEPT_DECILNE)
+                return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
+        break;
+        default:
+            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
+        }
+    }
+
+    // In an empty dialogue (GET_NUMBER or SIMPLE), END CHAT is (action == 0) instead of (action == -1)
+    bool is_empty_dialoge = client->scriptState == SCRIPT_STATE_GET_NUMBER || client->scriptState == SCRIPT_STATE_SIMPLE;
+    if ((is_empty_dialoge && action == 0) || (!is_empty_dialoge && action == (uint8_t)-1)) {
         script_manager_free(client->script);
         client->script = NULL;
         return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
     }
 
+    // In an empty dialogue, the only other option for action is a '1'
+    if (is_empty_dialoge && action != 1) {
+        script_manager_free(client->script);
+        client->script = NULL;
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
+    }
+
+    // Check if 'action' is valid for the current state
+    if ((client->scriptState == SCRIPT_STATE_OK && action != 1) ||
+            (client->scriptState == SCRIPT_STATE_YES_NO && action != 0 && action != 1) ||
+            (client->scriptState == SCRIPT_STATE_NEXT && action != 1) ||
+            (client->scriptState == SCRIPT_STATE_PREV_NEXT && action != 0 && action != 1) ||
+            (client->scriptState == SCRIPT_STATE_PREV && action != 0 && action != 1) ||
+            (client->scriptState == SCRIPT_STATE_ACCEPT_DECILNE && action != 0 && action != 1)) {
+        script_manager_free(client->script);
+        client->script = NULL;
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
+    }
+
+    enum ScriptResult res;
     switch (client->scriptState) {
     case SCRIPT_STATE_OK:
         res = script_manager_run(client->script, 1);
@@ -3392,7 +3448,12 @@ struct ClientResult client_script_cont(struct Client *client, uint32_t action)
     break;
     case SCRIPT_STATE_GET_NUMBER:
     case SCRIPT_STATE_SIMPLE:
-        res = script_manager_run(client->script, action);
+        if (action < client->min || action > client->max) {
+            script_manager_free(client->script);
+            client->script = NULL;
+            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
+        }
+        res = script_manager_run(client->script, selection);
     break;
     case SCRIPT_STATE_NEXT:
         res = script_manager_run(client->script, 1);
@@ -3690,9 +3751,11 @@ void client_send_yes_no(struct Client *client, size_t msg_len, const char *msg, 
     session_write(client->session, len, packet);
 }
 
-void client_send_simple(struct Client *client, size_t msg_len, const char *msg, uint8_t speaker)
+void client_send_simple(struct Client *client, size_t msg_len, const char *msg, uint8_t speaker, uint32_t selection_count)
 {
     client->scriptState = SCRIPT_STATE_SIMPLE;
+    client->min = 1;
+    client->max = selection_count;
     uint8_t packet[NPC_DIALOGUE_PACKET_MAX_LENGTH];
     size_t len = npc_dialogue_packet(client->npc, NPC_DIALOGUE_TYPE_SIMPLE, msg_len, msg, speaker, packet);
     session_write(client->session, len, packet);
@@ -3733,6 +3796,8 @@ void client_send_accept_decline(struct Client *client, size_t msg_len, const cha
 void client_send_get_number(struct Client *client, size_t msg_len, const char *msg, uint8_t speaker, int32_t def, int32_t min, int32_t max)
 {
     client->scriptState = SCRIPT_STATE_GET_NUMBER;
+    client->min = min;
+    client->max = max;
     uint8_t packet[NPC_DIALOGUE_PACKET_MAX_LENGTH];
     size_t len = npc_get_number_packet(client->npc, msg_len, msg, speaker, def, min, max, packet);
     session_write(client->session, len, packet);

@@ -62,7 +62,7 @@ function talk(c)
 
             if i == 1 then
                 if c:hasItem(4031012) then
-                    i = i + c:sendSimple("Alright, when you have made your decision, click on [I'll choose my occupation] at the bottom.#b\r\n#L0#Please explain to me what being the Hunter is all about.\r\n#L1#Please explain to me what being the Crossbowman is all about.\r\n#L3#I'll choose my occupation!")
+                    i = i + c:sendSimple("Alright, when you have made your decision, click on [I'll choose my occupation] at the bottom.#b\r\n#L1#Please explain to me what being the Hunter is all about.\r\n#L2#Please explain to me what being the Crossbowman is all about.\r\n#L3#I'll choose my occupation!", 3)
                 else
                     i = i + c:sendNext("Good decision. You look strong, but I need to see if you really are strong enough to pass the test, it's not a difficult test, so you'll do just fine. Here, take my letter first... make sure you don't lose it!");
                 end
