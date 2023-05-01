@@ -1453,31 +1453,38 @@ static void on_unassigned_client_packet(struct Session *session, size_t size, ui
     uint16_t opcode;
     memcpy(&opcode, packet, sizeof(uint16_t));
 
-    if (opcode != 0x0014 && opcode != 223)
+    if (opcode != 0x0014)
         session_kick(session);
 
-    if (opcode == 0x0014) {
-        uint32_t token;
-        READER_BEGIN(size - 2, packet + 2);
-        READ_OR_ERROR(reader_u32, &token);
-        SKIP(2);
-        READER_END();
-        uint32_t id;
-        if (!session_assign_token(session, token, &id))
-            session_kick(session);
+    uint32_t token;
+    READER_BEGIN(size - 2, packet + 2);
+    READ_OR_ERROR(reader_u32, &token);
+    SKIP(2);
+    READER_END();
+    uint32_t id;
+    if (!session_assign_token(session, token, &id))
+        session_kick(session);
 
-        client_login_start(client, id);
-        struct ClientContResult res = client_cont(client, 0);
+    //const struct sockaddr *addr = session_get_addr(session);
 
-        if (res.status > 0) {
-            session_set_event(session, res.status, res.fd, on_client_resume);
-            return;
-        } else if (res.status == 0) {
-            uint8_t packet[KEYMAP_PACKET_LENGTH];
-            keymap_packet(chr->keyMap, packet);
-            session_write(session, KEYMAP_PACKET_LENGTH, packet);
-            session_change_room(session, chr->map);
-        }
+    //struct IdAddr new = {
+    //    .id = id,
+    //};
+
+    //memcpy(&new.addr,
+    //        addr->sa_family == AF_INET ? (void *)(struct sockaddr_in *)addr : (void *)(struct sockaddr_in6 *)addr,
+    //        addr->sa_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6));
+
+    //hash_set_u32_insert(CLIENTS, &new);
+
+    client_login_start(client, id);
+    struct ClientContResult res = client_cont(client, 0);
+
+    if (res.status > 0) {
+        session_set_event(session, res.status, res.fd, on_client_resume);
+        return;
+    } else if (res.status == 0) {
+        session_change_room(session, chr->map);
     }
 }
 
@@ -1492,9 +1499,6 @@ static void on_client_resume(struct Session *session, int fd, int status)
         return;
     } else if (res.status == 0) {
         session_close_event(session);
-        uint8_t packet[KEYMAP_PACKET_LENGTH];
-        keymap_packet(chr->keyMap, packet);
-        session_write(session, KEYMAP_PACKET_LENGTH, packet);
         session_change_room(session, chr->map);
     }
 }

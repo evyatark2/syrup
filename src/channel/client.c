@@ -639,7 +639,17 @@ struct ClientContResult client_cont(struct Client *client, int status)
                 session_write(client->session, len, packet);
             }
 
-            session_write(client->session, 2, (uint8_t[]) { 0x23, 0x00 }); // Force stat reset
+            {
+                uint8_t packet[KEYMAP_PACKET_LENGTH];
+                keymap_packet(chr->keyMap, packet);
+                session_write(client->session, KEYMAP_PACKET_LENGTH, packet);
+            }
+
+            session_write(client->session, 3, (uint8_t[]) { 0x9F, 0x00, 0x00 }); // Quickslot init
+            session_write(client->session, 3, (uint8_t[]) { 0x7C, 0x00, 0x00 }); // Macro init
+            session_write(client->session, 6, (uint8_t[]) { 0x50, 0x01, 0x00, 0x00, 0x00, 0x00 }); // Auto HP
+            session_write(client->session, 6, (uint8_t[]) { 0x51, 0x01, 0x00, 0x00, 0x00, 0x00 }); // Auto MP
+            session_write(client->session, 4, (uint8_t[]) { 0x3F, 0x00, 0x07, 0x00 }); // Buddylist
 
             {
                 uint8_t packet[SET_GENDER_PACKET_LENGTH];
@@ -647,7 +657,7 @@ struct ClientContResult client_cont(struct Client *client, int status)
                 session_write(client->session, SET_GENDER_PACKET_LENGTH, packet);
             }
 
-            session_write(client->session, 3, (uint8_t[]) { 0x2F, 0x00, 0x01 });
+            session_write(client->session, 3, (uint8_t[]) { 0x2F, 0x00, 0x01 }); // Claim status changed?
 
             return (struct ClientContResult) { 0, .map = chr->map };
         }
