@@ -712,7 +712,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
             case CLIENT_RESULT_TYPE_ERROR:
                 session_kick(session);
             case CLIENT_RESULT_TYPE_SUCCESS:
-            case CLIENT_RESULT_TYPE_WARP:
+            case CLIENT_RESULT_TYPE_NEXT:
                 return;
             }
     }
@@ -746,7 +746,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
         case CLIENT_RESULT_TYPE_ERROR:
             session_kick(session);
         case CLIENT_RESULT_TYPE_SUCCESS:
-        case CLIENT_RESULT_TYPE_WARP:
+        case CLIENT_RESULT_TYPE_NEXT:
             return;
         }
     }
@@ -999,7 +999,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
         case CLIENT_RESULT_TYPE_ERROR:
             session_kick(session);
         case CLIENT_RESULT_TYPE_SUCCESS:
-        case CLIENT_RESULT_TYPE_WARP:
+        case CLIENT_RESULT_TYPE_NEXT:
             return;
         break;
         }
@@ -1025,7 +1025,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
             case CLIENT_RESULT_TYPE_ERROR:
                 session_kick(session);
             case CLIENT_RESULT_TYPE_SUCCESS:
-            case CLIENT_RESULT_TYPE_WARP:
+            case CLIENT_RESULT_TYPE_NEXT:
                 return;
             }
         }
@@ -1043,7 +1043,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
             case CLIENT_RESULT_TYPE_ERROR:
                 session_kick(session);
             case CLIENT_RESULT_TYPE_SUCCESS:
-            case CLIENT_RESULT_TYPE_WARP:
+            case CLIENT_RESULT_TYPE_NEXT:
                 return;
             }
         }
@@ -1062,7 +1062,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
             case CLIENT_RESULT_TYPE_ERROR:
                 session_kick(session);
             case CLIENT_RESULT_TYPE_SUCCESS:
-            case CLIENT_RESULT_TYPE_WARP:
+            case CLIENT_RESULT_TYPE_NEXT:
                 return;
             }
         }
@@ -1086,7 +1086,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
             case CLIENT_RESULT_TYPE_ERROR:
                 session_kick(session);
             case CLIENT_RESULT_TYPE_SUCCESS:
-            case CLIENT_RESULT_TYPE_WARP:
+            case CLIENT_RESULT_TYPE_NEXT:
                 return;
             }
         }
@@ -1104,7 +1104,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
             case CLIENT_RESULT_TYPE_ERROR:
                 session_kick(session);
             case CLIENT_RESULT_TYPE_SUCCESS:
-            case CLIENT_RESULT_TYPE_WARP:
+            case CLIENT_RESULT_TYPE_NEXT:
                 return;
             }
         }
@@ -1400,7 +1400,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
         case CLIENT_RESULT_TYPE_ERROR:
             session_kick(session);
         case CLIENT_RESULT_TYPE_SUCCESS:
-        case CLIENT_RESULT_TYPE_WARP:
+        case CLIENT_RESULT_TYPE_NEXT:
             return;
         }
     }
@@ -1412,33 +1412,28 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
         struct Map *map = room_get_context(session_get_room(session));
         session_enable_write(session);
 
-        if (map_join(map, client, client_get_map(client)) == -2) {
+        if (map_join(map, client, client_get_map(client)) == -2)
             return;
-        }
 
         // Forced stat reset
         session_write(session, 2, (uint8_t[]) { 0x23, 0x00 }); // Forced stat reset
 
         struct ClientResult res = client_script_cont(client, 0);
-        switch (res.type) {
-        case CLIENT_RESULT_TYPE_BAN:
-        case CLIENT_RESULT_TYPE_ERROR:
+        if (res.type == CLIENT_RESULT_TYPE_BAN || res.type == CLIENT_RESULT_TYPE_ERROR)
             session_kick(session);
-        case CLIENT_RESULT_TYPE_SUCCESS:
-        case CLIENT_RESULT_TYPE_WARP:
-            return;
-        }
 
-        if (wz_get_map_enter_script(chr->map) != NULL) {
+        if (res.type != CLIENT_RESULT_TYPE_NEXT && wz_get_map_enter_script(chr->map) != NULL) {
             struct ClientResult res = client_launch_map_script(client, wz_get_map_enter_script(chr->map));
             switch (res.type) {
             case CLIENT_RESULT_TYPE_BAN:
             case CLIENT_RESULT_TYPE_ERROR:
                 session_kick(session);
             case CLIENT_RESULT_TYPE_SUCCESS:
-            case CLIENT_RESULT_TYPE_WARP:
+            case CLIENT_RESULT_TYPE_NEXT:
                 return;
             }
+        } else if (res.type == CLIENT_RESULT_TYPE_NEXT) {
+            // TODO: Queue up the map's script
         }
     }
     break;

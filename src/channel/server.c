@@ -1662,7 +1662,7 @@ static enum bufferevent_filter_result input_filter(struct evbuffer *src, struct 
     evbuffer_remove(src, data, packet_len);
     decryption_context_decrypt(session->recieveContext, packet_len, data);
 
-    printf("Received packet with opcode %04hx from %hu\n", ((uint16_t *)data)[0], ((struct sockaddr_in *)&session->addr)->sin_port);
+    printf("Received packet with opcode 0x%04hX from %hu\n", ((uint16_t *)data)[0], ((struct sockaddr_in *)&session->addr)->sin_port);
     for (uint16_t i = 0; i < packet_len; i++)
         printf("%02X ", data[i]);
     printf("\n\n");
@@ -1693,7 +1693,7 @@ static enum bufferevent_filter_result output_filter(struct evbuffer *src, struct
 
     evbuffer_remove(src, data, packet_len);
 
-    printf("Sending packet with opcode %04hx to %hu\n", ((uint16_t *)data)[0], ((struct sockaddr_in *)&session->addr)->sin_port);
+    printf("Sending packet with opcode 0x%04hX to %hu\n", ((uint16_t *)data)[0], ((struct sockaddr_in *)&session->addr)->sin_port);
     for (uint16_t i = 0; i < packet_len; i++)
         printf("%02X ", data[i]);
     printf("\n\n");

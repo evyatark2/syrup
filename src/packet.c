@@ -175,9 +175,9 @@ static void add_quest_infos(void *data, void *ctx_);
 static void add_completed_quests(void *data, void *ctx_);
 static void add_monster_book_entries(void *data, void *ctx);
 
-size_t enter_map_packet(struct Character *chr, uint8_t *packet) {
+size_t set_field_packet(struct Character *chr, uint8_t *packet) {
     struct Writer writer;
-    writer_init(&writer, ENTER_MAP_PACKET_MAX_LENGTH, packet);
+    writer_init(&writer, SET_FIELD_PACKET_MAX_LENGTH, packet);
     writer_u16(&writer, 0x007D);
     writer_u32(&writer, 0); // Channel
     writer_u8(&writer, 1);
@@ -385,6 +385,7 @@ size_t enter_map_packet(struct Character *chr, uint8_t *packet) {
     struct tm now;
     localtime_r(&time.tv_sec, &now);
     writer_u64(&writer, (time.tv_sec * 1000L + time.tv_usec / 1000L) * 10000L + 116444736010800000L + now.tm_gmtoff * 1000L * 10000L); // Current time
+
     return writer.pos;
 }
 

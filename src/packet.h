@@ -84,8 +84,8 @@ size_t name_check_response_packet(uint8_t name_len, char *name, bool available, 
 #define CREATE_CHARACTER_RESPONSE_PACKET_LENGTH 162
 size_t create_character_response_packet(struct CharacterStats *chr, uint8_t *packet);
 
-#define ENTER_MAP_PACKET_MAX_LENGTH 65535
-size_t enter_map_packet(struct Character *chr, uint8_t *packet);
+#define SET_FIELD_PACKET_MAX_LENGTH 65535
+size_t set_field_packet(struct Character *chr, uint8_t *packet);
 
 #define SET_GENDER_PACKET_LENGTH 3
 void set_gender_packet(bool gender, uint8_t *packet);

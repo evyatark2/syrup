@@ -22,7 +22,7 @@
 struct LoginServer *SERVER;
 static void on_log(enum LogType type, const char *fmt, ...);
 
-static void *create_context();
+static void *create_context(void);
 static void destroy_context(void *ctx);
 static struct SessionContainer *on_client_create(void *thread_ctx);
 static int on_client_connect(struct SessionContainer *container, struct sockaddr *addr);
@@ -38,7 +38,7 @@ static int on_database_lock_ready_disconnect(struct SessionContainer *session, i
 
 static void on_sigint(int sig);
 
-int main()
+int main(void)
 {
     if (login_config_load("login/config.json") == -1)
         return -1;
@@ -69,7 +69,7 @@ static void on_log(enum LogType type, const char *fmt, ...)
     va_end(args);
 }
 
-static void *create_context()
+static void *create_context(void)
 {
     const char *ip;
     const char *socket;

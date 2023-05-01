@@ -34,7 +34,7 @@ enum ClientResultType {
     CLIENT_RESULT_TYPE_BAN = -2, // The client packet-edited
     CLIENT_RESULT_TYPE_ERROR = -1,
     CLIENT_RESULT_TYPE_SUCCESS = 0,
-    CLIENT_RESULT_TYPE_WARP = 1,
+    CLIENT_RESULT_TYPE_NEXT = 1,
 };
 
 struct ClientResult {

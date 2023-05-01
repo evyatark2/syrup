@@ -1236,9 +1236,9 @@ struct ClientResult map_hit_reactor(struct Map *map, struct MapPlayer *player, u
             reactor_manager_destroy(player->rm);
             script_manager_free(player->script);
             player->script = NULL;
-        /* FALLTHROUGH */
-        case SCRIPT_RESULT_VALUE_NEXT:
             return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
+        case SCRIPT_RESULT_VALUE_NEXT:
+            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_NEXT };
         break;
         }
     } else {
@@ -2309,15 +2309,13 @@ static void on_next_drop(struct Room *room, struct TimerHandle *handle)
             }
         }
 
-        if (batch->owner != NULL) {
-            if (batch->owner->dropCount == batch->owner->dropCapacity) {
-                void *temp = realloc(batch->owner->drops, (batch->owner->dropCapacity * 2) * sizeof(struct DropBatch *));
-                if (temp == NULL)
-                    return;
+        if (batch->owner != NULL && batch->owner->dropCount == batch->owner->dropCapacity) {
+            void *temp = realloc(batch->owner->drops, (batch->owner->dropCapacity * 2) * sizeof(struct DropBatch *));
+            if (temp == NULL)
+                return;
 
-                batch->owner->drops = temp;
-                batch->owner->dropCapacity *= 2;
-            }
+            batch->owner->drops = temp;
+            batch->owner->dropCapacity *= 2;
         }
 
         struct DropBatch *new = &map->dropBatches[map->dropBatchEnd];

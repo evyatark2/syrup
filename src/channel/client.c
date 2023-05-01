@@ -634,8 +634,8 @@ struct ClientContResult client_cont(struct Client *client, int status)
             database_connection_unlock(client->conn);
 
             {
-                uint8_t packet[ENTER_MAP_PACKET_MAX_LENGTH];
-                size_t len = enter_map_packet(chr, packet);
+                uint8_t packet[SET_FIELD_PACKET_MAX_LENGTH];
+                size_t len = set_field_packet(chr, packet);
                 session_write(client->session, len, packet);
             }
 
@@ -3051,7 +3051,9 @@ struct ClientResult client_npc_talk(struct Client *client, uint32_t npc)
     case SCRIPT_RESULT_VALUE_SUCCESS:
         script_manager_free(client->script);
         client->script = NULL;
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
     case SCRIPT_RESULT_VALUE_NEXT:
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_NEXT };
     break;
     }
 
@@ -3077,7 +3079,9 @@ struct ClientResult client_launch_map_script(struct Client *client, const char *
     case SCRIPT_RESULT_VALUE_SUCCESS:
         script_manager_free(client->script);
         client->script = NULL;
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
     case SCRIPT_RESULT_VALUE_NEXT:
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_NEXT };
         break;
     }
 
@@ -3138,7 +3142,7 @@ struct ClientResult client_start_quest(struct Client *client, uint16_t qid, uint
             client->script = NULL;
             return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
         case SCRIPT_RESULT_VALUE_NEXT:
-            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
+            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_NEXT };
         }
     }
 
@@ -3302,7 +3306,7 @@ struct ClientResult client_end_quest(struct Client *client, uint16_t qid, uint32
             client->script = NULL;
             return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
         case SCRIPT_RESULT_VALUE_NEXT:
-            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
+            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_NEXT };
         }
     }
 
@@ -3409,8 +3413,9 @@ struct ClientResult client_script_cont(struct Client *client, uint32_t action)
     case SCRIPT_RESULT_VALUE_SUCCESS:
         script_manager_free(client->script);
         client->script = NULL;
-    case SCRIPT_RESULT_VALUE_NEXT:
         return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
+    case SCRIPT_RESULT_VALUE_NEXT:
+        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_NEXT };
     }
 }
 
@@ -3925,7 +3930,9 @@ struct ClientResult client_launch_portal_script(struct Client *client, const cha
     case SCRIPT_RESULT_VALUE_SUCCESS:
         script_manager_free(client->script);
         client->script = NULL;
+    return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
     case SCRIPT_RESULT_VALUE_NEXT:
+    return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_NEXT };
         break;
     }
 
