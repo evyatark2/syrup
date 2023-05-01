@@ -55,10 +55,10 @@ struct MapPlayer {
     // Drops that this player owns
     size_t dropCapacity;
     size_t dropCount;
-    struct DropBatch **drops;
+    struct DropBatch **drops; // Drop batches that belong to this player; Used for autopickup
     size_t droppingCapacity;
     size_t droppingCount;
-    struct DroppingBatch **droppings;
+    struct DroppingBatch **droppings; // Dropping batches that belong to this player; Used for autopickup
     struct ReactorManager *rm;
     struct ScriptInstance *script;
     struct Client *client;
@@ -126,12 +126,12 @@ struct DroppingBatch {
 
 struct DropBatch {
     size_t count;
-    struct Drop *drops;
     struct TimerHandle *timer;
     struct MapPlayer *owner;
     size_t indexInPlayer;
     uint32_t ownerId;
     bool exclusive;
+    struct Drop drops[];
 };
 
 struct Map {
@@ -164,7 +164,7 @@ struct Map {
     size_t dropBatchCapacity;
     size_t dropBatchStart;
     size_t dropBatchEnd;
-    struct DropBatch *dropBatches;
+    struct DropBatch **dropBatches;
     bool *occupiedSeats;
     struct Spawner bossSpawner;
     struct MapMonster boss;
@@ -266,7 +266,7 @@ struct Map *map_create(struct ChannelServer *server, struct Room *room, struct S
         return NULL;
     }
 
-    map->dropBatches = malloc(sizeof(struct DropBatch));
+    map->dropBatches = malloc(sizeof(struct DropBatch *));
     if (map->dropBatches == NULL) {
         free(map->droppingBatches);
         free(map->dead);
@@ -703,8 +703,7 @@ void map_destroy(struct Map *map)
     free(map->reactors);
 
     for (size_t i = map->dropBatchStart; i < map->dropBatchEnd; i++) {
-        if (map->dropBatches[i].count != 0)
-            free(map->dropBatches[i].drops);
+        free(map->dropBatches[i]);
     }
 
     free(map->dropBatches);
@@ -715,8 +714,6 @@ void map_destroy(struct Map *map)
     free(map->droppingBatches);
     object_list_destroy(&map->objectList);
     heap_destroy(&map->heap);
-    //for (size_t i = 0; i < map->dropBatchCount; i++) {
-    //}
     free(map->dead);
     free(map->spawners);
     free(map->monsters);
@@ -829,14 +826,16 @@ int map_join(struct Map *map, struct Client *client, struct MapHandleContainer *
 
     size_t drop_count = 0;
     for (size_t i = map->dropBatchStart; i < map->dropBatchEnd; i++) {
-        if (map->dropBatches[i].ownerId == client_get_character(client)->id) {
-            map->dropBatches[i].owner = player->player;
-            drop_count++;
-        }
+        if (map->dropBatches[i] != NULL) {
+            if (map->dropBatches[i]->ownerId == client_get_character(client)->id) {
+                map->dropBatches[i]->owner = player->player;
+                drop_count++;
+            }
 
-        for (size_t j = 0; j < map->dropBatches[i].count; j++) {
-            struct Drop *drop = &map->dropBatches[i].drops[j];
-            client_announce_spawn_drop(client, 0, 0, map->dropBatches[i].exclusive ? 1 : 2, false, drop);
+            for (size_t j = 0; j < map->dropBatches[i]->count; j++) {
+                struct Drop *drop = &map->dropBatches[i]->drops[j];
+                client_announce_spawn_drop(client, 0, 0, map->dropBatches[i]->exclusive ? 1 : 2, false, drop);
+            }
         }
     }
 
@@ -844,9 +843,9 @@ int map_join(struct Map *map, struct Client *client, struct MapHandleContainer *
     player->player->drops = malloc(player->player->dropCapacity * sizeof(struct DropBatch *));
     player->player->dropCount = 0;
     for (size_t i = map->dropBatchStart; i < map->dropBatchEnd; i++) {
-        if (map->dropBatches[i].ownerId == client_get_character(client)->id) {
-            player->player->drops[player->player->dropCount] = &map->dropBatches[i];
-            map->dropBatches[i].indexInPlayer = player->player->dropCount;
+        if (map->dropBatches[i] != NULL && map->dropBatches[i]->ownerId == client_get_character(client)->id) {
+            player->player->drops[player->player->dropCount] = map->dropBatches[i];
+            map->dropBatches[i]->indexInPlayer = player->player->dropCount;
             player->player->dropCount++;
         }
     }
@@ -967,8 +966,10 @@ void map_leave(struct Map *map, struct MapPlayer *player)
 void map_for_each_drop(struct Map *map, void (*f)(struct Drop *, void *), void *ctx)
 {
     for (size_t i = map->dropBatchStart; i < map->dropBatchEnd; i++) {
-        for (size_t j = 0; j < map->dropBatches[i].count; j++)
-            f(&map->dropBatches[i].drops[j], ctx);
+        if (map->dropBatches[i] != NULL) {
+            for (size_t j = 0; j < map->dropBatches[i]->count; j++)
+                f(&map->dropBatches[i]->drops[j], ctx);
+        }
     }
 
     for (size_t i = 0; i < map->droppingBatchCount; i++) {
@@ -1386,8 +1387,8 @@ static int map_drop_batch_from_map_object(struct Map *map, struct MapPlayer *pla
     } else if (object->type == MAP_OBJECT_REACTOR) {
         pos = wz_get_reactors_for_map(room_get_id(map->room), NULL)[object->index].pos;
     } else if (object->type == MAP_OBJECT_DROP) {
-        pos.x = map->dropBatches[object->index].drops[object->index2].x;
-        pos.y = map->dropBatches[object->index].drops[object->index2].y;
+        pos.x = map->dropBatches[object->index]->drops[object->index2].x;
+        pos.y = map->dropBatches[object->index]->drops[object->index2].y;
     } else if (object->type == MAP_OBJECT_DROPPING) {
         pos.x = map->droppingBatches[object->index]->drops[object->index2].x;
         pos.y = map->droppingBatches[object->index]->drops[object->index2].y;
@@ -1471,17 +1472,12 @@ static int map_drop_batch_from_map_object(struct Map *map, struct MapPlayer *pla
             do_client_auto_pickup(map, player->client, drop);
     } else if (count == 1) {
         if (map->dropBatchEnd == map->dropBatchCapacity) {
-            void *temp = realloc(map->dropBatches, (map->dropBatchCapacity * 2) * sizeof(struct DropBatch));
+            void *temp = realloc(map->dropBatches, (map->dropBatchCapacity * 2) * sizeof(struct DropBatch *));
             if (temp == NULL)
                 return -1; // TODO: Delete the drops
 
             map->dropBatches = temp;
             map->dropBatchCapacity *= 2;
-            for (size_t i = map->dropBatchStart; i < map->dropBatchEnd; i++) {
-                struct DropBatch *batch = &map->dropBatches[i];
-                if (batch->owner != NULL)
-                    batch->owner->drops[batch->indexInPlayer] = batch;
-            }
         }
 
         if (player->dropCount == player->dropCapacity) {
@@ -1493,16 +1489,17 @@ static int map_drop_batch_from_map_object(struct Map *map, struct MapPlayer *pla
             player->dropCapacity *= 2;
         }
 
-        struct DropBatch *batch = &map->dropBatches[map->dropBatchEnd];
+        map->dropBatches[map->dropBatchEnd] = malloc(sizeof(struct DropBatch) + sizeof(struct Drop)); // Only 1 drop
+        map->dropBatchEnd++;
+        struct DropBatch *batch = map->dropBatches[map->dropBatchEnd - 1];
         batch->timer = room_add_timer(map->room, 15 * 1000, on_exclusive_drop_time_expired, NULL, true);
 
-        batch->drops = malloc(sizeof(struct Drop));
-        *batch->drops = *drops;
+        batch->drops[0] = *drops;
         struct Drop *drop = &batch->drops[0];
         struct MapObject *object = object_list_allocate(&map->objectList);
         drop->oid = object->oid;
         object->type = MAP_OBJECT_DROP;
-        object->index = map->dropBatchEnd;
+        object->index = map->dropBatchEnd - 1;
         object->index2 = 0;
         batch->count = 1;
         batch->owner = player;
@@ -1511,7 +1508,6 @@ static int map_drop_batch_from_map_object(struct Map *map, struct MapPlayer *pla
         batch->exclusive = true;
         player->drops[player->dropCount] = batch;
         player->dropCount++;
-        map->dropBatchEnd++;
 
         switch (drop->type) {
         case DROP_TYPE_MESO: {
@@ -1547,14 +1543,14 @@ static int map_drop_batch_from_map_object(struct Map *map, struct MapPlayer *pla
 
 void map_pick_up_all(struct Map *map, struct MapPlayer *player)
 {
-    // This whole thing is a very hacky way to pick up all the player's items on the map.
+    // This whole thing is a very hacky way to pick up all the player's drops on the map.
     // Since map_remove_drop() also changes player->dropCount and the current batch->count
     // and moves `DropBatch`es and `Drop`s around in memory,
     // we have to be extra careful with the iterators i and j.
     for (size_t i = 0; i < player->dropCount; i++) {
         struct DropBatch *batch = player->drops[i];
         // We need to cache this `count`
-        // as `batch` can be invalidated during a call to map_remove_drop() in do_client_auto_pickup()
+        // as `batch` can be freed during a call to map_remove_drop() in do_client_auto_pickup()
         size_t count = batch->count;
         for (size_t j = 0; j < count; j++) {
             struct Drop *drop = &batch->drops[j];
@@ -1562,6 +1558,9 @@ void map_pick_up_all(struct Map *map, struct MapPlayer *player)
                 i--;
 
             if (do_client_auto_pickup(map, player->client, drop)) {
+                // Here, if the batch was freed in map_remove_drop()
+                // then using batch->count-- would cause undefined behavior
+                // and that's why we cache it in the first place
                 count--;
                 j--;
             } else if (batch->count == 1) {
@@ -1587,17 +1586,12 @@ void map_pick_up_all(struct Map *map, struct MapPlayer *player)
 void map_add_player_drop(struct Map *map, struct MapPlayer *player, struct Drop *drop)
 {
     if (map->dropBatchEnd == map->dropBatchCapacity) {
-        void *temp = realloc(map->dropBatches, (map->dropBatchCapacity * 2) * sizeof(struct DropBatch));
+        void *temp = realloc(map->dropBatches, (map->dropBatchCapacity * 2) * sizeof(struct DropBatch *));
         if (temp == NULL)
             return; // TODO: Delete the drops
 
         map->dropBatches = temp;
         map->dropBatchCapacity *= 2;
-        for (size_t i = map->dropBatchStart; i < map->dropBatchEnd; i++) {
-            struct DropBatch *batch = &map->dropBatches[i];
-            if (batch->owner != NULL)
-                batch->owner->drops[batch->indexInPlayer] = batch;
-        }
     }
 
     if (player->dropCount == player->dropCapacity) {
@@ -1609,16 +1603,17 @@ void map_add_player_drop(struct Map *map, struct MapPlayer *player, struct Drop 
         player->dropCapacity *= 2;
     }
 
-    struct DropBatch *batch = &map->dropBatches[map->dropBatchEnd];
+    map->dropBatches[map->dropBatchEnd] = malloc(sizeof(struct DropBatch) + sizeof(struct Drop));
+    map->dropBatchEnd++;
+    struct DropBatch *batch = map->dropBatches[map->dropBatchEnd - 1];
     batch->timer = room_add_timer(map->room, 300 * 1000, on_drop_time_expired, NULL, true);
 
-    batch->drops = malloc(sizeof(struct Drop));
-    *batch->drops = *drop;
+    batch->drops[0] = *drop;
     drop = &batch->drops[0];
     struct MapObject *object = object_list_allocate(&map->objectList);
     drop->oid = object->oid;
     object->type = MAP_OBJECT_DROP;
-    object->index = map->dropBatchEnd;
+    object->index = map->dropBatchEnd - 1;
     object->index2 = 0;
     batch->count = 1;
     batch->owner = player;
@@ -1627,7 +1622,6 @@ void map_add_player_drop(struct Map *map, struct MapPlayer *player, struct Drop 
     batch->exclusive = false;
     player->drops[player->dropCount] = batch;
     player->dropCount++;
-    map->dropBatchEnd++;
 
     switch (drop->type) {
     case DROP_TYPE_MESO: {
@@ -1661,7 +1655,7 @@ const struct Drop *map_get_drop(struct Map *map, uint32_t oid)
 
     return object->type == MAP_OBJECT_DROPPING ?
         &map->droppingBatches[object->index]->drops[object->index2] :
-        &map->dropBatches[object->index].drops[object->index2];
+        &map->dropBatches[object->index]->drops[object->index2];
 }
 
 bool map_player_can_pick_up_drop(struct Map *map, struct MapPlayer *player, uint32_t oid)
@@ -1671,7 +1665,7 @@ bool map_player_can_pick_up_drop(struct Map *map, struct MapPlayer *player, uint
     if (object->type == MAP_OBJECT_DROPPING)
         return map->droppingBatches[object->index]->ownerId == client_get_character(player->client)->id;
 
-    struct DropBatch *batch = &map->dropBatches[object->index];
+    struct DropBatch *batch = map->dropBatches[object->index];
     return batch->ownerId == client_get_character(player->client)->id || !batch->exclusive;
 }
 
@@ -1682,7 +1676,7 @@ void map_remove_drop(struct Map *map, uint32_t char_id, uint32_t oid)
     if (object->type == MAP_OBJECT_DROP) {
         size_t batch_index = object->index;
         size_t drop_index = object->index2;
-        struct DropBatch *batch = &map->dropBatches[batch_index];
+        struct DropBatch *batch = map->dropBatches[batch_index];
         object_list_free(&map->objectList, oid);
 
         batch->drops[drop_index] = batch->drops[batch->count - 1];
@@ -1694,7 +1688,6 @@ void map_remove_drop(struct Map *map, uint32_t char_id, uint32_t oid)
 
         batch->count--;
         if (batch->count == 0) {
-            free(batch->drops);
             if (batch->owner != NULL) {
                 batch->owner->drops[batch->indexInPlayer] = batch->owner->drops[batch->owner->dropCount - 1];
                 batch->owner->drops[batch->indexInPlayer]->indexInPlayer = batch->indexInPlayer;
@@ -1709,24 +1702,24 @@ void map_remove_drop(struct Map *map, uint32_t char_id, uint32_t oid)
                 }
             }
             room_stop_timer(batch->timer);
+            free(batch);
+            map->dropBatches[batch_index] = NULL;
         }
 
-        while (map->dropBatchStart < map->dropBatchEnd && map->dropBatches[map->dropBatchStart].count == 0) {
+        while (map->dropBatchStart < map->dropBatchEnd && map->dropBatches[map->dropBatchStart] == NULL) {
             map->dropBatchStart++;
 
             if (map->dropBatchEnd - map->dropBatchStart < map->dropBatchCapacity / 4) {
                 if (map->dropBatchStart != 0) {
                     for (size_t i = map->dropBatchStart; i < map->dropBatchEnd; i++) {
                         map->dropBatches[i - map->dropBatchStart] = map->dropBatches[i];
-                        if (map->dropBatches[i - map->dropBatchStart].owner != NULL) {
-                            struct DropBatch *batch = &map->dropBatches[i - map->dropBatchStart];
-                            batch->owner->drops[batch->indexInPlayer] = batch;
-                        }
-                        for (size_t j = 0; j < map->dropBatches[i - map->dropBatchStart].count; j++) {
-                            struct MapObject *object =
-                                object_list_get(&map->objectList, map->dropBatches[i - map->dropBatchStart].drops[j].oid);
-                            assert(object->type == MAP_OBJECT_DROP);
-                            object->index = i - map->dropBatchStart;
+                        if (map->dropBatches[i - map->dropBatchStart] != NULL) {
+                            for (size_t j = 0; j < map->dropBatches[i - map->dropBatchStart]->count; j++) {
+                                struct MapObject *object =
+                                    object_list_get(&map->objectList, map->dropBatches[i - map->dropBatchStart]->drops[j].oid);
+                                assert(object->type == MAP_OBJECT_DROP);
+                                object->index = i - map->dropBatchStart;
+                            }
                         }
                     }
 
@@ -1734,15 +1727,10 @@ void map_remove_drop(struct Map *map, uint32_t char_id, uint32_t oid)
                     map->dropBatchStart = 0;
                 }
 
-                void *temp = realloc(map->dropBatches, (map->dropBatchCapacity / 2) * sizeof(struct DropBatch));
+                void *temp = realloc(map->dropBatches, (map->dropBatchCapacity / 2) * sizeof(struct DropBatch *));
                 if (temp != NULL) {
                     map->dropBatches = temp;
                     map->dropBatchCapacity /= 2;
-                    for (size_t i = map->dropBatchStart; i < map->dropBatchEnd; i++) {
-                        struct DropBatch *batch = &map->dropBatches[i];
-                        if (batch->owner != NULL)
-                            batch->owner->drops[batch->indexInPlayer] = batch;
-                    }
                 }
             }
         }
@@ -2267,17 +2255,12 @@ static void on_next_drop(struct Room *room, struct TimerHandle *handle)
         batch->timer = room_add_timer(map->room, 200, on_next_drop, batch, true);
     } else {
         if (map->dropBatchEnd == map->dropBatchCapacity) {
-            void *temp = realloc(map->dropBatches, (map->dropBatchCapacity * 2) * sizeof(struct DropBatch));
+            void *temp = realloc(map->dropBatches, (map->dropBatchCapacity * 2) * sizeof(struct DropBatch *));
             if (temp == NULL)
                 return; // TODO: Delete the drops
 
             map->dropBatches = temp;
             map->dropBatchCapacity *= 2;
-            for (size_t i = map->dropBatchStart; i < map->dropBatchEnd; i++) {
-                struct DropBatch *batch = &map->dropBatches[i];
-                if (batch->owner != NULL)
-                    batch->owner->drops[batch->indexInPlayer] = batch;
-            }
         }
 
         if (batch->owner != NULL && batch->owner->dropCount == batch->owner->dropCapacity) {
@@ -2289,9 +2272,10 @@ static void on_next_drop(struct Room *room, struct TimerHandle *handle)
             batch->owner->dropCapacity *= 2;
         }
 
-        struct DropBatch *new = &map->dropBatches[map->dropBatchEnd];
+        map->dropBatches[map->dropBatchEnd] = malloc(sizeof(struct DropBatch) + batch->count * sizeof(struct Drop));
+        map->dropBatchEnd++;
+        struct DropBatch *new = map->dropBatches[map->dropBatchEnd - 1];
         new->timer = room_add_timer(map->room, 15 * 1000, on_exclusive_drop_time_expired, NULL, true);
-        new->drops = malloc(batch->count * sizeof(struct Drop));
 
         if (batch->owner != NULL) {
             batch->owner->droppings[batch->indexInPlayer] = batch->owner->droppings[batch->owner->droppingCount - 1];
@@ -2324,7 +2308,7 @@ static void on_next_drop(struct Room *room, struct TimerHandle *handle)
         for (size_t i = 0; i < batch->count; i++) {
             struct MapObject *object = object_list_get(&map->objectList, batch->drops[i].oid);
             object->type = MAP_OBJECT_DROP;
-            object->index = map->dropBatchEnd;
+            object->index = map->dropBatchEnd - 1;
             new->drops[i] = batch->drops[i];
         }
         new->count = batch->count;
@@ -2336,7 +2320,6 @@ static void on_next_drop(struct Room *room, struct TimerHandle *handle)
         }
         new->ownerId = batch->ownerId;
         new->exclusive = true;
-        map->dropBatchEnd++;
 
         object = object_list_get(&map->objectList, batch->dropperOid);
         if (object->type == MAP_OBJECT_REACTOR)
@@ -2354,19 +2337,19 @@ static void on_next_drop(struct Room *room, struct TimerHandle *handle)
 static void on_exclusive_drop_time_expired(struct Room *room, struct TimerHandle *handle)
 {
     struct Map *map = room_get_context(room);
-    struct DropBatch *batch = &map->dropBatches[map->dropBatchStart];
-    while (!batch->exclusive)
+    struct DropBatch **batch = &map->dropBatches[map->dropBatchStart];
+    while (*batch == NULL || !(*batch)->exclusive)
         batch++;
 
-    batch->exclusive = false;
+    (*batch)->exclusive = false;
 
-    batch->timer = room_add_timer(room, 285 * 1000, on_drop_time_expired, NULL, true);
+    (*batch)->timer = room_add_timer(room, 285 * 1000, on_drop_time_expired, NULL, true);
 }
 
 static void on_drop_time_expired(struct Room *room, struct TimerHandle *handle)
 {
     struct Map *map = room_get_context(room);
-    struct DropBatch *batch = &map->dropBatches[map->dropBatchStart];
+    struct DropBatch *batch = map->dropBatches[map->dropBatchStart];
     for (size_t i = 0; i < batch->count; i++) {
         struct Drop *drop = &batch->drops[i];
         uint8_t packet[REMOVE_DROP_PACKET_LENGTH];
@@ -2379,7 +2362,6 @@ static void on_drop_time_expired(struct Room *room, struct TimerHandle *handle)
         object_list_free(&map->objectList, batch->drops[i].oid);
     }
 
-    free(batch->drops);
     batch->count = 0;
     if (batch->owner != NULL) {
         batch->owner->drops[batch->indexInPlayer] = batch->owner->drops[batch->owner->dropCount - 1];
@@ -2387,24 +2369,30 @@ static void on_drop_time_expired(struct Room *room, struct TimerHandle *handle)
         batch->owner->dropCount--;
         if (batch->owner->dropCount < batch->owner->dropCapacity / 4) {
             void *temp = realloc(batch->owner->drops, (batch->owner->dropCapacity / 2) * sizeof(struct DropBatch *));
-            if (temp == NULL)
-                ; // TODO
-
-            batch->owner->drops = temp;
-            batch->owner->dropCapacity /= 2;
+            if (temp != NULL) {
+                batch->owner->drops = temp;
+                batch->owner->dropCapacity /= 2;
+            }
         }
     }
-    while (map->dropBatchStart < map->dropBatchEnd && map->dropBatches[map->dropBatchStart].count == 0) {
+
+    free(batch);
+    map->dropBatches[map->dropBatchStart] = NULL;
+
+    while (map->dropBatchStart < map->dropBatchEnd && map->dropBatches[map->dropBatchStart] == NULL) {
         map->dropBatchStart++;
 
         if (map->dropBatchEnd - map->dropBatchStart < map->dropBatchCapacity / 4) {
             if (map->dropBatchStart != 0) {
                 for (size_t i = map->dropBatchStart; i < map->dropBatchEnd; i++) {
                     map->dropBatches[i - map->dropBatchStart] = map->dropBatches[i];
-                    for (size_t j = 0; j < map->dropBatches[i - map->dropBatchStart].count; j++) {
-                        struct MapObject *object = object_list_get(&map->objectList, map->dropBatches[i - map->dropBatchStart].drops[j].oid);
-                        assert(object->type == MAP_OBJECT_DROP);
-                        object->index = i - map->dropBatchStart;
+                    struct DropBatch *current = map->dropBatches[i - map->dropBatchStart];
+                    if (current != NULL) {
+                        for (size_t j = 0; j < current->count; j++) {
+                            struct MapObject *object = object_list_get(&map->objectList, current->drops[j].oid);
+                            assert(object->type == MAP_OBJECT_DROP);
+                            object->index = i - map->dropBatchStart;
+                        }
                     }
                 }
 
@@ -2412,15 +2400,10 @@ static void on_drop_time_expired(struct Room *room, struct TimerHandle *handle)
                 map->dropBatchStart = 0;
             }
 
-            void *temp = realloc(map->dropBatches, (map->dropBatchCapacity / 2) * sizeof(struct DropBatch));
+            void *temp = realloc(map->dropBatches, (map->dropBatchCapacity / 2) * sizeof(struct DropBatch *));
             if (temp != NULL) {
                 map->dropBatches = temp;
                 map->dropBatchCapacity /= 2;
-                for (size_t i = map->dropBatchStart; i < map->dropBatchEnd; i++) {
-                    struct DropBatch *batch = &map->dropBatches[i];
-                    if (batch->owner != NULL)
-                        batch->owner->drops[batch->indexInPlayer] = batch;
-                }
             }
         }
     }
