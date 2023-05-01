@@ -538,6 +538,9 @@ static void on_channel_read(struct bufferevent *bev, void *ctx)
             uint64_t one = 1;
             write(fd, &one, 8);
         } else if (action == 1) { // Client disconnects
+            mtx_lock(&channel->clientsMtx);
+            hash_set_u32_remove(channel->clients, token);
+            mtx_unlock(&channel->clientsMtx);
             channel->onClientLeave(token);
         }
     }
