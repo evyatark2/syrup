@@ -360,5 +360,20 @@ size_t show_intro_packet(uint16_t len, const char *path, uint8_t *packet);
 #define PLAY_SOUND_PACKET_MAX_LENGTH 128
 size_t play_sound_packet(uint16_t len, const char *path, uint8_t *packet);
 
+#define PARTY_STATUS_MESSAGE_PACKET_LENGTH 3
+void party_status_message_packet(uint8_t code, uint8_t *packet);
+
+#define PARTY_CREATE_PACKET_LENGTH 23
+void party_create_packet(uint32_t party_id, uint8_t *packet);
+
+#define PARTY_INVITE_PACKET_MAX_LENGTH 22
+size_t party_invite_packet(uint32_t party_id, uint8_t inviter_len, const char *inviter, uint8_t *packet);
+
+#define PARTY_JOIN_PACKET_LENGTH 128
+size_t party_join_packet(uint32_t id, uint8_t name_len, const char *name, uint8_t *packet);
+
+#define PARTY_DISBAND_PACKET_LENGTH 16
+void party_disband_packet(uint32_t party_id, uint32_t leader_id, uint8_t *packet);
+
 #endif
 

@@ -1646,6 +1646,63 @@ size_t play_sound_packet(uint16_t len, const char *path, uint8_t *packet)
     return writer.pos;
 }
 
+void party_status_message_packet(uint8_t code, uint8_t *packet)
+{
+    struct Writer writer;
+    writer_init(&writer, PARTY_STATUS_MESSAGE_PACKET_LENGTH, packet);
+
+    writer_u16(&writer, 0x003E);
+    writer_u8(&writer, code);
+}
+
+void party_create_packet(uint32_t party_id, uint8_t *packet)
+{
+    struct Writer writer;
+    writer_init(&writer, PARTY_CREATE_PACKET_LENGTH, packet);
+
+    writer_u16(&writer, 0x003E);
+    writer_u8(&writer, 8);
+    writer_u32(&writer, party_id);
+
+    // Party doors
+    writer_u32(&writer, 999999999);
+    writer_u32(&writer, 999999999);
+    writer_u32(&writer, 0);
+    writer_u32(&writer, 0);
+}
+
+size_t party_invite_packet(uint32_t party_id, uint8_t inviter_len, const char *inviter, uint8_t *packet)
+{
+    struct Writer writer;
+    writer_init(&writer, PARTY_INVITE_PACKET_MAX_LENGTH, packet);
+
+    writer_u16(&writer, 0x003E);
+    writer_u8(&writer, 4);
+    writer_u32(&writer, party_id);
+    writer_sized_string(&writer, inviter_len, inviter);
+    writer_u8(&writer, 0);
+
+    return writer.pos;
+}
+
+size_t party_join_packet(uint32_t id, uint8_t name_len, const char *name, uint8_t *packet)
+{
+    return 0;
+}
+
+void party_disband_packet(uint32_t party_id, uint32_t leader_id, uint8_t *packet)
+{
+    struct Writer writer;
+    writer_init(&writer, PLAY_SOUND_PACKET_MAX_LENGTH, packet);
+
+    writer_u16(&writer, 0x003E);
+    writer_u8(&writer, 12);
+    writer_u32(&writer, party_id);
+    writer_u32(&writer, leader_id);
+    writer_u8(&writer, 0);
+    writer_u32(&writer, party_id);
+}
+
 static void exp_gain_packet_internal(struct Writer *writer, int32_t exp, int32_t equip_bonus, int32_t party_bonus, bool white, bool in_chat)
 {
     writer_u16(writer, 0x0027);

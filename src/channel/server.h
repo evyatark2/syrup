@@ -45,6 +45,8 @@ typedef int OnRoomCreate(struct Room *room, void *thread_ctx);
 typedef void OnRoomDestroy(struct Room *room);
 
 typedef void OnClientTimer(struct Session *session);
+typedef void OnClientCommandResult(struct Session *session, void *cmd, bool sent);
+typedef void OnClientCommand(struct Session *session, void *cmd);
 
 typedef void *CreateUserContext(void);
 typedef void DestroyUserContext(void *ctx);
@@ -71,6 +73,7 @@ struct Room *session_get_room(struct Session *session);
 void session_broadcast_to_room(struct Session *session, size_t len, uint8_t *packet);
 void session_foreach_in_room(struct Session *session, void (*f)(struct Session *src, struct Session *dst, void *ctx), void *ctx);
 void session_enable_write(struct Session *session);
+bool session_send_command(struct Session *session, uint32_t target, void *command);
 
 uint32_t room_get_id(struct Room *room);
 int room_set_event(struct Room *room, int fd, int status, OnRoomResume *on_resume);

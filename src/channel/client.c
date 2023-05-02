@@ -1,6 +1,7 @@
 #include "client.h"
 
 #include <assert.h>
+#include <threads.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,12 +9,13 @@
 #include <sys/eventfd.h>
 #include <unistd.h>
 
-#include "map.h"
 #include "../constants.h"
-#include "../packet.h"
-#include "shop.h"
-#include "scripting/client.h"
 #include "../hash-map.h"
+#include "../packet.h"
+#include "../party.h"
+#include "map.h"
+#include "scripting/client.h"
+#include "shop.h"
 
 struct Client {
     struct Session *session;
@@ -58,8 +60,22 @@ struct Client {
         };
     };
     enum Stat stats;
+    struct Party *party;
     bool autoPickup;
+    struct ClientCommand *cmd;
 };
+
+size_t CLIENTS_LENGTH;
+struct {
+    uint8_t len;
+    char name[CHARACTER_MAX_NAME_LENGTH];
+    uint32_t id;
+} *CLIENTS;
+
+mtx_t CLIENTS_LOCK;
+
+static void insert_client(uint8_t len, const char *name, uint32_t id);
+static uint32_t find_id_by_name(uint8_t len, const char *name);
 
 static bool check_quest_requirements(struct Character *chr, size_t req_count, const struct QuestRequirement *reqs, uint32_t npc);
 static bool start_quest(struct Client *client, uint16_t qid, uint32_t npc, bool *success);
@@ -108,6 +124,36 @@ struct AddMonsterBookContext {
 
 static void add_monster_book_entry(void *data, void *ctx);
 
+enum ClientCommandType {
+    CLIENT_COMMAND_PARTY_INVITE,
+    CLIENT_COMMAND_PARTY_REJECT,
+    CLIENT_COMMAND_PARTY_JOIN,
+    CLIENT_COMMAND_PARTY_LEAVE,
+    CLIENT_COMMAND_PARTY_KICK,
+    CLIENT_COMMAND_PARTY_DISBAND,
+    CLIENT_COMMAND_PARTY_LOG_ON_OFF,
+    CLIENT_COMMAND_PARTY_CHANGE_LEADER,
+};
+
+struct ClientCommand {
+    enum ClientCommandType type;
+    uint8_t reason; // Rejection reason; 0 - player initiated; 1 - already in party
+    uint32_t id;
+    uint8_t nameLen;
+    char name[CHARACTER_MAX_NAME_LENGTH];
+};
+
+int clients_init(void)
+{
+    return mtx_init(&CLIENTS_LOCK, mtx_plain);
+}
+
+void clients_terminate(void)
+{
+    free(CLIENTS);
+    mtx_destroy(&CLIENTS_LOCK);
+}
+
 struct Client *client_create(struct Session *session, struct DatabaseConnection *conn, struct ScriptManager *quest_manager, struct ScriptManager *portal_mananger, struct ScriptManager *npc_manager, struct ScriptManager *map_manager)
 {
     struct Client *client = malloc(sizeof(struct Client));
@@ -137,7 +183,10 @@ struct Client *client_create(struct Session *session, struct DatabaseConnection 
     client->script = NULL;
     client->shop = -1;
     client->stats = 0;
+    client->party = NULL;
     client->autoPickup = false;
+    client->cmd = NULL;
+    client->handlerType = PACKET_TYPE_NONE;
 
     return client;
 }
@@ -1048,6 +1097,61 @@ struct ClientContResult client_resume(struct Client *client, int status)
 void client_update_conn(struct Client *client, struct DatabaseConnection *conn)
 {
     client->conn = conn;
+}
+
+void client_handle_command(struct Client *client, struct ClientCommand *cmd)
+{
+    switch (cmd->type) {
+    case CLIENT_COMMAND_PARTY_INVITE: {
+        if (client->party != NULL) {
+            // We can reuse `cmd`
+            cmd->type = CLIENT_COMMAND_PARTY_REJECT;
+            cmd->reason = 1;
+            cmd->id = find_id_by_name(cmd->nameLen, cmd->name);
+            session_send_command(client->session, cmd->id, cmd);
+            return;
+        }
+
+        uint8_t packet[PARTY_INVITE_PACKET_MAX_LENGTH];
+        size_t len = party_invite_packet(cmd->id, cmd->nameLen, cmd->name, packet);
+        session_write(client->session, len, packet);
+        free(cmd);
+    }
+    break;
+
+    case CLIENT_COMMAND_PARTY_REJECT: {
+        if (cmd->reason == 0) {
+            uint8_t packet[PARTY_STATUS_MESSAGE_PACKET_LENGTH];
+            party_status_message_packet(23, packet);
+            session_write(client->session, PARTY_STATUS_MESSAGE_PACKET_LENGTH, packet);
+            free(cmd);
+        } else if (cmd->reason == 1) {
+            uint8_t packet[PARTY_STATUS_MESSAGE_PACKET_LENGTH];
+            party_status_message_packet(16, packet);
+            session_write(client->session, PARTY_STATUS_MESSAGE_PACKET_LENGTH, packet);
+            free(cmd);
+        }
+    }
+    break;
+    }
+
+}
+
+void client_notify_command_received(struct Client *client, struct ClientCommand *cmd, bool sent)
+{
+    if (!sent) {
+        if (cmd->type == CLIENT_COMMAND_PARTY_INVITE) {
+            uint8_t packet[PARTY_STATUS_MESSAGE_PACKET_LENGTH];
+            party_status_message_packet(19, packet);
+            session_write(client->session, PARTY_STATUS_MESSAGE_PACKET_LENGTH, packet);
+        }
+        free(cmd);
+    }
+
+    client->cmd = NULL;
+    // If the map doesn't match then it means that client_warp() was called
+    if (client->character.map != room_get_id(session_get_room(client->session)))
+        client_warp(client, client->character.map, client->character.spawnPoint);
 }
 
 const struct Character *client_get_character(struct Client *client)
@@ -3844,7 +3948,7 @@ bool client_warp(struct Client *client, uint32_t map, uint8_t portal)
 {
     // If we are in the middle of an event then defer the
     // map change after the event has finished
-    if (client->handlerType == PACKET_TYPE_SAVE) {
+    if (client->handlerType == PACKET_TYPE_SAVE || client->cmd != NULL) {
         client->character.map = map;
         client->character.spawnPoint = portal;
         return false;
@@ -4229,6 +4333,119 @@ void client_show_intro(struct Client *client, const char *path)
     uint8_t packet[SHOW_INTRO_PACKET_MAX_LENGTH];
     size_t len = show_intro_packet(strlen(path), path, packet);
     session_write(client->session, len, packet);
+}
+
+void client_create_party(struct Client *client)
+{
+    if (client->party != NULL)
+        return;
+
+    client->party = party_create(client->character.id);
+    if (client->party == NULL) {
+        uint8_t packet[PARTY_STATUS_MESSAGE_PACKET_LENGTH];
+        party_status_message_packet(1, packet);
+        session_write(client->session, PARTY_STATUS_MESSAGE_PACKET_LENGTH, packet);
+    } else {
+        uint8_t packet[PARTY_CREATE_PACKET_LENGTH];
+        party_create_packet(party_get_id(client->party), packet);
+        session_write(client->session, PARTY_CREATE_PACKET_LENGTH, packet);
+    }
+}
+
+void client_invite_to_party(struct Client *client, uint8_t name_len, const char *name)
+{
+    if (client->party == NULL)
+        return;
+
+    client->cmd = malloc(sizeof(struct ClientCommand));
+    client->cmd->type = CLIENT_COMMAND_PARTY_INVITE;
+    client->cmd->id = party_get_id(client->party);
+    client->cmd->nameLen = client->character.nameLength;
+
+    memcpy(client->cmd->name, client->character.name, client->character.nameLength);
+
+    bool sent = session_send_command(client->session, find_id_by_name(name_len, name), client->cmd);
+
+    if (!sent) {
+        free(client->cmd);
+        client->cmd = NULL;
+        uint8_t packet[PARTY_STATUS_MESSAGE_PACKET_LENGTH];
+        party_status_message_packet(19, packet);
+        session_write(client->session, PARTY_STATUS_MESSAGE_PACKET_LENGTH, packet);
+    }
+}
+
+void client_reject_party_invitaion(struct Client *client, uint8_t name_len, const char *name)
+{
+    struct ClientCommand *cmd = malloc(sizeof(struct ClientCommand));
+    cmd->type = CLIENT_COMMAND_PARTY_INVITE;
+    cmd->reason = 0;
+    cmd->nameLen = client->character.nameLength;
+
+    memcpy(cmd->name, client->character.name, client->character.nameLength);
+
+    bool sent = session_send_command(client->session, find_id_by_name(name_len, name), cmd);
+
+    if (!sent)
+        free(cmd);
+}
+
+void client_announce_party_join(struct Client *client, uint32_t id)
+{
+    //uint8_t packet[PARTY_JOIN_PACKET_MAX_LENGTH];
+    //size_t len = party_join_packet(id, packet);
+    //session_write(client->session, len, packet);
+}
+
+void client_announce_party_leave(struct Client *client, uint32_t id)
+{
+}
+
+void client_announce_party_kick(struct Client *client, uint32_t id)
+{
+}
+
+void client_announce_party_disband(struct Client *client)
+{
+    if (client->party != NULL) {
+        uint8_t packet[PARTY_DISBAND_PACKET_LENGTH];
+        party_disband_packet(party_get_id(client->party), party_get_leader_id(client->party), packet);
+        session_write(client->session, PARTY_DISBAND_PACKET_LENGTH, packet);
+    }
+}
+
+void client_announce_party_change_online_status(struct Client *client, uint32_t id)
+{
+}
+
+void client_announce_party_change_leader(struct Client *client, uint32_t id)
+{
+}
+
+static void insert_client(uint8_t len, const char *name, uint32_t id)
+{
+    mtx_lock(&CLIENTS_LOCK);
+    CLIENTS = realloc(CLIENTS, (CLIENTS_LENGTH + 1) * sizeof(*CLIENTS));
+    CLIENTS[CLIENTS_LENGTH].id = id;
+    strncpy(CLIENTS[CLIENTS_LENGTH].name, name, len);
+    CLIENTS[CLIENTS_LENGTH].len = len;
+    CLIENTS_LENGTH++;
+    mtx_unlock(&CLIENTS_LOCK);
+}
+
+static uint32_t find_id_by_name(uint8_t len, const char *name)
+{
+    uint32_t ret = 0;
+    mtx_lock(&CLIENTS_LOCK);
+    for (size_t i = 0; i < CLIENTS_LENGTH; i++) {
+        if (len == CLIENTS[i].len && strncmp(CLIENTS[i].name, name, CLIENTS[i].len) == 0) {
+            ret = CLIENTS[i].id;
+            break;
+        }
+    }
+
+    mtx_unlock(&CLIENTS_LOCK);
+    return ret;
 }
 
 static bool check_quest_requirements(struct Character *chr, size_t req_count, const struct QuestRequirement *reqs, uint32_t npc)

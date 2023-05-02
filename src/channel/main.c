@@ -9,17 +9,19 @@
 #include <signal.h>
 #include <unistd.h>
 
-#include "config.h"
+#include "../constants.h"
+#include "../hash-map.h"
+#include "../opcodes.h"
+#include "../packet.h"
+#include "../party.h"
+#include "../reader.h"
 #include "client.h"
+#include "config.h"
 #include "drops.h"
 #include "events.h"
+#include "map.h"
 #include "server.h"
 #include "shop.h"
-#include "../constants.h"
-#include "../reader.h"
-#include "../hash-map.h"
-#include "map.h"
-#include "../packet.h"
 
 #define ACCOUNT_MAX_NAME_LENGTH 12
 #define ACCOUNT_MAX_PASSWORD_LENGTH 12
@@ -41,10 +43,13 @@ static void on_client_connect(struct Session *session, void *global_ctx, void *t
 static void on_client_disconnect(struct Session *session);
 static void on_client_join(struct Session *session, void *thread_ctx);
 static void on_client_packet(struct Session *session, size_t size, uint8_t *packet);
+static void on_client_command(struct Session *session, void *command);
 static void on_unassigned_client_packet(struct Session *session, size_t size, uint8_t *packet);
 static void on_client_resume(struct Session *session, int fd, int status);
 static int on_room_create(struct Room *room, void *thread_ctx);
 static void on_room_destroy(struct Room *room);
+static void on_client_command_result(struct Session *session, void *cmd, bool sent);
+static void on_client_command(struct Session *session, void *cmd);
 static void on_client_timer(struct Session *session);
 static void on_client_resume_timer(struct Session *session, int fd, int status);
 
@@ -111,7 +116,7 @@ int main(void)
         }
     };
 
-    SERVER = channel_server_create(7575, on_log, CHANNEL_CONFIG.listen, create_context, destroy_context, on_client_connect, on_client_disconnect, on_client_join, on_unassigned_client_packet, on_client_packet, on_room_create, on_room_destroy, on_client_timer, &ctx, 7);
+    SERVER = channel_server_create(7575, on_log, CHANNEL_CONFIG.listen, create_context, destroy_context, on_client_connect, on_client_disconnect, on_client_join, on_unassigned_client_packet, on_client_packet, on_room_create, on_room_destroy, on_client_command_result, on_client_command, on_client_timer, &ctx, 7);
     if (SERVER == NULL)
         return -1;
 
@@ -165,6 +170,9 @@ int main(void)
     event_subway_init(SERVER);
     event_area_boss_init(SERVER);
 
+    parties_init();
+    clients_init();
+
     // Doesn't matter which thread will get the signal
     signal(SIGINT, on_sigint);
     channel_server_start(SERVER);
@@ -174,6 +182,8 @@ int main(void)
     script_manager_destroy(ctx.npcManager);
     script_manager_destroy(ctx.portalManager);
     script_manager_destroy(ctx.questManager);
+    clients_terminate();
+    parties_terminate();
     wz_terminate();
     shops_unload();
     drops_unload();
@@ -253,7 +263,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
     packet += 2;
     size -= 2;
     switch (opcode) {
-    case 0x0026: {
+    case RECEIVE_OPCODE_PORTAL: {
         uint32_t target;
         uint16_t len = PORTAL_INFO_NAME_MAX_LENGTH;
         char portal[PORTAL_INFO_NAME_MAX_LENGTH+1];
@@ -296,7 +306,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
     }
     break;
 
-    case 0x0029: {
+    case RECEIVE_OPCODE_MOVE: {
         if (client_get_map(client)->player == NULL)
             return;
 
@@ -399,7 +409,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
     }
     break;
 
-    case 0x002A: {
+    case RECEIVE_OPCODE_SIT: {
         uint16_t id;
         READER_BEGIN(size, packet);
         READ_OR_ERROR(reader_u16, &id);
@@ -415,7 +425,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
     }
     break;
 
-    case 0x002B: {
+    case RECEIVE_OPCODE_CHAIR: {
         uint32_t id;
         READER_BEGIN(size, packet);
         READ_OR_ERROR(reader_u32, &id);
@@ -426,7 +436,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
     }
     break;
 
-    case 0x002C: {
+    case RECEIVE_OPCODE_ATTACK: {
         struct Map *map = room_get_context(session_get_room(session));
         uint32_t oids[15];
         int32_t damage[15 * 15];
@@ -483,7 +493,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
     }
     break;
 
-    case 0x002D: {
+    case RECEIVE_OPCODE_RANGED_ATTACK: {
         struct Map *map = room_get_context(session_get_room(session));
         uint32_t oids[15];
         int32_t damage[15 * 15];
@@ -546,7 +556,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
     }
     break;
 
-    case 0x002E: {
+    case RECEIVE_OPCODE_MAGIC_ATTACK: {
         struct Map *map = room_get_context(session_get_room(session));
         uint32_t oids[15];
         int32_t damage[15 * 15];
@@ -604,7 +614,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
     }
     break;
 
-    case 0x0030: {
+    case RECEIVE_OPCODE_TAKE_DAMAGE: {
         struct Map *map = room_get_context(session_get_room(session));
         uint8_t skill;
         int32_t damage;
@@ -636,7 +646,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
     }
     break;
 
-    case 0x0031: {
+    case RECEIVE_OPCODE_CHAT: {
         uint16_t str_len = 80;
         char string[81];
         uint8_t show;
@@ -681,7 +691,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
     }
     break;
 
-    case 0x0033: {
+    case RECEIVE_OPCODE_FACIAL_EXPRESSION: {
         uint32_t emote;
         READER_BEGIN(size, packet);
         READ_OR_ERROR(reader_u32, &emote);
@@ -696,7 +706,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
     }
     break;
 
-    case 0x003A: {
+    case RECEIVE_OPCODE_NPC_TALK: {
         if (client_get_map(client)->player == NULL)
             session_kick(session);
 
@@ -722,7 +732,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
     }
     break;
 
-    case 0x003C: {
+    case RECEIVE_OPCODE_DIALOGUE: {
         uint8_t last;
         uint8_t action;
         uint32_t selection = -1;
@@ -753,7 +763,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
     }
     break;
 
-    case 0x003D: {
+    case RECEIVE_OPCODE_SHOP_ACTION: {
         uint8_t action;
         READER_BEGIN(size, packet);
         READ_OR_ERROR(reader_u8, &action);
@@ -805,7 +815,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
     }
     break;
 
-    case 0x0047: {
+    case RECEIVE_OPCODE_ITEM_MOVE: {
         struct Map *map = room_get_context(session_get_room(session));
 
         if (client_is_in_shop(client))
@@ -882,7 +892,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
     }
     break;
 
-    case 0x0048: {
+    case RECEIVE_OPCODE_ITEM_USE: {
         uint16_t slot;
         uint32_t item_id;
         READER_BEGIN(size, packet);
@@ -896,7 +906,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
     }
     break;
 
-    case 0x0057: {
+    case RECEIVE_OPCODE_AP_ASSIGN: {
         uint32_t stat;
         READER_BEGIN(size, packet);
         SKIP(4);
@@ -925,7 +935,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
     break;
 
     // 59 00 70 FC 02 00 00 14 00 00 00 00 03 00 00
-    case 0x0059: {
+    case RECEIVE_OPCODE_HEAL_OVER_TIME: {
         int16_t hp, mp;
         READER_BEGIN(size, packet);
         SKIP(8);
@@ -941,7 +951,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
     }
     break;
 
-    case 0x005A: {
+    case RECEIVE_OPCODE_SP_ASSIGN: {
         uint32_t id;
         READER_BEGIN(size, packet);
         SKIP(4);
@@ -953,7 +963,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
     }
     break;
 
-    case 0x005E: {
+    case RECEIVE_OPCODE_MESO_DROP: {
         int32_t amount;
         READER_BEGIN(size, packet);
         SKIP(4);
@@ -979,7 +989,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
     }
     break;
 
-    case 0x0064: {
+    case RECEIVE_OPCODE_SCRIPTED_PORTAL: {
         uint16_t len = 17;
         char str[17];
         READER_BEGIN(size, packet);
@@ -1007,7 +1017,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
     }
     break;
 
-    case 0x006B: {
+    case RECEIVE_OPCODE_QUEST_ACTION: {
         uint8_t action;
         uint16_t qid;
         uint32_t npc;
@@ -1118,7 +1128,45 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
     }
     break;
 
-    case 0x0087: {
+    case RECEIVE_OPCODE_PARTY_OP: {
+        uint8_t op;
+        READER_BEGIN(size, packet);
+        READ_OR_ERROR(reader_u8, &op);
+        switch (op) {
+        case 1: {
+            client_create_party(client);
+        }
+        break;
+
+        case 3: {
+        }
+        break;
+
+        case 4: {
+            uint16_t name_len = CHARACTER_MAX_NAME_LENGTH;
+            char name[CHARACTER_MAX_NAME_LENGTH];
+            READ_OR_ERROR(reader_sized_string, &name_len, name);
+            client_invite_to_party(client, name_len, name);
+        }
+        break;
+        }
+        READER_END();
+    }
+    break;
+
+    case RECEIVE_OPCODE_PARTY_DENY: {
+        uint16_t name_len = CHARACTER_MAX_NAME_LENGTH;
+        char name[CHARACTER_MAX_NAME_LENGTH];
+        READER_BEGIN(size, packet);
+        SKIP(1);
+        READ_OR_ERROR(reader_sized_string, &name_len, name);
+        READER_END();
+
+        client_reject_party_invitaion(client, name_len, name);
+    }
+    break;
+
+    case RECEIVE_OPCODE_KEYMAP_CHANGE: {
         if (client_get_map(client)->player == NULL)
             return;
 
@@ -1162,7 +1210,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
     }
     break;
 
-    case 0x00BC: {
+    case RECEIVE_OPCODE_MONSTER_MOVE: {
         if (client_get_map(client)->player == NULL)
             return;
 
@@ -1260,7 +1308,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
     }
     break;
 
-    case 0x00C5: {
+    case RECEIVE_OPCODE_NPC_MOVE: {
         if (client_get_map(client)->player == NULL)
             return;
 
@@ -1285,7 +1333,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
     }
     break;
 
-    case 0x00CA: {
+    case RECEIVE_OPCODE_PICKUP: {
         uint32_t oid;
         READER_BEGIN(size, packet);
         SKIP(9);
@@ -1384,7 +1432,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
     }
     break;
 
-    case 0x00CD: {
+    case RECEIVE_OPCODE_REACTOR_HIT: {
         uint32_t oid;
         uint8_t stance;
         READER_BEGIN(size, packet);
@@ -1407,7 +1455,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
     }
     break;
 
-    case 0x00CF: {
+    case RECEIVE_OPCODE_MAP_TRANSFER_COMPLETE: {
         READER_BEGIN(size, packet);
         READER_END();
         struct Map *map = room_get_context(session_get_room(session));
@@ -1442,6 +1490,16 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
     default:
     break;
     }
+}
+
+static void on_client_command_result(struct Session *session, void *cmd, bool sent)
+{
+    client_notify_command_received(session_get_context(session), cmd, sent);
+}
+
+static void on_client_command(struct Session *session, void *ctx)
+{
+    client_handle_command(session_get_context(session), ctx);
 }
 
 static void on_client_timer(struct Session *session)

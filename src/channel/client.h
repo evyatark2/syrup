@@ -51,6 +51,11 @@ struct ClientContResult {
     int fd;
 };
 
+struct ClientCommand;
+
+int clients_init(void);
+void clients_terminate(void);
+
 struct Client *client_create(struct Session *session, struct DatabaseConnection *conn, struct ScriptManager *quest_manager, struct ScriptManager *portal_mananger, struct ScriptManager *npc_manager, struct ScriptManager *map_manager);
 void client_destroy(struct Client *client);
 struct Session *client_get_session(struct Client *client);
@@ -59,6 +64,8 @@ void client_save_start(struct Client *client);
 void client_logout_start(struct Client *client);
 struct ClientContResult client_resume(struct Client *client, int status);
 void client_update_conn(struct Client *client, struct DatabaseConnection *conn);
+void client_handle_command(struct Client *client, struct ClientCommand *cmd);
+void client_notify_command_received(struct Client *client, struct ClientCommand *cmd, bool sent);
 const struct Character *client_get_character(struct Client *client);
 uint32_t client_get_active_npc(struct Client *client);
 struct MapHandleContainer *client_get_map(struct Client *client);
@@ -153,6 +160,15 @@ bool client_stand_up(struct Client *client);
 bool client_open_storage(struct Client *client);
 void client_show_info(struct Client *client, const char *path);
 void client_show_intro(struct Client *client, const char *path);
+void client_create_party(struct Client *client);
+void client_invite_to_party(struct Client *client, uint8_t name_len, const char *name);
+void client_reject_party_invitaion(struct Client *client, uint8_t name_len, const char *name);
+void client_announce_party_join(struct Client *client, uint32_t id);
+void client_announce_party_leave(struct Client *client, uint32_t id);
+void client_announce_party_kick(struct Client *client, uint32_t id);
+void client_announce_party_disband(struct Client *client);
+void client_announce_party_change_online_status(struct Client *client, uint32_t id);
+void client_announce_party_change_leader(struct Client *client, uint32_t id);
 
 #endif
 
