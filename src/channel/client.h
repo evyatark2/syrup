@@ -14,7 +14,9 @@
 struct Client;
 
 enum PacketType {
+    PACKET_TYPE_NONE,
     PACKET_TYPE_LOGIN,
+    PACKET_TYPE_SAVE,
     PACKET_TYPE_LOGOUT,
 };
 
@@ -47,15 +49,15 @@ struct ClientResult {
 struct ClientContResult {
     int status;
     int fd;
-    uint32_t map;
 };
 
 struct Client *client_create(struct Session *session, struct DatabaseConnection *conn, struct ScriptManager *quest_manager, struct ScriptManager *portal_mananger, struct ScriptManager *npc_manager, struct ScriptManager *map_manager);
 void client_destroy(struct Client *client);
 struct Session *client_get_session(struct Client *client);
 void client_login_start(struct Client *client, uint32_t id);
+void client_save_start(struct Client *client);
 void client_logout_start(struct Client *client);
-struct ClientContResult client_cont(struct Client *client, int status);
+struct ClientContResult client_resume(struct Client *client, int status);
 void client_update_conn(struct Client *client, struct DatabaseConnection *conn);
 const struct Character *client_get_character(struct Client *client);
 uint32_t client_get_active_npc(struct Client *client);
@@ -135,7 +137,7 @@ void client_send_prev(struct Client *client, size_t msg_len, const char *msg, ui
 void client_send_accept_decline(struct Client *client, size_t msg_len, const char *msg, uint8_t speaker);
 void client_send_get_number(struct Client *client, size_t msg_len, const char *msg, uint8_t speaker, int32_t def, int32_t min, int32_t max);
 void client_message(struct Client *client, const char *msg);
-void client_warp(struct Client *client, uint32_t map, uint8_t portal);
+bool client_warp(struct Client *client, uint32_t map, uint8_t portal);
 void client_reset_stats(struct Client *client);
 struct ClientResult client_launch_portal_script(struct Client *client, const char *portal);
 void client_enable_actions(struct Client *client);

@@ -45,6 +45,8 @@ static void on_unassigned_client_packet(struct Session *session, size_t size, ui
 static void on_client_resume(struct Session *session, int fd, int status);
 static int on_room_create(struct Room *room, void *thread_ctx);
 static void on_room_destroy(struct Room *room);
+static void on_client_timer(struct Session *session);
+static void on_client_resume_timer(struct Session *session, int fd, int status);
 
 static void on_sigint(int sig);
 
@@ -109,7 +111,7 @@ int main(void)
         }
     };
 
-    SERVER = channel_server_create(7575, on_log, CHANNEL_CONFIG.listen, create_context, destroy_context, on_client_connect, on_client_disconnect, on_client_join, on_unassigned_client_packet, on_client_packet, on_room_create, on_room_destroy, &ctx, 7);
+    SERVER = channel_server_create(7575, on_log, CHANNEL_CONFIG.listen, create_context, destroy_context, on_client_connect, on_client_disconnect, on_client_join, on_unassigned_client_packet, on_client_packet, on_room_create, on_room_destroy, on_client_timer, &ctx, 7);
     if (SERVER == NULL)
         return -1;
 
@@ -156,12 +158,14 @@ int main(void)
         return -1;
     }
 
+    // TODO: Failure check
     event_boat_init(SERVER);
     event_train_init(SERVER);
     event_genie_init(SERVER);
     event_subway_init(SERVER);
     event_area_boss_init(SERVER);
 
+    // Doesn't matter which thread will get the signal
     signal(SIGINT, on_sigint);
     channel_server_start(SERVER);
     channel_server_destroy(SERVER);
@@ -1440,6 +1444,38 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
     }
 }
 
+static void on_client_timer(struct Session *session)
+{
+    struct Client *client = session_get_context(session);
+
+    client_save_start(client);
+    struct ClientContResult res = client_resume(client, 0);
+
+    if (res.status > 0) {
+        session_set_event(session, res.status, res.fd, on_client_resume_timer);
+    } else if (res.status == 0) {
+        printf("SAVED TO DB!!!\n");
+    } else if (res.status < 0) {
+        session_kick(session);
+    }
+}
+
+static void on_client_resume_timer(struct Session *session, int fd, int status)
+{
+    struct Client *client = session_get_context(session);
+
+    struct ClientContResult res = client_resume(client, status);
+    if (res.status > 0 && (res.fd != session_get_event_fd(session) || res.status != session_get_event_disposition(session))) {
+        session_set_event(session, res.status, res.fd, on_client_resume_timer);
+    } else if (res.status == 0) {
+        printf("SAVED TO DB!!!\n");
+        session_close_event(session);
+    } else if (res.status < 0) {
+        session_kick(session);
+    }
+
+}
+
 static void on_unassigned_client_packet(struct Session *session, size_t size, uint8_t *packet)
 {
     if (size < 2)
@@ -1453,33 +1489,19 @@ static void on_unassigned_client_packet(struct Session *session, size_t size, ui
     if (opcode != 0x0014)
         session_kick(session);
 
-    uint32_t token;
+    uint32_t id;
     READER_BEGIN(size - 2, packet + 2);
-    READ_OR_ERROR(reader_u32, &token);
+    READ_OR_ERROR(reader_u32, &id);
     SKIP(2);
     READER_END();
-    uint32_t id;
-    if (!session_assign_token(session, token, &id))
+    if (!session_assign_id(session, id))
         session_kick(session);
 
-    //const struct sockaddr *addr = session_get_addr(session);
-
-    //struct IdAddr new = {
-    //    .id = id,
-    //};
-
-    //memcpy(&new.addr,
-    //        addr->sa_family == AF_INET ? (void *)(struct sockaddr_in *)addr : (void *)(struct sockaddr_in6 *)addr,
-    //        addr->sa_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6));
-
-    //hash_set_u32_insert(CLIENTS, &new);
-
     client_login_start(client, id);
-    struct ClientContResult res = client_cont(client, 0);
+    struct ClientContResult res = client_resume(client, 0);
 
     if (res.status > 0) {
         session_set_event(session, res.status, res.fd, on_client_resume);
-        return;
     } else if (res.status == 0) {
         session_change_room(session, chr->map);
     }
@@ -1490,13 +1512,14 @@ static void on_client_resume(struct Session *session, int fd, int status)
     struct Client *client = session_get_context(session);
     const struct Character *chr = client_get_character(client);
 
-    struct ClientContResult res = client_cont(client, status);
+    struct ClientContResult res = client_resume(client, status);
     if (res.status > 0 && (res.fd != session_get_event_fd(session) || res.status != session_get_event_disposition(session))) {
         session_set_event(session, res.status, res.fd, on_client_resume);
-        return;
     } else if (res.status == 0) {
         session_close_event(session);
         session_change_room(session, chr->map);
+    } else if (res.status < 0) {
+        session_kick(session);
     }
 }
 
@@ -1504,7 +1527,7 @@ static void on_client_resume_disconnect(struct Session *session, int fd, int sta
 {
     struct Client *client = session_get_context(session);
 
-    struct ClientContResult res = client_cont(client, status);
+    struct ClientContResult res = client_resume(client, status);
     if (res.status > 0 && (res.fd != session_get_event_fd(session) || res.status != session_get_event_disposition(session))) {
         session_set_event(session, res.status, res.fd, on_client_resume_disconnect);
     } else if (res.status <= 0) {
@@ -1523,7 +1546,7 @@ static void on_client_disconnect(struct Session *session)
     }
 
     client_logout_start(client);
-    struct ClientContResult res = client_cont(client, 0);
+    struct ClientContResult res = client_resume(client, 0);
     if (res.status > 0) {
         session_set_event(session, res.status, res.fd, on_client_resume_disconnect);
     }
@@ -1535,9 +1558,6 @@ static void on_client_join(struct Session *session, void *thread_ctx)
     const struct Character *chr = client_get_character(client);
 
     client_update_conn(client, thread_ctx);
-    //session_write(session, 3, (uint8_t[]) { 0xDE, 0x00, 0x00 }); // Disable UI
-    //session_write(session, 3, (uint8_t[]) { 0xDD, 0x00, 0x00 }); // Lock UI
-    //session_write(session, 2, (uint8_t[]) { 0x23, 0x00 }); // Force stat reset
     const struct PortalInfo *info = wz_get_portal_info(chr->map, chr->spawnPoint);
     client_update_player_pos(client, info->x, info->y, 0, 6);
 }

@@ -26,13 +26,10 @@ struct Client {
         struct ScriptManager *portal;
         struct ScriptManager *map;
     } managers;
-    struct LockQueue *lockQueue;
     enum PacketType handlerType;
-    // TODO: Make this a handler queue
-    void *handler;
     struct Character character;
     struct ScriptInstance *script;
-    
+
     // Values related to the current script state
     struct {
         enum ScriptState scriptState;
@@ -47,6 +44,8 @@ struct Client {
 
     struct DatabaseRequest *request;
     int databaseState;
+    // Theses fields are only used to temporarly store allocated memory
+    // during asynchronous database transactions
     union {
         struct {
             void *quests;
@@ -168,6 +167,12 @@ void client_login_start(struct Client *client, uint32_t id)
     client->character.id = id;
 }
 
+void client_save_start(struct Client *client)
+{
+    client->handlerType = PACKET_TYPE_SAVE;
+    client->databaseState = 0;
+}
+
 void client_logout_start(struct Client *client)
 {
     script_manager_free(client->script);
@@ -177,7 +182,7 @@ void client_logout_start(struct Client *client)
     client->databaseState = 0;
 }
 
-struct ClientContResult client_cont(struct Client *client, int status)
+struct ClientContResult client_resume(struct Client *client, int status)
 {
     struct Character *chr = &client->character;
 
@@ -666,13 +671,19 @@ struct ClientContResult client_cont(struct Client *client, int status)
 
             session_write(client->session, 3, (uint8_t[]) { 0x2F, 0x00, 0x01 }); // Claim status changed?
 
-            return (struct ClientContResult) { 0, .map = chr->map };
+            insert_client(chr->nameLength, chr->name, chr->id);
+
+            client->handlerType = PACKET_TYPE_NONE;
+
+            return (struct ClientContResult) { 0 };
         }
     break;
 
+    case PACKET_TYPE_SAVE:
     case PACKET_TYPE_LOGOUT:
         if (client->databaseState == 0) {
-            // If the client doesn't have a room - meaning it didn't load a character, there is no need to flush the character
+            // If the client doesn't have a room - meaning it didn't load a character,
+            // there is no need to flush the character, only applicable to PACKET_TYPE_LOGOUT
             if (session_get_room(client->session) == NULL) {
                 client_destroy(client);
                 return (struct ClientContResult) { .status = 0 };
@@ -682,7 +693,8 @@ struct ClientContResult client_cont(struct Client *client, int status)
             if (fd == -2) {
                 client->databaseState++;
             } else if (fd == -1) {
-                client_destroy(client);
+                if (client->handlerType == PACKET_TYPE_LOGOUT)
+                    client_destroy(client);
                 return (struct ClientContResult) { .status = -1 };
             } else {
                 client->databaseState++;
@@ -818,7 +830,8 @@ struct ClientContResult client_cont(struct Client *client, int status)
 
             params.updateCharacter.quests = malloc(hash_set_u16_size(chr->quests) * sizeof(uint16_t));
             if (params.updateCharacter.quests == NULL) {
-                client_destroy(client);
+                if (client->handlerType == PACKET_TYPE_LOGOUT)
+                    client_destroy(client);
                 return (struct ClientContResult) { .status = -1 };
             }
 
@@ -836,7 +849,8 @@ struct ClientContResult client_cont(struct Client *client, int status)
             params.updateCharacter.progresses = malloc(ctx.progressCount * sizeof(struct DatabaseProgress));
             if (params.updateCharacter.progresses == NULL) {
                 free(client->quests);
-                client_destroy(client);
+                if (client->handlerType == PACKET_TYPE_LOGOUT)
+                    client_destroy(client);
                 return (struct ClientContResult) { .status = -1 };
             }
 
@@ -854,7 +868,8 @@ struct ClientContResult client_cont(struct Client *client, int status)
             if (params.updateCharacter.questInfos == NULL) {
                 free(client->progresses);
                 free(client->quests);
-                client_destroy(client);
+                if (client->handlerType == PACKET_TYPE_LOGOUT)
+                    client_destroy(client);
                 return (struct ClientContResult) { .status = -1 };
             }
 
@@ -873,7 +888,8 @@ struct ClientContResult client_cont(struct Client *client, int status)
                 free(client->questInfos);
                 free(client->progresses);
                 free(client->quests);
-                client_destroy(client);
+                if (client->handlerType == PACKET_TYPE_LOGOUT)
+                    client_destroy(client);
                 return (struct ClientContResult) { .status = -1 };
             }
 
@@ -893,7 +909,8 @@ struct ClientContResult client_cont(struct Client *client, int status)
                 free(client->questInfos);
                 free(client->progresses);
                 free(client->quests);
-                client_destroy(client);
+                if (client->handlerType == PACKET_TYPE_LOGOUT)
+                    client_destroy(client);
                 return (struct ClientContResult) { .status = -1 };
             }
 
@@ -914,7 +931,8 @@ struct ClientContResult client_cont(struct Client *client, int status)
                 free(client->questInfos);
                 free(client->progresses);
                 free(client->quests);
-                client_destroy(client);
+                if (client->handlerType == PACKET_TYPE_LOGOUT)
+                    client_destroy(client);
                 return (struct ClientContResult) { .status = -1 };
             }
 
@@ -942,7 +960,8 @@ struct ClientContResult client_cont(struct Client *client, int status)
                 free(client->questInfos);
                 free(client->progresses);
                 free(client->quests);
-                client_destroy(client);
+                if (client->handlerType == PACKET_TYPE_LOGOUT)
+                    client_destroy(client);
                 return (struct ClientContResult) { .status = -1 };
             }
 
@@ -967,7 +986,8 @@ struct ClientContResult client_cont(struct Client *client, int status)
                 free(client->questInfos);
                 free(client->progresses);
                 free(client->quests);
-                client_destroy(client);
+                if (client->handlerType == PACKET_TYPE_LOGOUT)
+                    client_destroy(client);
                 return (struct ClientContResult) { .status = -1 };
             }
 
@@ -983,7 +1003,8 @@ struct ClientContResult client_cont(struct Client *client, int status)
                 free(client->quests);
                 database_request_destroy(client->request);
                 database_connection_unlock(client->conn);
-                client_destroy(client);
+                if (client->handlerType == PACKET_TYPE_LOGOUT)
+                    client_destroy(client);
                 return (struct ClientContResult) { .status = status };
             }
 
@@ -1003,16 +1024,25 @@ struct ClientContResult client_cont(struct Client *client, int status)
                 free(client->quests);
                 database_request_destroy(client->request);
                 database_connection_unlock(client->conn);
-                client_destroy(client);
+                client->handlerType = PACKET_TYPE_NONE;
+                if (client->handlerType == PACKET_TYPE_LOGOUT)
+                    client_destroy(client);
+                else if (client->character.map != room_get_id(session_get_room(client->session)))
+                    client_warp(client, client->character.map, client->character.spawnPoint);
+
+
+
                 return (struct ClientContResult) { .status = status };
             }
 
             return (struct ClientContResult) { .status = status, .fd = database_connection_get_fd(client->conn) };
         }
     break;
+    default:
+        assert(0);
     }
 
-    return (struct ClientContResult) { -1 };
+    return (struct ClientContResult) { 0 };
 }
 
 void client_update_conn(struct Client *client, struct DatabaseConnection *conn)
@@ -3810,8 +3840,16 @@ void client_message(struct Client *client, const char *msg)
     session_write(client->session, len, packet);
 }
 
-void client_warp(struct Client *client, uint32_t map, uint8_t portal)
+bool client_warp(struct Client *client, uint32_t map, uint8_t portal)
 {
+    // If we are in the middle of an event then defer the
+    // map change after the event has finished
+    if (client->handlerType == PACKET_TYPE_SAVE) {
+        client->character.map = map;
+        client->character.spawnPoint = portal;
+        return false;
+    }
+
     struct Character *chr = &client->character;
     client->scriptState = SCRIPT_STATE_WARP;
     {
@@ -3833,6 +3871,8 @@ void client_warp(struct Client *client, uint32_t map, uint8_t portal)
     client->character.spawnPoint = portal;
 
     session_change_room(client->session, map);
+
+    return true;
 }
 
 void client_reset_stats(struct Client *client)

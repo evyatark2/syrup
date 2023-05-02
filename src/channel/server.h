@@ -44,6 +44,8 @@ typedef void OnClientPacket(struct Session *session, size_t size, uint8_t *packe
 typedef int OnRoomCreate(struct Room *room, void *thread_ctx);
 typedef void OnRoomDestroy(struct Room *room);
 
+typedef void OnClientTimer(struct Session *session);
+
 typedef void *CreateUserContext(void);
 typedef void DestroyUserContext(void *ctx);
 
