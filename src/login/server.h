@@ -64,7 +64,7 @@ struct LoginServer *login_server_create(OnLog *on_log, CreateUserContext *create
 void login_server_destroy(struct LoginServer *server);
 enum ResponderResult login_server_start(struct LoginServer *server);
 void login_server_stop(struct LoginServer *server);
-int assign_channel(uint32_t id, uint8_t world, uint8_t channel, uint32_t *token);
+int assign_channel(uint32_t id, uint8_t world, uint8_t channel);
 
 int session_get_event_disposition(struct Session *session);
 int session_set_event(struct Session *session, int status, int fd, OnResume *on_resume);

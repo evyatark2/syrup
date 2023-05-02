@@ -33,8 +33,8 @@ int accounts_init(void);
 struct AccountNode *account_login(uint32_t id);
 uint32_t account_get_id(struct AccountNode *account);
 void account_logout(struct AccountNode **account);
-void account_set_token(struct AccountNode *account, uint32_t token);
-void account_logout_by_token(uint32_t token);
+void account_set_cid(struct AccountNode *account, uint32_t id);
+void account_logout_by_cid(uint32_t id);
 
 #endif
 

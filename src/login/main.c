@@ -642,9 +642,9 @@ static void on_client_destroy(struct SessionContainer *session)
     free(client);
 }
 
-static void on_client_leave(uint32_t token)
+static void on_client_leave(uint32_t id)
 {
-    account_logout_by_token(token);
+    account_logout_by_cid(id);
 }
 
 static void on_sigint(int sig)

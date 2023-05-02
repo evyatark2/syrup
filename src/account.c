@@ -9,7 +9,7 @@ struct AccountNode {
     struct AccountNode *prev;
     struct AccountNode *next;
     uint32_t id;
-    uint32_t token;
+    uint32_t cid;
 } *HEAD;
 
 struct Account account_get_default_account(uint8_t name_len, char *name)
@@ -46,6 +46,7 @@ struct AccountNode *account_login(uint32_t id)
     }
 
     new->id = id;
+    new->cid = 0;
     new->next = HEAD;
     new->prev = NULL;
     if (HEAD != NULL)
@@ -79,17 +80,17 @@ void account_logout(struct AccountNode **node_)
     *node_ = NULL;
 }
 
-void account_set_token(struct AccountNode *node, uint32_t token)
+void account_set_cid(struct AccountNode *account, uint32_t id)
 {
-    node->token = token;
+    account->cid = id;
 }
 
-void account_logout_by_token(uint32_t token)
+void account_logout_by_cid(uint32_t id)
 {
     mtx_lock(&LOCK);
     struct AccountNode *node = HEAD;
     while (node != NULL) {
-        if (node->token == token)
+        if (node->cid == id)
             break;
 
         node = node->next;

@@ -47,14 +47,15 @@ typedef void OnRoomDestroy(struct Room *room);
 typedef void *CreateUserContext(void);
 typedef void DestroyUserContext(void *ctx);
 
-struct ChannelServer *channel_server_create(uint16_t port, OnLog *on_log, const char *host, CreateUserContext *create_user_context, DestroyUserContext destroy_user_ctx, OnClientConnect *on_client_connect, OnClientDisconnect *on_client_disconnect, OnClientJoin *on_client_join, OnClientPacket *on_pending_client_packet, OnClientPacket *on_client_packet, OnRoomCreate *on_room_create, OnRoomDestroy *on_room_destroy, void *global_ctx, size_t event_count);
+struct ChannelServer *channel_server_create(uint16_t port, OnLog *on_log, const char *host, CreateUserContext *create_user_context, DestroyUserContext destroy_user_ctx, OnClientConnect *on_client_connect, OnClientDisconnect *on_client_disconnect, OnClientJoin *on_client_join, OnClientPacket *on_pending_client_packet, OnClientPacket *on_client_packet, OnRoomCreate *on_room_create, OnRoomDestroy *on_room_destroy, OnClientCommandResult on_client_command_result, OnClientCommand on_client_command, OnClientTimer on_client_timer, void *global_ctx, size_t event_count);
 void channel_server_destroy(struct ChannelServer *server);
 struct Event *channel_server_get_event(struct ChannelServer *server, size_t event);
 enum ResponderResult channel_server_start(struct ChannelServer *server);
 void channel_server_stop(struct ChannelServer *server);
 
 bool session_accept(struct Session *session);
-bool session_assign_token(struct Session *session, uint32_t token, uint32_t *id);
+const struct sockaddr *session_get_addr(struct Session *session);
+bool session_assign_id(struct Session *session, uint32_t id);
 void session_change_room(struct Session *session, uint32_t id);
 void session_kick(struct Session *session);
 void session_write(struct Session *session, size_t len, uint8_t *packet);

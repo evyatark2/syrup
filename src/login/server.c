@@ -132,7 +132,6 @@ static short poll_to_libevent(int mask);
 static int libevent_to_poll(short mask);
 
 struct LoggedInCharacter {
-    uint32_t token;
     uint32_t id;
     int fd;
 };
@@ -376,7 +375,7 @@ void login_server_stop(struct LoginServer *server)
     close(server->commandSink);
 }
 
-int assign_channel(uint32_t id, uint8_t world, uint8_t channel, uint32_t *token)
+int assign_channel(uint32_t id, uint8_t world, uint8_t channel)
 {
     int fd = eventfd(0, 0);
     if (fd == -1)
@@ -396,11 +395,6 @@ int assign_channel(uint32_t id, uint8_t world, uint8_t channel, uint32_t *token)
     }
 
     mtx_lock(&CHANNELS[world][channel].clientsMtx);
-    //do {
-    //    pending.token = rand() % 32768 << 16 | rand() % 32768;
-    //// 0 is an invalid token
-    //} while (pending.token == 0 || hash_set_u32_get(CHANNELS[world][channel].clients, pending.token) != NULL);
-    pending.token = id;
     if (hash_set_u32_insert(CHANNELS[world][channel].clients, &pending) == -1) {
         mtx_unlock(&CHANNELS[world][channel].clientsMtx);
         mtx_unlock(&CHANNELS[world][channel].mtx);
@@ -410,9 +404,8 @@ int assign_channel(uint32_t id, uint8_t world, uint8_t channel, uint32_t *token)
 
     mtx_unlock(&CHANNELS[world][channel].clientsMtx);
 
-    bufferevent_write(CHANNELS[world][channel].event, (uint32_t[]) { pending.token, pending.id }, 8);
+    bufferevent_write(CHANNELS[world][channel].event, &pending.id, 4);
     mtx_unlock(&CHANNELS[world][channel].mtx);
-    *token = pending.token;
     return fd;
 }
 
@@ -499,7 +492,7 @@ static void on_channel_read(struct bufferevent *bev, void *ctx)
 
             mtx_unlock(&channel->clientsMtx);
             hash_set_u32_destroy(channel->clients);
-            channel->clients = hash_set_u32_create(sizeof(struct LoggedInCharacter), offsetof(struct LoggedInCharacter, token));
+            channel->clients = hash_set_u32_create(sizeof(struct LoggedInCharacter), offsetof(struct LoggedInCharacter, id));
         } else {
             if (channel->clients == NULL) {
                 // We are not the first one to connect to the channel, and we don't have a logged-in list
@@ -508,7 +501,7 @@ static void on_channel_read(struct bufferevent *bev, void *ctx)
                 //    that we decided to drop the logged-in list in order to let the connected accounts re-login
                 // 2) The login server was restarted and the channel now received the second connection
                 // In both cases we let the channel server know to kick all clients
-                channel->clients = hash_set_u32_create(sizeof(struct LoggedInCharacter), offsetof(struct LoggedInCharacter, token));
+                channel->clients = hash_set_u32_create(sizeof(struct LoggedInCharacter), offsetof(struct LoggedInCharacter, id));
                 uint8_t one = 1;
                 bufferevent_write(bev, &one, 1);
             } else {
@@ -917,7 +910,7 @@ static void do_leave(void *data, void *ctx)
     struct LoggedInCharacter *chr = data;
     struct Channel *channel = ctx;
     if (chr->fd == -1) {
-        channel->onClientLeave(chr->token);
+        channel->onClientLeave(chr->id);
     } else {
         uint64_t two = 2;
         write(chr->fd, &two, 8);

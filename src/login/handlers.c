@@ -702,7 +702,6 @@ struct RegisterPicHandler {
     struct Client *client;
     uint32_t characterId;
     int state;
-    uint32_t token;
 };
 
 struct RegisterPicHandler *register_pic_handler_create(struct Client *client, uint32_t chr_id, uint8_t pic_len, char *pic)
@@ -725,7 +724,7 @@ struct RegisterPicResult register_pic_handler_handle(struct RegisterPicHandler *
 {
     if (handler->state == 0) {
         struct RegisterPicResult ret = { .status = POLLIN };
-        ret.fd = assign_channel(handler->characterId, handler->client->world, handler->client->channel, &handler->token);
+        ret.fd = assign_channel(handler->characterId, handler->client->world, handler->client->channel);
         if (ret.fd != -1) {
             handler->state++;
             return ret;
@@ -738,9 +737,9 @@ struct RegisterPicResult register_pic_handler_handle(struct RegisterPicHandler *
 
     if (handler->state == 1) {
         if (status == 1) {
-            account_set_token(handler->client->node, handler->token);
+            account_set_cid(handler->client->node, handler->characterId);
             struct RegisterPicResult ret = { .status = 0, .size = CHANNEL_IP_PACKET_LENGTH };
-            channel_ip_packet(LOGIN_CONFIG.worlds[handler->client->world].channels[handler->client->channel].ip, LOGIN_CONFIG.worlds[handler->client->world].channels[handler->client->channel].port, handler->token, ret.packet);
+            channel_ip_packet(LOGIN_CONFIG.worlds[handler->client->world].channels[handler->client->channel].ip, LOGIN_CONFIG.worlds[handler->client->world].channels[handler->client->channel].port, handler->characterId, ret.packet);
             handler->client->loggedIn = true;
             return ret;
         } else {
@@ -764,7 +763,6 @@ struct VerifyPicHandler {
     uint8_t picLength;
     char pic[ACCOUNT_PIC_MAX_LENGTH];
     int state;
-    uint32_t token;
 };
 
 struct VerifyPicHandler *verify_pic_handler_create(struct Client *client, uint32_t chr_id, uint8_t pic_len, char *pic)
@@ -796,7 +794,7 @@ struct VerifyPicResult verify_pic_handler_handle(struct VerifyPicHandler *handle
 
     if (handler->state == 0) {
         struct VerifyPicResult ret = { .status = POLLIN };
-        ret.fd = assign_channel(handler->characterId, handler->client->world, handler->client->channel, &handler->token);
+        ret.fd = assign_channel(handler->characterId, handler->client->world, handler->client->channel);
         if (ret.fd != -1) {
             handler->state++;
             return ret;
@@ -809,9 +807,9 @@ struct VerifyPicResult verify_pic_handler_handle(struct VerifyPicHandler *handle
 
     if (handler->state == 1) {
         if (status == 1) {
-            account_set_token(handler->client->node, handler->token);
+            account_set_cid(handler->client->node, handler->characterId);
             struct VerifyPicResult ret = { .status = 0, .size = CHANNEL_IP_PACKET_LENGTH };
-            channel_ip_packet(LOGIN_CONFIG.worlds[handler->client->world].channels[handler->client->channel].ip, LOGIN_CONFIG.worlds[handler->client->world].channels[handler->client->channel].port, handler->token, ret.packet);
+            channel_ip_packet(LOGIN_CONFIG.worlds[handler->client->world].channels[handler->client->channel].ip, LOGIN_CONFIG.worlds[handler->client->world].channels[handler->client->channel].port, handler->characterId, ret.packet);
             handler->client->loggedIn = true;
             return ret;
         } else {
