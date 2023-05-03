@@ -104,11 +104,7 @@ struct Worker {
 
     // Global set of connected sessions and the room they are in right now
     mtx_t *sessionsLock;
-    struct HashSetAddr *sessions; // Uses `struct SessionRoom`
-
-    // Global set of connected clients (sessions that called session_assign_id()) and their address
-    mtx_t *clientsLock;
-    struct HashSetU32 *clients; // Uses `struct SessionIdAddr`
+    struct HashSetU32 *sessions; // Uses `struct SessionRoom`
 
     mtx_t *lock;
     bool *connected;
@@ -123,6 +119,11 @@ struct HeapNode {
 
 struct AddrSession {
     struct sockaddr_storage addr;
+    struct Session *session;
+};
+
+struct IdSession {
+    uint32_t id;
     struct Session *session;
 };
 
@@ -179,7 +180,7 @@ struct TimerHandle {
 struct Room {
     uint32_t id;
     struct RoomManager *manager;
-    struct HashSetAddr *sessions; // Uses struct AddrSession
+    struct HashSetU32 *sessions; // Uses struct IdSession
     size_t timerCapacity;
     size_t timerCount;
     struct TimerHandle **timers;
@@ -218,13 +219,8 @@ static struct TimerEvent event_heap_removetop(struct TimerEventHeap *heap);
 static bool event_heap_remove(struct TimerEventHeap *heap, struct TimerEvent *node);
 
 struct SessionRoom {
-    struct sockaddr_storage addr;
-    uint32_t room;
-};
-
-struct SessionIdAddr {
     uint32_t id;
-    struct sockaddr_storage addr;
+    uint32_t room;
 };
 
 // TODO: Maybe use a thread_local global instead of passing the struct between event callbacks
@@ -240,8 +236,6 @@ struct RoomManager {
     OnClientCommandResult *onClientCommandResult;
     OnClientCommand *onClientCommand;
 
-    // A list of sessions in this manager and the room they are in
-    struct HashSetAddr *sessions; // Uses `struct SessionRoom`
     struct HashSetU32 *rooms; // Uses `RoomId`
     struct event *timer;
     struct TimerEventHeap heap;
@@ -257,18 +251,21 @@ enum WorkerCommandType {
 struct WorkerCommand {
     enum WorkerCommandType type;
     union {
+        // NEW_CLIENT
         struct {
             int fd;
             int tfd;
+            int efd;
             struct Session *session;
         };
+        // KICK
         struct {
-            struct sockaddr_storage addr;
-            int socklen;
+            uint32_t id;
         };
+        // USER_COMMAND
         struct {
-            struct sockaddr_storage target;
-            int efd;
+            uint32_t target;
+            int finish;
             void *ctx;
         };
     };
@@ -341,13 +338,9 @@ struct ChannelServer *channel_server_create(uint16_t port, OnLog *on_log, const 
     server->worker.roomMapLock = malloc(sizeof(mtx_t));
     mtx_init(server->worker.roomMapLock, mtx_plain);
 
-    server->worker.sessions = hash_set_addr_create(sizeof(struct SessionRoom), offsetof(struct SessionRoom, addr));
+    server->worker.sessions = hash_set_u32_create(sizeof(struct SessionRoom), offsetof(struct SessionRoom, id));
     server->worker.sessionsLock = malloc(sizeof(mtx_t));
     mtx_init(server->worker.sessionsLock, mtx_plain);
-
-    server->worker.clients = hash_set_u32_create(sizeof(struct SessionIdAddr), offsetof(struct SessionIdAddr, id));
-    server->worker.clientsLock = malloc(sizeof(mtx_t));
-    mtx_init(server->worker.clientsLock, mtx_plain);
 
     server->worker.lock = malloc(sizeof(mtx_t));
     mtx_init(server->worker.lock, mtx_plain);
@@ -471,23 +464,8 @@ struct ChannelServer *channel_server_create(uint16_t port, OnLog *on_log, const 
             goto exit_threads;
         }
 
-        manager->sessions = hash_set_addr_create(sizeof(struct SessionRoom), offsetof(struct SessionRoom, addr));
-        if (manager->sessions == NULL) {
-            hash_set_u32_destroy(manager->rooms);
-            event_free(manager->worker.transportEvent);
-            event_base_free(manager->worker.base);
-            destroy_user_ctx(manager->worker.userData);
-            free(manager);
-            mtx_destroy(&server->worker.transportMuteces[server->threadCount]);
-            close(pair[0]);
-            close(pair[1]);
-            goto exit_threads;
-        }
-
-
         int fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
         if (fd == -1) {
-            hash_set_addr_destroy(manager->sessions);
             hash_set_u32_destroy(manager->rooms);
             event_free(manager->worker.transportEvent);
             event_base_free(manager->worker.base);
@@ -498,10 +476,10 @@ struct ChannelServer *channel_server_create(uint16_t port, OnLog *on_log, const 
             close(pair[1]);
             goto exit_threads;
         }
+
         manager->timer = event_new(manager->worker.base, fd, EV_READ | EV_PERSIST, on_timer_expired, manager);
         if (manager->timer == NULL) {
             close(fd);
-            hash_set_addr_destroy(manager->sessions);
             hash_set_u32_destroy(manager->rooms);
             event_free(manager->worker.transportEvent);
             event_base_free(manager->worker.base);
@@ -517,7 +495,6 @@ struct ChannelServer *channel_server_create(uint16_t port, OnLog *on_log, const 
         if (event_heap_init(&manager->heap) == -1) {
             event_free(manager->timer);
             close(fd);
-            hash_set_addr_destroy(manager->sessions);
             hash_set_u32_destroy(manager->rooms);
             event_free(manager->worker.transportEvent);
             event_base_free(manager->worker.base);
@@ -539,8 +516,6 @@ struct ChannelServer *channel_server_create(uint16_t port, OnLog *on_log, const 
         manager->worker.roomMap = server->worker.roomMap;
         manager->worker.sessionsLock = server->worker.sessionsLock;
         manager->worker.sessions = server->worker.sessions;
-        manager->worker.clientsLock = server->worker.clientsLock;
-        manager->worker.clients = server->worker.clients;
         manager->worker.lock = server->worker.lock;
         manager->worker.login = server->worker.login;
         manager->worker.connected = server->worker.connected;
@@ -557,8 +532,6 @@ struct ChannelServer *channel_server_create(uint16_t port, OnLog *on_log, const 
             event_heap_destroy(&manager->heap);
             event_free(manager->timer);
             close(fd);
-            hash_set_addr_destroy(manager->sessions);
-            hash_set_u32_destroy(manager->rooms);
             event_free(manager->worker.transportEvent);
             event_base_free(manager->worker.base);
             destroy_user_ctx(manager->worker.userData);
@@ -673,7 +646,7 @@ void channel_server_destroy(struct ChannelServer *server)
     free(server->worker.roomMapLock);
     hash_set_u32_destroy(server->worker.roomMap);
     hash_set_addr_destroy(server->sessions);
-    hash_set_addr_destroy(server->worker.sessions);
+    hash_set_u32_destroy(server->worker.sessions);
     event_base_free(server->worker.base);
     server->worker.destroyContext(server->worker.userData);
     free(server->worker.transportMuteces);
@@ -803,14 +776,14 @@ bool session_assign_id(struct Session *session, uint32_t id)
 
     hash_set_u32_remove(server->pendings, id);
 
-    struct SessionIdAddr new = {
+    struct SessionRoom new = {
         .id = id,
-        .addr = session->addr
+        .room = -1
     };
 
-    mtx_lock(server->worker.clientsLock);
-    bool inserted = hash_set_u32_insert(server->worker.clients, &new) != -1;
-    mtx_unlock(server->worker.clientsLock);
+    mtx_lock(server->worker.sessionsLock);
+    bool inserted = hash_set_u32_insert(server->worker.sessions, &new) != -1;
+    mtx_unlock(server->worker.sessionsLock);
 
     if (!inserted)
         return false;
@@ -858,6 +831,7 @@ void do_transfer(struct Session *session)
             .type = WORKER_COMMAND_NEW_CLIENT,
             .fd = bufferevent_getfd(session->event),
             .tfd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK),
+            .efd = -1,
             .session = session,
         };
 
@@ -867,11 +841,13 @@ void do_transfer(struct Session *session)
 
         struct bufferevent *event = session->event;
         struct sockaddr_storage addr = session->addr;
+        uint32_t id = session->id;
 
-        size_t thread;
+        bool sent;
         {
             mtx_lock(server->worker.roomMapLock);
             struct RoomThread *room_thread = hash_set_u32_get(server->worker.roomMap, session->targetRoom);
+            size_t thread;
             if (room_thread == NULL) {
                 // TODO: Pick the least busy thread
                 struct RoomThread new = {
@@ -884,24 +860,24 @@ void do_transfer(struct Session *session)
                 thread = room_thread->thread;
             }
 
+            // See below why we send the client while roomMap is locked
+            mtx_lock(&server->worker.transportMuteces[thread]);
+            sent = write(server->worker.transportSinks[thread], &transfer, sizeof(struct WorkerCommand)) != -1;
+            mtx_unlock(&server->worker.transportMuteces[thread]);
+
             mtx_unlock(server->worker.roomMapLock);
         }
 
-        struct SessionRoom new = {
-            .addr = addr,
-            .room = session->targetRoom
-        };
-
-        mtx_lock(server->worker.sessionsLock);
-        hash_set_addr_insert(server->worker.sessions, &new);
-        mtx_unlock(server->worker.sessionsLock);
-
-        bool sent;
-        mtx_lock(&server->worker.transportMuteces[thread]);
-        sent = write(server->worker.transportSinks[thread], &transfer, sizeof(struct WorkerCommand)) != -1;
-        mtx_unlock(&server->worker.transportMuteces[thread]);
-
         if (sent) {
+            struct SessionRoom new = {
+                .id = id,
+                .room = session->targetRoom
+            };
+
+            mtx_lock(server->worker.sessionsLock);
+            hash_set_u32_insert(server->worker.sessions, &new);
+            mtx_unlock(server->worker.sessionsLock);
+
             bufferevent_free(event);
             hash_set_addr_remove(server->sessions, (void *)&addr);
         } else {
@@ -916,10 +892,17 @@ void do_transfer(struct Session *session)
             .type = WORKER_COMMAND_NEW_CLIENT,
             .fd = bufferevent_getfd(session->event),
             .tfd = event_get_fd(session->timer),
+            .efd = session->commandEvent == NULL ? -1 : event_get_fd(session->commandEvent),
             .session = session,
         };
 
         struct Room *room = session->room;
+
+        struct event *command = session->commandEvent;
+        struct event *timer = session->timer;
+        struct bufferevent *event = session->event;
+        uint32_t id = session->id;
+        uint32_t room_id = session->targetRoom;
 
         size_t thread;
         mtx_lock(manager->worker.roomMapLock);
@@ -934,34 +917,40 @@ void do_transfer(struct Session *session)
         } else {
             thread = ((struct RoomThread *)hash_set_u32_get(manager->worker.roomMap, session->targetRoom))->thread;
         }
-        mtx_unlock(manager->worker.roomMapLock);
 
-        int sink = manager->worker.transportSinks[thread];
-
-        struct event *timer = session->timer;
-        struct bufferevent *event = session->event;
-        struct sockaddr_storage addr = session->addr;
-        uint32_t room_id = session->targetRoom;
-
+        // We must send the client while manager->worker.roomMapLock is acquired
+        // because if we would have first unlocked it and then sent the request, consider the following situation:
+        // 1. thread 1 unlocks roomMap after changing the session's room to `10` which is handled by thread 2
+        // 2. thread 1 is preemtped before it can gain a lock on the transport socket
+        // 3. thread 3 wants to send a command to the the session so it sees room 10 and sends a command to thread 2
+        // 4. thread 2 receives the command but then it proceeds to forward the command to itself
+        //      (which locks the transport mutex)
+        // 5. step 4 happens repeatedly before thread 1 can gain a lock to the transport mutex
+        // While this is very unlikely and of course thread 1 eventualy will acquire the lock
+        // under virtually every implementation out there,
+        // it is better practice to not let the possibilty of it even happening in the first place
         bool sent;
         mtx_lock(&manager->worker.transportMuteces[thread]);
-        sent = write(sink, &transfer, sizeof(struct WorkerCommand)) != -1;
+        sent = write(manager->worker.transportSinks[thread], &transfer, sizeof(struct WorkerCommand)) != -1;
         mtx_unlock(&manager->worker.transportMuteces[thread]);
 
+        mtx_unlock(manager->worker.roomMapLock);
+
         if (sent) {
+            if (command != NULL)
+                event_free(command);
+
             event_free(timer);
             bufferevent_free(event);
-            hash_set_addr_remove(room->sessions, (void *)&addr);
-            if (hash_set_addr_size(room->sessions) == 0 && !room->keepAlive)
+            hash_set_u32_remove(room->sessions, id);
+            if (hash_set_u32_size(room->sessions) == 0 && !room->keepAlive)
                 destroy_room(manager, room);
-
-            hash_set_addr_remove(manager->sessions, (void *)&addr);
 
             mtx_lock(manager->worker.sessionsLock);
             // By this time the client could be kicked by the other thread,
             // so we check if it still exists before changing its room
-            if (hash_set_addr_get(manager->worker.sessions, (void *)&addr) != NULL)
-                ((struct SessionRoom *)hash_set_addr_get(manager->worker.sessions, (void *)&addr))->room = room_id;
+            if (hash_set_u32_get(manager->worker.sessions, id) != NULL)
+                ((struct SessionRoom *)hash_set_u32_get(manager->worker.sessions, id))->room = room_id;
 
             mtx_unlock(manager->worker.sessionsLock);
         } else {
@@ -1059,7 +1048,7 @@ struct BroadcastContext {
 
 static void do_broadcast(void *data, void *ctx_)
 {
-    struct Session *current = ((struct AddrSession *)data)->session;
+    struct Session *current = ((struct IdSession *)data)->session;
     struct BroadcastContext *ctx = ctx_;
     if (current != ctx->session && current->writeEnable)
         session_write(current, ctx->len, ctx->packet);
@@ -1072,7 +1061,7 @@ void session_broadcast_to_room(struct Session *session, size_t len, uint8_t *pac
         .len = len,
         .packet = packet
     };
-    hash_set_addr_foreach(session->room->sessions, do_broadcast, &ctx);
+    hash_set_u32_foreach(session->room->sessions, do_broadcast, &ctx);
 }
 
 struct ForeachContext {
@@ -1083,7 +1072,7 @@ struct ForeachContext {
 
 static void do_foreach(void *data, void *ctx_)
 {
-    struct Session *current = ((struct AddrSession *)data)->session;
+    struct Session *current = ((struct IdSession *)data)->session;
     struct ForeachContext *ctx = ctx_;
     if (current != ctx->session)
         ctx->f(ctx->session, current, ctx->ctx);
@@ -1096,7 +1085,7 @@ void session_foreach_in_room(struct Session *session, void (*f)(struct Session *
         .f = f,
         .ctx = ctx_
     };
-    hash_set_addr_foreach(session->room->sessions, do_foreach, &ctx);
+    hash_set_u32_foreach(session->room->sessions, do_foreach, &ctx);
 }
 
 void session_enable_write(struct Session *session)
@@ -1133,29 +1122,17 @@ bool session_send_command(struct Session *session, uint32_t target, void *comman
         .ctx = command,
     };
 
-    {
-        mtx_lock(manager->worker.clientsLock);
-        struct SessionIdAddr *id_addr = hash_set_u32_get(manager->worker.clients, target);
-        if (id_addr == NULL) {
-            mtx_unlock(manager->worker.clientsLock);
-            return false;
-        }
-
-        cmd.addr = id_addr->addr;
-        mtx_unlock(manager->worker.clientsLock);
-    }
-
     uint32_t room;
     {
         mtx_lock(manager->worker.sessionsLock);
-        struct SessionRoom *addr_room = hash_set_addr_get(manager->worker.sessions, (void *)&cmd.addr);
-        if (addr_room == NULL) {
+        struct SessionRoom *session_room = hash_set_u32_get(manager->worker.sessions, target);
+        if (session_room == NULL) {
             mtx_unlock(manager->worker.sessionsLock);
             return false;
         }
 
-        room = addr_room->room;
-
+        cmd.id = session_room->id;
+        room = session_room->room;
         mtx_unlock(manager->worker.sessionsLock);
     }
 
@@ -1173,7 +1150,7 @@ bool session_send_command(struct Session *session, uint32_t target, void *comman
         mtx_unlock(manager->worker.roomMapLock);
     }
 
-    cmd.efd = eventfd(0, EFD_NONBLOCK);
+    cmd.finish = eventfd(0, EFD_NONBLOCK);
     if (cmd.fd == -1)
         return false;
 
@@ -1239,7 +1216,7 @@ void room_broadcast(struct Room *room, size_t len, uint8_t *packet)
         .len = len,
         .packet = packet
     };
-    hash_set_addr_foreach(room->sessions, do_broadcast, &ctx);
+    hash_set_u32_foreach(room->sessions, do_broadcast, &ctx);
 }
 
 void room_foreach(struct Room *room, void (*f)(struct Session *src, struct Session *dst, void *ctx), void *ctx_)
@@ -1249,7 +1226,7 @@ void room_foreach(struct Room *room, void (*f)(struct Session *src, struct Sessi
         .f = f,
         .ctx = ctx_
     };
-    hash_set_addr_foreach(room->sessions, do_foreach, &ctx);
+    hash_set_u32_foreach(room->sessions, do_foreach, &ctx);
 }
 
 void room_keep_alive(struct Room *room)
@@ -1260,7 +1237,7 @@ void room_keep_alive(struct Room *room)
 void room_break_off(struct Room *room)
 {
     room->keepAlive = false;
-    if (hash_set_addr_size(room->sessions) == 0)
+    if (hash_set_u32_size(room->sessions) == 0)
         destroy_room(room->manager, room);
 }
 
@@ -1469,7 +1446,6 @@ static void on_command(int fd, short what, void *ctx)
                 unlink(((struct sockaddr_un *)&server->addr)->sun_path);
         }
 
-        int fd = event_get_fd(server->commandEvent);
         event_free(server->commandEvent);
         close(fd);
         evconnlistener_free(server->worker.listener);
@@ -1538,7 +1514,7 @@ static void do_send_kick_command(void *data, void *ctx)
     if (thread != -1) {
         struct WorkerCommand command = {
             .type = WORKER_COMMAND_KICK,
-            .addr = pair->addr,
+            .id = pair->id,
         };
 
         mtx_lock(&server->worker.transportMuteces[thread]);
@@ -1556,7 +1532,7 @@ static void on_login_server_read(struct bufferevent *bev, void *ctx)
         evbuffer_remove(bufferevent_get_input(bev), &reset, 1);
         if (reset == 1) {
             mtx_lock(server->worker.sessionsLock);
-            hash_set_addr_foreach(server->worker.sessions, do_send_kick_command, server);
+            hash_set_u32_foreach(server->worker.sessions, do_send_kick_command, server);
             mtx_unlock(server->worker.sessionsLock);
 
             mtx_lock(server->worker.lock);
@@ -1620,12 +1596,12 @@ static void on_timer_expired(int fd, short what, void *ctx)
         room->timers[ev.handle->index] = room->timers[room->timerCount - 1];
         room->timers[ev.handle->index]->index = ev.handle->index;
         room->timerCount--;
-        if (room->timerCount == 0 && hash_set_addr_size(room->sessions) == 0) {
+        if (room->timerCount == 0 && hash_set_u32_size(room->sessions) == 0) {
             manager->onRoomDestroy(ev.handle->room);
             free(room->timers);
             hash_set_u32_remove(manager->rooms, room->id);
 
-            hash_set_addr_destroy(room->sessions);
+            hash_set_u32_destroy(room->sessions);
 
             mtx_lock(manager->worker.roomMapLock);
             hash_set_u32_remove(manager->worker.roomMap, room->id);
@@ -1676,7 +1652,7 @@ static void do_kill_timers(void *data, void *ctx)
 
 static void do_kick(void *data, void *ctx)
 {
-    struct Session *session = ((struct AddrSession *)data)->session;
+    struct Session *session = ((struct IdSession *)data)->session;
     if (!setjmp(session->jmp))
         session_kick(session);
 }
@@ -1685,7 +1661,7 @@ static void do_kill_room(void *data, void *ctx)
 {
     struct Room *room = ((struct RoomId *)data)->room;
 
-    hash_set_addr_foreach(room->sessions, do_kick, room);
+    hash_set_u32_foreach(room->sessions, do_kick, room);
 }
 
 static void on_session_join(int fd, short what, void *ctx_)
@@ -1730,22 +1706,12 @@ static void on_session_join(int fd, short what, void *ctx_)
             }
 
             {
-                struct SessionRoom new = {
-                    .addr = session->addr,
-                    .room = session->room->id,
-                };
-
-                if (hash_set_addr_insert(manager->sessions, &new) == -1)
-                    ; // TODO
-            }
-
-            {
-                struct AddrSession new = {
-                    .addr = session->addr,
+                struct IdSession new = {
+                    .id = session->id,
                     .session = session
                 };
 
-                if (hash_set_addr_insert(session->room->sessions, &new) == -1)
+                if (hash_set_u32_insert(session->room->sessions, &new) == -1)
                     ; // TODO
             }
 
@@ -1769,22 +1735,29 @@ static void on_session_join(int fd, short what, void *ctx_)
         break;
 
         case WORKER_COMMAND_KICK: {
-            struct SessionRoom *session_room = hash_set_addr_get(manager->sessions, (void *)&cmd.addr);
-            if (session_room != NULL) {
-                struct Room *room = ((struct RoomId *)hash_set_u32_get(manager->rooms, session_room->room))->room;
-                struct Session *session = ((struct AddrSession *)hash_set_addr_get(room->sessions, (void *)&cmd.addr))->session;
-                session->id = 0;
-                if (!setjmp(session->jmp))
-                    session_kick(session);
-            } else {
-                // The session has already gone away
-                mtx_lock(manager->worker.sessionsLock);
-                struct SessionRoom *addr_room = hash_set_addr_get(manager->worker.sessions, (void *)&cmd.addr);
-                if (addr_room != NULL) {
-                    // The session is in another thread, forward the message to there
-                    uint32_t room = addr_room->room;
-                    mtx_unlock(manager->worker.sessionsLock);
+            uint32_t room;
+            mtx_lock(manager->worker.sessionsLock);
+            // Note that after unlocking sessionsLock, session_room can't be derefenrenced, only NULL-checked
+            struct SessionRoom *session_room = hash_set_u32_get(manager->worker.sessions, cmd.id);
+            room = session_room->room;
+            mtx_unlock(manager->worker.sessionsLock);
 
+            if (session_room != NULL) {
+                struct IdSession *id_session;
+                struct RoomId *room_id = hash_set_u32_get(manager->rooms, room);
+                if (room_id != NULL) {
+                    struct Room *room = room_id->room;
+                    id_session = hash_set_u32_get(room->sessions, cmd.id);
+                    if (id_session != NULL) {
+                        struct Session *session = ((struct IdSession *)hash_set_u32_get(room->sessions, cmd.id))->session;
+                        //session->id = 0; // Why was this here?
+                        if (!setjmp(session->jmp))
+                            session_kick(session);
+                    }
+                }
+
+                if (room_id == NULL || id_session == NULL) {
+                    // The session is in another thread, forward the message to there
                     mtx_lock(manager->worker.roomMapLock);
                     if (hash_set_u32_get(manager->worker.roomMap, room) != NULL) {
                         size_t thread = ((struct RoomThread *)hash_set_u32_get(manager->worker.roomMap, room))->thread;
@@ -1796,48 +1769,50 @@ static void on_session_join(int fd, short what, void *ctx_)
                     } else {
                         mtx_unlock(manager->worker.roomMapLock);
                     }
-                } else {
-                    // The session has left the server, nothing to do here
-                    mtx_unlock(manager->worker.sessionsLock);
                 }
             }
         }
         break;
 
         case WORKER_COMMAND_USER_COMMAND: {
-            struct SessionRoom *session_room = hash_set_addr_get(manager->sessions, (void *)&cmd.target);
-            if (session_room != NULL) {
-                eventfd_write(cmd.efd, 1);
-                struct Room *room = ((struct RoomId *)hash_set_u32_get(manager->rooms, session_room->room))->room;
-                struct Session *session = ((struct AddrSession *)hash_set_addr_get(room->sessions, (void *)&cmd.target))->session;
-                if (!setjmp(session->jmp))
-                    manager->onClientCommand(session, cmd.ctx);
-            } else {
-                mtx_lock(manager->worker.sessionsLock);
-                struct SessionRoom *addr_room = hash_set_addr_get(manager->worker.sessions, (void *)&cmd.target);
-                if (addr_room != NULL) {
-                    uint32_t room = addr_room->room;
-                    mtx_unlock(manager->worker.sessionsLock);
+            uint32_t room;
+            mtx_lock(manager->worker.sessionsLock);
+            struct SessionRoom *session_room = hash_set_u32_get(manager->worker.sessions, cmd.target);
+            room = session_room->room;
+            mtx_unlock(manager->worker.sessionsLock);
 
+            if (session_room != NULL) {
+                struct IdSession *id_session;
+                struct RoomId *room_id = hash_set_u32_get(manager->rooms, room);
+                if (room_id != NULL) {
+                    struct Room *room = room_id->room;
+                    id_session = hash_set_u32_get(room->sessions, cmd.id);
+                    if (id_session != NULL) {
+                        eventfd_write(cmd.finish, 1);
+                        struct Session *session = ((struct IdSession *)hash_set_u32_get(room->sessions, cmd.id))->session;
+                        //session->id = 0; // Why was this here?
+                        if (!setjmp(session->jmp))
+                            manager->onClientCommand(session, cmd.ctx);
+                    }
+                }
+
+                if (room_id == NULL || id_session == NULL) {
+                    // The session is in another thread, forward the message to there
                     mtx_lock(manager->worker.roomMapLock);
                     if (hash_set_u32_get(manager->worker.roomMap, room) != NULL) {
                         size_t thread = ((struct RoomThread *)hash_set_u32_get(manager->worker.roomMap, room))->thread;
                         mtx_unlock(manager->worker.roomMapLock);
 
                         mtx_lock(&manager->worker.transportMuteces[thread]);
-                        bool sent = write(manager->worker.transportSinks[thread], &cmd, sizeof(struct WorkerCommand)) != -1;
+                        write(manager->worker.transportSinks[thread], &cmd, sizeof(struct WorkerCommand));
                         mtx_unlock(&manager->worker.transportMuteces[thread]);
-
-                        if (!sent)
-                            eventfd_write(cmd.efd, 2);
                     } else {
                         mtx_unlock(manager->worker.roomMapLock);
-                        eventfd_write(cmd.efd, 2);
+                        eventfd_write(cmd.finish, 2);
                     }
-                } else {
-                    mtx_unlock(manager->worker.sessionsLock);
-                    eventfd_write(cmd.efd, 2);
                 }
+            } else {
+                eventfd_write(cmd.finish, 2);
             }
         }
         break;
@@ -2028,7 +2003,6 @@ static int start_worker(void *ctx_)
     int fd = event_get_fd(manager->timer);
     event_free(manager->timer);
     close(fd);
-    hash_set_addr_destroy(manager->sessions);
     hash_set_u32_destroy(manager->rooms);
     manager->worker.destroyContext(manager->worker.userData);
     event_base_free(manager->worker.base);
@@ -2070,6 +2044,7 @@ static struct Session *create_session(struct ChannelServer *server, int fd, stru
     session->id = 0;
     session->room = NULL;
     session->userEvent = NULL;
+    session->commandEvent = NULL;
     session->writeEnable = false;
     session->targetRoom = -1;
     session->timer = NULL;
@@ -2099,7 +2074,7 @@ static struct Room *create_room(struct RoomManager *manager, uint32_t id)
         return NULL;
     }
 
-    room->sessions = hash_set_addr_create(sizeof(struct AddrSession), offsetof(struct AddrSession, addr));
+    room->sessions = hash_set_u32_create(sizeof(struct IdSession), offsetof(struct IdSession, id));
     if (room->sessions == NULL) {
         free(room->sessions);
         free(room);
@@ -2167,10 +2142,8 @@ static void destroy_session(struct Session *session)
     encryption_context_destroy(session->sendContext);
     decryption_context_destroy(session->recieveContext);
 
-    hash_set_addr_remove(manager->sessions, (void *)&session->addr);
-
     mtx_lock(manager->worker.sessionsLock);
-    hash_set_addr_remove(manager->worker.sessions, (void *)&session->addr);
+    hash_set_u32_remove(manager->worker.sessions, session->id);
     mtx_unlock(manager->worker.sessionsLock);
 
     if (session->id != 0) {
@@ -2189,8 +2162,8 @@ static void destroy_session(struct Session *session)
         mtx_unlock(manager->worker.lock);
     }
 
-    hash_set_addr_remove(room->sessions, (void *)&session->addr);
-    if (hash_set_addr_size(room->sessions) == 0 && !room->keepAlive)
+    hash_set_u32_remove(room->sessions, session->id);
+    if (hash_set_u32_size(room->sessions) == 0 && !room->keepAlive)
         destroy_room(manager, room);
 
     free(session);
@@ -2238,7 +2211,7 @@ static void destroy_room(struct RoomManager *manager, struct Room *room)
 
         hash_set_u32_remove(manager->rooms, room->id);
 
-        hash_set_addr_destroy(room->sessions);
+        hash_set_u32_destroy(room->sessions);
 
         mtx_lock(manager->worker.roomMapLock);
         hash_set_u32_remove(manager->worker.roomMap, room->id);

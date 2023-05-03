@@ -62,7 +62,6 @@ struct Client {
     enum Stat stats;
     struct Party *party;
     bool autoPickup;
-    struct ClientCommand *cmd;
 };
 
 size_t CLIENTS_LENGTH;
@@ -185,7 +184,6 @@ struct Client *client_create(struct Session *session, struct DatabaseConnection 
     client->stats = 0;
     client->party = NULL;
     client->autoPickup = false;
-    client->cmd = NULL;
     client->handlerType = PACKET_TYPE_NONE;
 
     return client;
@@ -1148,7 +1146,6 @@ void client_notify_command_received(struct Client *client, struct ClientCommand 
         free(cmd);
     }
 
-    client->cmd = NULL;
     // If the map doesn't match then it means that client_warp() was called
     if (client->character.map != room_get_id(session_get_room(client->session)))
         client_warp(client, client->character.map, client->character.spawnPoint);
@@ -3948,7 +3945,7 @@ bool client_warp(struct Client *client, uint32_t map, uint8_t portal)
 {
     // If we are in the middle of an event then defer the
     // map change after the event has finished
-    if (client->handlerType == PACKET_TYPE_SAVE || client->cmd != NULL) {
+    if (client->handlerType == PACKET_TYPE_SAVE) {
         client->character.map = map;
         client->character.spawnPoint = portal;
         return false;
@@ -4357,18 +4354,17 @@ void client_invite_to_party(struct Client *client, uint8_t name_len, const char 
     if (client->party == NULL)
         return;
 
-    client->cmd = malloc(sizeof(struct ClientCommand));
-    client->cmd->type = CLIENT_COMMAND_PARTY_INVITE;
-    client->cmd->id = party_get_id(client->party);
-    client->cmd->nameLen = client->character.nameLength;
+    struct ClientCommand *cmd = malloc(sizeof(struct ClientCommand));
+    cmd->type = CLIENT_COMMAND_PARTY_INVITE;
+    cmd->id = party_get_id(client->party);
+    cmd->nameLen = client->character.nameLength;
 
-    memcpy(client->cmd->name, client->character.name, client->character.nameLength);
+    memcpy(cmd->name, client->character.name, client->character.nameLength);
 
-    bool sent = session_send_command(client->session, find_id_by_name(name_len, name), client->cmd);
+    bool sent = session_send_command(client->session, find_id_by_name(name_len, name), cmd);
 
     if (!sent) {
-        free(client->cmd);
-        client->cmd = NULL;
+        free(cmd);
         uint8_t packet[PARTY_STATUS_MESSAGE_PACKET_LENGTH];
         party_status_message_packet(19, packet);
         session_write(client->session, PARTY_STATUS_MESSAGE_PACKET_LENGTH, packet);
