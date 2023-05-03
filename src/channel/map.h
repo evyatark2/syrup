@@ -64,6 +64,8 @@ void map_leave(struct Map *map, struct MapPlayer *player);
  */
 void map_for_each_drop(struct Map *map, void (*f)(struct Drop *, void *), void *ctx);
 
+void map_spawn(struct Map *map, uint32_t id, struct Point p);
+
 /**
  * Get if the monster is alive
  *

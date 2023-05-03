@@ -612,6 +612,8 @@ void spawn_monster_controller_packet(uint32_t oid, bool aggro, uint32_t id, int1
     writer_u16(&writer, 0x00EE);
     writer_u8(&writer, aggro ? 2 : 1);
     writer_u32(&writer, oid);
+
+    // Why all this data is necessary is beyond me
     writer_u8(&writer, 1); // Has controller
     writer_u32(&writer, id);
     writer_zero(&writer, 16); // Status effects

@@ -348,8 +348,8 @@ struct Map *map_create(struct ChannelServer *server, struct Room *room, struct S
         }
     }
 
-    map->monsters = malloc(map->spawnerCount * sizeof(struct MapMonster));
-    if (map->monsters == NULL && map->spawnerCount != 0) {
+    map->monsters = malloc((map->spawnerCount != 0 ? map->spawnerCount : 1) * sizeof(struct MapMonster));
+    if (map->monsters == NULL) {
         heap_destroy(&map->heap);
         free(map->players);
         free(map->reactors);
@@ -392,7 +392,7 @@ struct Map *map_create(struct ChannelServer *server, struct Room *room, struct S
         map->monsters[i].spawnerIndex = i;
         map->monsters[i].controller = NULL;
     }
-    map->monsterCapacity = map->spawnerCount;
+    map->monsterCapacity = map->spawnerCount != 0 ? map->spawnerCount : 1;
     map->monsterCount = map->spawnerCount;
 
     for (size_t i = 0; i < map->reactorCount; i++) {
@@ -772,8 +772,7 @@ int map_join(struct Map *map, struct Client *client, struct MapHandleContainer *
     if (map->heap.count == 0)
         map->respawnHandle = room_add_timer(map->room, 10 * 1000, on_respawn, NULL, false);
 
-    // TODO: Maybe allocate it to `map->monsterCapacity` size
-    player->player->monsters = malloc(map->spawnerCount * sizeof(struct MapMonster *));
+    player->player->monsters = malloc(map->monsterCapacity * sizeof(struct MapMonster *));
     if (player->player->monsters == NULL) {
         if (map->heap.count == 0)
             room_stop_timer(map->respawnHandle);
@@ -976,6 +975,68 @@ void map_for_each_drop(struct Map *map, void (*f)(struct Drop *, void *), void *
         for (size_t j = 0; j < map->droppingBatches[i]->current; j++) {
             f(&map->droppingBatches[i]->drops[j], ctx);
         }
+    }
+}
+
+void map_spawn(struct Map *map, uint32_t id, struct Point p)
+{
+    if (wz_get_monster_stats(id) == NULL)
+        return;
+
+    if (map->monsterCount == map->monsterCapacity) {
+        struct MapMonster *temp = realloc(map->monsters, (map->monsterCapacity * 2) * sizeof(struct MapMonster));
+        if (temp == NULL)
+            return;
+
+        map->monsters = temp;
+
+        for (size_t i = 0; i < map->playerCount; i++) {
+            void *temp = realloc(map->players[i].monsters, (map->monsterCapacity * 2) * sizeof(struct MapMonster *));
+            if (temp == NULL)
+                return;
+        }
+
+        for (size_t i = 0; i < map->monsterCount; i++)
+            map->monsters[i].controller->monsters[map->monsters[i].indexInController] = &map->monsters[map->monsterCount];
+
+        map->monsterCapacity *= 2;
+    }
+
+    struct MapPlayer *controller = heap_top(&map->heap)->controller;
+
+    struct MapObject *obj = object_list_allocate(&map->objectList);
+    obj->type = MAP_OBJECT_MONSTER;
+    obj->index = map->monsterCount;
+
+    const struct Foothold *fh = foothold_tree_find_below(map->footholdTree, &p);
+
+    struct Monster *monster = &map->monsters[map->monsterCount].monster;
+    monster->oid = obj->oid;
+    monster->id = id;
+    monster->x = p.x;
+    // Sometimes the player can be a unit below the foothold's line
+    // so to make sure the y coordinate is ABOVE (not ON) the foothold, increase y coordinate by 2
+    monster->y = p.y - 2;
+    monster->hp = wz_get_monster_stats(id)->hp;
+    monster->fh = fh->id;
+    monster->stance = 0;
+    map->monsters[map->monsterCount].controller = controller;
+    map->monsters[map->monsterCount].indexInController = controller->monsterCount;
+    map->monsters[map->monsterCount].spawnerIndex = -1;
+    controller->monsters[controller->monsterCount] = &map->monsters[map->monsterCount];
+    controller->monsterCount++;
+    map->monsterCount++;
+
+    {
+        uint8_t packet[SPAWN_MONSTER_PACKET_LENGTH];
+        spawn_monster_packet(monster->oid, monster->id, monster->x, monster->y, monster->fh, true, packet);
+        room_broadcast(map->room, SPAWN_MONSTER_PACKET_LENGTH, packet);
+    }
+
+    {
+        uint8_t packet[SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH];
+        spawn_monster_controller_packet(monster->oid, false, monster->id, monster->x, monster->y, monster->fh, true, packet);
+        session_write(client_get_session(controller->client), SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH, packet);
     }
 }
 
@@ -2427,6 +2488,12 @@ static void on_respawn(struct Room *room, struct TimerHandle *handle)
                 return;
 
             map->monsters = temp;
+
+            for (size_t i = 0; i < map->playerCount; i++) {
+                void *temp = realloc(map->players[i].monsters, (map->monsterCapacity * 2) * sizeof(struct MapMonster *));
+                if (temp == NULL)
+                    return;
+            }
 
             for (size_t i = 0; i < map->monsterCount; i++)
                 map->monsters[i].controller->monsters[map->monsters[i].indexInController] = &map->monsters[map->monsterCount];

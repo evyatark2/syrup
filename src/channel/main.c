@@ -681,6 +681,9 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
                     } else {
                         client_message(client, "Requested map doesn't exist");
                     }
+                } else if (!strcmp(token, "spawn")) {
+                    token = strtok_r(NULL, " ", &save);
+                    map_spawn(room_get_context(session_get_room(session)), strtol(token, NULL, 10), (struct Point) { chr->x, chr-> y });
                 }
             }
         } else if (string[0] != '/') {
