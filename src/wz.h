@@ -342,11 +342,6 @@ struct ReactorInfo {
     char action[SCRIPT_NAME_MAX_LENGTH];
 };
 
-struct SkillRequirementInfo {
-    uint32_t id;
-    int16_t level;
-};
-
 struct SkillLevelInfo {
     int16_t mpCon;
     int16_t time;
@@ -358,8 +353,8 @@ struct SkillInfo {
     uint32_t id;
     size_t levelCount;
     struct SkillLevelInfo *levels;
-    size_t reqCount; // Maybe each skill has only 1 pre-requisite?
-    struct SkillRequirementInfo *reqs;
+    size_t reqId; // id of 0 means
+    size_t reqLevel;
 };
 
 int wz_init(void);

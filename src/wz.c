@@ -280,6 +280,7 @@ enum SkillItemType {
     SKILL_ITEM_TYPE_SKILL,
     SKILL_ITEM_TYPE_LEVELS,
     SKILL_ITEM_TYPE_LEVEL,
+    SKILL_ITEM_TYPE_REQS,
     SKILL_ITEM_TYPE_REQ,
 };
 
@@ -3887,7 +3888,7 @@ static void on_skill_start(void *user_data, const XML_Char *name, const XML_Char
 
             SKILL_INFOS[SKILL_INFO_COUNT].id = strtol(attrs[1], NULL, 10);
             SKILL_INFOS[SKILL_INFO_COUNT].levelCount = 0;
-            SKILL_INFOS[SKILL_INFO_COUNT].reqCount = 0;
+            SKILL_INFOS[SKILL_INFO_COUNT].reqId = 0;
             struct SkillParserStackNode *new = malloc(sizeof(struct SkillParserStackNode));
             new->next = ctx->head;
             new->type = SKILL_ITEM_TYPE_SKILL;
@@ -3905,11 +3906,10 @@ static void on_skill_start(void *user_data, const XML_Char *name, const XML_Char
                     ctx->capacity = 1;
                     SKILL_INFOS[SKILL_INFO_COUNT].levels = malloc(sizeof(struct SkillLevelInfo));
                 } else if (!strcmp(attrs[1], "req")) {
-                    ctx->skip++;
-                    //struct SkillParserStackNode *new = malloc(sizeof(struct SkillParserStackNode));
-                    //new->next = ctx->head;
-                    //new->type = SKILL_ITEM_TYPE_REQ;
-                    //ctx->head = new;
+                    struct SkillParserStackNode *new = malloc(sizeof(struct SkillParserStackNode));
+                    new->next = ctx->head;
+                    new->type = SKILL_ITEM_TYPE_REQS;
+                    ctx->head = new;
                 } else {
                     ctx->skip++;
                 }
@@ -3961,6 +3961,37 @@ static void on_skill_start(void *user_data, const XML_Char *name, const XML_Char
                 else if (!strcmp(key, "bulletCount"))
                     SKILL_INFOS[SKILL_INFO_COUNT].levels[SKILL_INFOS[SKILL_INFO_COUNT].levelCount].bulletCount = strtol(value, NULL, 10);
             }
+        break;
+
+        case SKILL_ITEM_TYPE_REQS: {
+            struct SkillParserStackNode *new = malloc(sizeof(struct SkillParserStackNode));
+            new->next = ctx->head;
+            new->type = SKILL_ITEM_TYPE_REQ;
+            ctx->head = new;
+        }
+        break;
+
+        case SKILL_ITEM_TYPE_REQ: {
+            ctx->skip++;
+            if (!strcmp(name, "int")) {
+                const XML_Char *key = NULL;
+                const XML_Char *value = NULL;
+                for (size_t i = 0; attrs[i] != NULL; i += 2) {
+                    if (!strcmp(attrs[i], "name"))
+                        key = attrs[i+1];
+                    else if (!strcmp(attrs[i], "value"))
+                        value = attrs[i+1];
+                }
+
+                assert(key != NULL && value != NULL);
+
+                SKILL_INFOS[SKILL_INFO_COUNT].reqId = strtol(key, NULL, 10);
+                SKILL_INFOS[SKILL_INFO_COUNT].reqLevel = strtol(value, NULL, 10);
+            } else {
+                assert(0);
+            }
+        }
+        break;
         }
     }
 }

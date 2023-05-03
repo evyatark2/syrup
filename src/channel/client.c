@@ -1547,9 +1547,9 @@ bool client_assign_sp(struct Client *client, uint32_t id)
         if ((job % 1000 != 0 && chr->job / 100 != job / 100) || (job / 10 % 10 != 0 && chr->job % 10 < job % 10))
             return false;
 
-        for (size_t i = 0; i < info->reqCount; i++) {
-            struct Skill *req = hash_set_u32_get(chr->skills, info->reqs[i].id);
-            if (req == NULL || req->level < info->reqs[i].level)
+        if (info->reqId != 0) {
+            struct Skill *req = hash_set_u32_get(chr->skills, info->reqId);
+            if (req == NULL || req->level < info->reqLevel)
                 return false;
         }
 
