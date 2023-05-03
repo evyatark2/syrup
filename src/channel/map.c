@@ -994,6 +994,8 @@ void map_spawn(struct Map *map, uint32_t id, struct Point p)
             void *temp = realloc(map->players[i].monsters, (map->monsterCapacity * 2) * sizeof(struct MapMonster *));
             if (temp == NULL)
                 return;
+
+            map->players[i].monsters = temp;
         }
 
         for (size_t i = 0; i < map->monsterCount; i++)
@@ -1015,7 +1017,7 @@ void map_spawn(struct Map *map, uint32_t id, struct Point p)
     monster->id = id;
     monster->x = p.x;
     // Sometimes the player can be a unit below the foothold's line
-    // so to make sure the y coordinate is ABOVE (not ON) the foothold, increase y coordinate by 2
+    // so to make sure the y coordinate is ABOVE (not ON) the foothold, move up y coordinate by 2
     monster->y = p.y - 2;
     monster->hp = wz_get_monster_stats(id)->hp;
     monster->fh = fh->id;
@@ -2493,6 +2495,8 @@ static void on_respawn(struct Room *room, struct TimerHandle *handle)
                 void *temp = realloc(map->players[i].monsters, (map->monsterCapacity * 2) * sizeof(struct MapMonster *));
                 if (temp == NULL)
                     return;
+
+                map->players[i].monsters = temp;
             }
 
             for (size_t i = 0; i < map->monsterCount; i++)
