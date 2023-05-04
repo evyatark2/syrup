@@ -60,7 +60,7 @@ function talk(c)
             c:sendOk("Cach only, no credit")
         elseif not c:hasItem(materials[i], quantities[i] * qty) then
             c:sendOk("I cannot accept substitutes. If you don't have what I need, then I won't be able to help you.")
-        elseif not c:gainItems({ { id = items[i], amount = 1 } }) then
+        elseif not c:gainItems({ id = items[i], amount = qty }) then
             c:sendOk("Check your inventory for a free slot first.")
         else
             c:gainMeso(-costs[i] * qty)

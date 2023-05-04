@@ -18,7 +18,7 @@ function talk(c)
             end
 
             if i == 2 then
-                if c:gainItems({ { id = 1452051, amount = 1 }, { id =  2060000, amount = 1000} }) then
+                if c:gainItems({ { id = 1452051, amount = 1 }, { id =  2060000, amount = 1000 } }) then
                     c:changeJob(Job.ARCHER)
                     c:resetStats()
                     i = i + 1

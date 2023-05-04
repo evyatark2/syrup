@@ -230,35 +230,57 @@ static int l_client_has_item(lua_State *L)
 static int l_client_gain_items(lua_State *L) {
     struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
     luaL_checktype(L, 2, LUA_TTABLE);
-    if (luaL_len(L, 2) == 0)
-        return 0;
 
-    uint32_t ids[luaL_len(L, 2)];
-    int16_t amounts[luaL_len(L, 2)];
-    for (int i = 1; i <= luaL_len(L, 2); i++) {
-        int type = lua_geti(L, 2, i);
-        if (type != LUA_TTABLE)
-            return luaL_error(L, "adjustItems(): Expected an array of tables");
+    if (luaL_len(L, 2) != 0) {
+        uint32_t ids[luaL_len(L, 2)];
+        int16_t amounts[luaL_len(L, 2)];
+        for (int i = 1; i <= luaL_len(L, 2); i++) {
+            int type = lua_geti(L, 2, i);
+            if (type == LUA_TTABLE) {
+                lua_pushstring(L, "id");
+                if (lua_gettable(L, 3) != LUA_TNUMBER)
+                    return luaL_error(L, "gainItems(): id field in table is not an integer");
 
-        lua_pushstring(L, "id");
-        if (lua_gettable(L, 3) != LUA_TNUMBER) {
-            lua_pushstring(L, "id");
-            fprintf(stderr, "%d\n", lua_gettable(L, 3));
-            return luaL_error(L, "adjustItems(): id field in table is not an integer");
+                ids[i - 1] = lua_tointeger(L, -1);
+                lua_pop(L, 1);
+
+                lua_pushstring(L, "amount");
+                if (lua_gettable(L, 3) != LUA_TNUMBER)
+                    return luaL_error(L, "gainItems(): amount field in table is not an integer");
+                amounts[i - 1] = lua_tointeger(L, -1);
+                lua_pop(L, 2);
+            } else {
+                return luaL_error(L, "gainItems(): Expected an array of tables or a single table");
+            }
+
         }
-        ids[i - 1] = luaL_checkinteger(L, -1);
+
+        bool success;
+        if (!client_gain_items(client, luaL_len(L, 2), ids, amounts, true, &success))
+            return luaL_error(L, "gainItems(): Memory error");
+        lua_pushboolean(L, success);
+    } else {
+        uint32_t id;
+        int16_t amount;
+        lua_pushstring(L, "id");
+        if (lua_gettable(L, 2) != LUA_TNUMBER)
+            return luaL_error(L, "gainItems(): id field in table is not an integer");
+
+        id = lua_tointeger(L, -1);
         lua_pop(L, 1);
 
         lua_pushstring(L, "amount");
-        if (lua_gettable(L, 3) != LUA_TNUMBER)
-            return luaL_error(L, "adjustItems(): amount field in table is not an integer");
-        amounts[i - 1] = luaL_checkinteger(L, -1);
-        lua_pop(L, 2);
+        int type = lua_gettable(L, 2);
+        if (type != LUA_TNUMBER && type != LUA_TNIL)
+            return luaL_error(L, "gainItems(): amount field in table is not an integer");
+        amount = type == LUA_TNIL ? 1 : lua_tointeger(L, -1);
+
+        lua_pop(L, 1);
+        bool success;
+        if (!client_gain_items(client, 1, &id, &amount, true, &success))
+            return luaL_error(L, "gainItems(): Memory error");
+        lua_pushboolean(L, success);
     }
-    bool success;
-    if (!client_gain_items(client, luaL_len(L, 2), ids, amounts, true, &success))
-        return luaL_error(L, "adjustItems(): Memory error");
-    lua_pushboolean(L, success);
     return 1;
 }
 

@@ -18,7 +18,7 @@ function talk(c)
             end
 
             if i == 2 then
-                if c:gainItems({ { id = 1302077, amount = 1 } }) then
+                if c:gainItems({ id = 1302077 }) then
                     c:changeJob(Job.SWORDSMAN)
                     c:resetStats()
                     i = i + 1
