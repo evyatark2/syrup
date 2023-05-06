@@ -4068,27 +4068,30 @@ static int16_t rectangle_length(struct Rectangle *rect)
 
 static int32_t white_space_area_2(struct Rectangle *r1, struct Rectangle *r2)
 {
-    struct Rectangle intersect1 = rectangle_intersection(r1, r2);
-    int32_t cover_area = rectangle_area(r1) + rectangle_area(r2) - rectangle_area(&intersect1);
+    struct Rectangle intersect = rectangle_intersection(r1, r2);
+    int32_t cover_area = rectangle_area(r1) + rectangle_area(r2) - rectangle_area(&intersect);
     struct Rectangle union_ = rectangle_mbr(r1, r2);
     return rectangle_area(&union_) - cover_area;
 }
 
 static int32_t white_space_length_2(struct Rectangle *r1, struct Rectangle *r2)
 {
-    struct Rectangle intersect1 = rectangle_intersection(r1, r2);
-    int32_t cover_area = rectangle_length(r1) + rectangle_length(r2) - rectangle_length(&intersect1);
+    struct Rectangle intersect = rectangle_intersection(r1, r2);
+    int32_t cover_area = rectangle_length(r1) + rectangle_length(r2) - rectangle_length(&intersect);
     struct Rectangle union_ = rectangle_mbr(r1, r2);
     return rectangle_length(&union_) - cover_area;
 }
 
+// Find the total free are of the 3 rectangles when put into a bounding one
 static int32_t white_space_area_3(struct Rectangle *r1, struct Rectangle *r2, struct Rectangle *r3)
 {
     struct Rectangle intersect1 = rectangle_intersection(r1, r2);
     struct Rectangle intersect2 = rectangle_intersection(r1, r3);
     struct Rectangle intersect3 = rectangle_intersection(r2, r3);
     struct Rectangle intersect4 = rectangle_intersection(&intersect1, r3);
-    int32_t cover_area = rectangle_area(r1) + rectangle_area(r2) + rectangle_area(r3) - rectangle_area(&intersect1) - rectangle_area(&intersect2) - rectangle_area(&intersect3) + rectangle_area(&intersect4);
+    int32_t cover_area = rectangle_area(r1) + rectangle_area(r2) + rectangle_area(r3)
+        - rectangle_area(&intersect1) - rectangle_area(&intersect2) - rectangle_area(&intersect3)
+        + rectangle_area(&intersect4);
     struct Rectangle union_ = rectangle_mbr(r1, r2);
     union_ = rectangle_mbr(&union_, r3);
     return rectangle_area(&union_) - cover_area;
@@ -4119,6 +4122,12 @@ static void insert_foothold(struct FootholdRTree *tree, struct Foothold *fh)
     } else {
         struct RTreeNode *node = tree->root;
         // ChooseLeaf
+        // In the standard algorithm, horizontal (and vertical) lines are considered to have area 0
+        // and so if we have 2 footholds { (0,0), (10,0) }, { (100,0) (110,0) } each in a seperate bounding rectangle
+        // and we are trying to insert { (10,0), (20,0) } then it can be added to the second rectangle (as the
+        // 2D area increase it still 0) even though if it was added to the first one it would be much more effiecient.
+        // So our slightly modified algorithm takes this into account and determines that if the 2D area increase is 0
+        // then we pick the rectangle that will have the smaller 1D length increase.
         while (!node->isLeaf) {
             struct Rectangle bounding = rectangle_mbr(&node->children[0]->bound, &fh_rect);
             int32_t min_measure = rectangle_area(&bounding) - rectangle_area(&node->children[0]->bound);
@@ -4159,13 +4168,13 @@ static void insert_foothold(struct FootholdRTree *tree, struct Foothold *fh)
                     min_index = i;
                     min_is_length = true;
                 }
-                // Else the current minimum measure represents an area while the minimum represents a length, so we keep the minimum
+                // Else the current measure represents an area while the minimum represents a length, so we keep the minimum
             }
 
             node = node->children[min_index];
         }
 
-        // SplitNode (brute force since M is sufficiently small)
+        // SplitNode (brute force to find the smallets split since M=3 is sufficiently small)
         if (node->count < 3) {
             node->footholds[node->count] = *fh;
             node->count++;
@@ -4177,36 +4186,47 @@ static void insert_foothold(struct FootholdRTree *tree, struct Foothold *fh)
                 parent = parent->parent;
             }
         } else {
+            // Find how to split the node -- how to organize the 4 footholds into 2 bounding rectangles
+            // such that the total free area/length of the 2 rectangles is the minimum.
+            //
+            // First check all 3-1 splits
             struct Rectangle fh0_rect = foothold_mbr(&node->footholds[0]);
             struct Rectangle fh1_rect = foothold_mbr(&node->footholds[1]);
             struct Rectangle fh2_rect = foothold_mbr(&node->footholds[2]);
             struct Rectangle child_rects[3] = { fh0_rect, fh1_rect, fh2_rect };
-            int32_t min_measure = white_space_area_3(&fh1_rect, &fh2_rect, &fh_rect);
-            bool min_is_length = rectangle_area(&fh1_rect) == 0 && rectangle_area(&fh2_rect) == 0 && min_measure == 0;
-            if (min_is_length)
-                min_measure = white_space_length_3(&fh1_rect, &fh2_rect, &fh_rect);
+            int32_t min_area = rectangle_area(&fh0_rect) + white_space_area_3(&fh1_rect, &fh2_rect, &fh_rect);
+            int32_t min_length = rectangle_area(&fh0_rect) == 0 ? rectangle_length(&fh0_rect) : 0;
+            // The predicate checks if the area of the MBR of the 3 rectangles fh1, fh2, fh is 0
+            if (rectangle_area((struct Rectangle[]) { rectangle_mbr((struct Rectangle[]) { rectangle_mbr(&fh1_rect, &fh2_rect) }, &fh_rect) }) == 0)
+                // If the area of the three rectangles is 0 then they must all lie on a horizontal/vertical line
+                min_length += white_space_length_3(&fh1_rect, &fh2_rect, &fh_rect);
 
-            bool min_is_one = true;
+            bool min_is_one = true; // The current minimum is a 3-1 split
             uint8_t which[2] = { 0 };
             for (uint8_t i = 1; i < 4; i++) {
+                // The rectangle that is left out
+                struct Rectangle *r = i == 1 ? &fh1_rect : (i == 2 ? &fh2_rect : &fh_rect);
+
                 struct Rectangle *r1 = &fh0_rect;
                 struct Rectangle *r2 = i == 1 ? &fh2_rect : &fh1_rect;
-                struct Rectangle *r3 = i == 2 ? &fh_rect : &fh2_rect;
-                int32_t measure = white_space_area_3(r1, r2, r3);
-                bool is_length = rectangle_area(r1) == 0 && rectangle_area(r2) == 0 && measure == 0;
-                if (is_length)
-                    measure = white_space_length_3(r1, r2, r3);
+                struct Rectangle *r3 = i == 3 ? &fh2_rect : &fh_rect;
 
-                if (((!min_is_length && !is_length) || (min_is_length && is_length)) && measure < min_measure) {
-                    min_measure = measure;
+                int32_t area = rectangle_area(r) + white_space_area_3(r1, r2, r3);
+                int32_t length = rectangle_area(r) == 0 ? rectangle_length(r) : 0;
+                if (rectangle_area((struct Rectangle[]) { rectangle_mbr((struct Rectangle[]) { rectangle_mbr(r1, r2) }, r3) }) == 0)
+                    min_length += white_space_length_3(r1, r2, r3);
+
+                if (area < min_area) {
+                    min_area = area;
+                    min_length = length;
                     which[0] = i;
-                } else if (is_length) {
-                    min_measure = measure;
+                } else if (area == min_area && length < min_length) {
+                    min_length = length;
                     which[0] = i;
-                    min_is_length = true;
                 }
             }
 
+            // Check all possible 2-2 splits
             for (uint8_t i = 0; i < 3; i++) {
                 for (uint8_t j = i + 1; j < 4; j++) {
                     struct Rectangle *r1 = &child_rects[i];
@@ -4227,31 +4247,39 @@ static void insert_foothold(struct FootholdRTree *tree, struct Foothold *fh)
                         }
                     }
 
-                    int32_t measure1 = white_space_area_2(r1, r2);
-                    int32_t measure2 = white_space_area_2(r3, r4);
-                    bool is_length = rectangle_area(r1) == 0 && measure1 == 0 && rectangle_area(r3) && measure2 == 0;
-                    if (is_length) {
-                        measure1 = white_space_length_2(r1, r2);
-                        measure2 = white_space_length_2(r3, r4);
-                    }
-                    if (((!min_is_length && !is_length) || (min_is_length && is_length)) && measure1 + measure2 < min_measure) {
-                        min_measure = measure1 + measure2;
+                    // The split is {r1, r2}, {r3, r4}
+
+                    int32_t area1 = white_space_area_2(r1, r2);
+                    int32_t area2 = white_space_area_2(r3, r4);
+
+                    int32_t length1 = 0;
+                    if (area1 == 0 && rectangle_area(r1) == 0)
+                        length1 = white_space_length_2(r1, r2);
+
+                    int32_t length2 = 0;
+                    if (area2 == 0 && rectangle_area(r3) == 0)
+                        length2 = white_space_length_2(r3, r4);
+
+                    if (area1 + area2 < min_area) {
+                        min_area = area1 + area2;
+                        min_length = length1 + length2;
                         min_is_one = false;
                         which[0] = i;
                         which[1] = j;
-                    } else if (is_length) {
-                        min_measure = measure1 + measure2;
+                    } else if (area1 + area2 == min_area && length1 + length2 < min_length) {
+                        min_length = length1 + length2;
                         min_is_one = false;
                         which[0] = i;
                         which[1] = j;
-                        min_is_length = true;
                     }
                 }
             }
 
+            // Create the new node
             struct RTreeNode *new = malloc(sizeof(struct RTreeNode));
             new->isLeaf = true;
 
+            // Insert the picked footholds into the new node
             if (min_is_one) {
                 new->count = 1;
                 new->footholds[0] = which[0] == 3 ? *fh : node->footholds[which[0]];
@@ -4297,8 +4325,8 @@ static void insert_foothold(struct FootholdRTree *tree, struct Foothold *fh)
 
             struct RTreeNode *parent = node->parent;
             while (parent != NULL) {
-                if (parent->count < 3) {
-                    node = parent;
+                node = parent;
+                if (node->count < 3) {
                     node->children[node->count] = new;
                     new->parent = node;
                     node->count++;
@@ -4312,8 +4340,7 @@ static void insert_foothold(struct FootholdRTree *tree, struct Foothold *fh)
                     }
                     break;
                 } else {
-                    node = parent;
-
+                    // Split the parent if it doesn't have room
                     int32_t min_measure = white_space_area_3(&node->children[1]->bound, &node->children[2]->bound, &new->bound);
                     bool min_is_length = rectangle_area(&node->children[1]->bound) == 0 && rectangle_area(&node->children[2]->bound) == 0 && min_measure == 0;
                     if (min_is_length)
@@ -4324,7 +4351,7 @@ static void insert_foothold(struct FootholdRTree *tree, struct Foothold *fh)
                     for (uint8_t i = 1; i < 4; i++) {
                         struct Rectangle *r1 = &node->children[0]->bound;
                         struct Rectangle *r2 = i == 1 ? &node->children[2]->bound : &node->children[1]->bound;
-                        struct Rectangle *r3 = i == 2 ? &new->bound : &node->children[2]->bound;
+                        struct Rectangle *r3 = i == 3 ? &node->children[2]->bound : &new->bound;
                         int32_t measure = white_space_area_3(r1, r2, r3);
                         bool is_length = rectangle_area(r1) == 0 && rectangle_area(r2) == 0 && measure == 0;
                         if (is_length)
@@ -4362,7 +4389,7 @@ static void insert_foothold(struct FootholdRTree *tree, struct Foothold *fh)
 
                             int32_t measure1 = white_space_area_2(r1, r2);
                             int32_t measure2 = white_space_area_2(r3, r4);
-                            bool is_length = rectangle_area(r1) == 0 && measure1 == 0 && rectangle_area(r3) && measure2 == 0;
+                            bool is_length = rectangle_area(r1) == 0 && measure1 == 0 && rectangle_area(r3) == 0 && measure2 == 0;
                             if (is_length) {
                                 measure1 = white_space_length_2(r1, r2);
                                 measure2 = white_space_length_2(r3, r4);
