@@ -1748,6 +1748,9 @@ void client_adjust_sp(struct Client *client, int16_t sp)
 #define DEFINE_STAT_ADJUST(name, stat_name, stat) \
     void client_adjust_##name(struct Client *client, int16_t amount) \
     { \
+        if (amount == 0) \
+            return; \
+ \
         struct Character *chr = &client->character; \
         if (chr->ap >= amount) { \
             if (amount > INT16_MAX - chr->stat_name) \
