@@ -23758,11 +23758,11 @@ INSERT INTO temp_reactor_drop_data VALUES
 (1533,9202012,1372011,25,-1),
 (1534,9202012,1442046,25,-1);
 
-UPDATE temp_reactor_drop_data SET chance = 1000000 / chance
+UPDATE temp_reactor_drop_data SET chance = 1000000 / chance;
 
-INSERT INTO temp_reactor_drop_data (reactor_id, item_id, chance, quest_id) SELECT reactor_id, item_id, SUM(chance), quest_id FROM temp_reactor_drop_data GROUP BY reactor_id, item_id
+INSERT INTO temp_reactor_drop_data (reactor_id, item_id, chance, quest_id) SELECT reactor_id, item_id, SUM(chance), quest_id FROM temp_reactor_drop_data GROUP BY reactor_id, item_id;
 
-DELETE FROM temp_reactor_drop_data WHERE id <= 1534
+DELETE FROM temp_reactor_drop_data WHERE id <= 1534;
 
 INSERT INTO ReactorDrops SELECT reactor_id, item_id, chance FROM temp_reactor_drop_data WHERE quest_id = -1;
 INSERT INTO ReactorQuestDrops SELECT reactor_id, item_id, quest_id, chance FROM temp_reactor_drop_data WHERE quest_id != -1;
