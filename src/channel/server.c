@@ -770,7 +770,7 @@ const struct sockaddr *session_get_addr(struct Session *session)
 bool session_assign_id(struct Session *session, uint32_t id)
 {
     struct ChannelServer *server = session->supervisor;
-    struct PendingCharacter *pending = hash_set_u32_get(server->pendings, id);
+    uint32_t *pending = hash_set_u32_get(server->pendings, id);
     if (pending == NULL)
         return false;
 
