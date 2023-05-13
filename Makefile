@@ -1,5 +1,5 @@
 #CC=clang
-SANITIZE=#-fsanitize=address -fsanitize=undefined -fsanitize=leak -fanalyzer
+SANITIZE=#-fsanitize=undefined -fsanitize=leak -fsanitize=address
 CFLAGS=-g -Wall -pedantic -I/home/evyatar/.local/include `pkg-config --cflags mariadb libevent_pthreads libargon2 expat lua json-c` $(SANITIZE)
 LDFLAGS=-L/home/evyatar/.local/lib -Wl,-rpath /home/evyatar/.local/lib $(SANITIZE)
 LDLIBS=`pkg-config --libs mariadb libevent_pthreads libargon2 expat lua json-c` -lcmph
