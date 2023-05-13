@@ -4883,9 +4883,9 @@ static bool end_quest(struct Client *client, uint16_t qid, uint32_t npc, bool *s
 
     client_commit_stats(client);
 
-    uint8_t packet[UPDATE_QUEST_COMPLETION_TIME_PACKET_LENGTH];
+    uint8_t packet[END_QUEST_PACKET_LENGTH];
     end_quest_packet(qid, npc, next_quest, packet);
-    session_write(client->session, UPDATE_QUEST_COMPLETION_TIME_PACKET_LENGTH, packet);
+    session_write(client->session, END_QUEST_PACKET_LENGTH, packet);
 
     hash_set_u16_remove(chr->quests, qid);
 

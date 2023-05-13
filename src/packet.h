@@ -251,7 +251,7 @@ void inventory_full_notification_packet(uint8_t *packet);
 #define START_QUEST_PACKET_LENGTH 13
 void start_quest_packet(uint16_t qid, uint32_t npc, uint8_t *packet);
 
-#define END_QUEST_PACKET_LENGTH 13
+#define END_QUEST_PACKET_LENGTH 11
 void end_quest_packet(uint16_t qid, uint32_t npc, uint16_t next, uint8_t *packet);
 
 #define UPDATE_QUEST_PACKET_MAX_LENGTH 28

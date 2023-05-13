@@ -1195,7 +1195,7 @@ void start_quest_packet(uint16_t qid, uint32_t npc, uint8_t *packet)
 void end_quest_packet(uint16_t qid, uint32_t npc, uint16_t next, uint8_t *packet)
 {
     struct Writer writer;
-    writer_init(&writer, START_QUEST_PACKET_LENGTH, packet);
+    writer_init(&writer, END_QUEST_PACKET_LENGTH, packet);
 
     writer_u16(&writer, 0x00D3);
     writer_u8(&writer, 8);
