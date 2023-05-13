@@ -4104,6 +4104,9 @@ void client_change_job(struct Client *client, enum Job job)
         character_set_max_mp(chr, chr->maxMp + rand2);
     }
 
+    client->stats |= STAT_MAX_HP | STAT_MAX_MP;
+    client_commit_stats(client);
+
     // TODO: Broadcast to family, party, guild
 
     //{
