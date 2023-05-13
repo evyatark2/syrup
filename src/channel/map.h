@@ -139,7 +139,7 @@ uint32_t map_get_npc(struct Map *map, uint32_t oid);
  *
  * \return true if the movement was successful; false if an error occurred.
  */
-bool map_move_monster(struct Map *map, struct MapPlayer *controller, uint8_t activity, uint32_t oid, int16_t x, int16_t y, uint16_t fh, uint8_t stance, size_t len, uint8_t *raw_data);
+bool map_move_monster(struct Map *map, struct MapPlayer *controller, uint8_t activity, uint8_t skill_id, uint8_t skill_level, uint32_t oid, int16_t x, int16_t y, uint16_t fh, uint8_t stance);
 
 int map_drop_batch_from_reactor(struct Map *map, struct MapPlayer *player, uint32_t oid);
 

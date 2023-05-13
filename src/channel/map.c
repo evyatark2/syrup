@@ -1328,7 +1328,7 @@ uint32_t map_get_npc(struct Map *map, uint32_t oid)
     return map->npcs[object->index].id;
 }
 
-bool map_move_monster(struct Map *map, struct MapPlayer *controller, uint8_t activity, uint32_t oid, int16_t x, int16_t y, uint16_t fh, uint8_t stance, size_t len, uint8_t *raw_data)
+bool map_move_monster(struct Map *map, struct MapPlayer *controller, uint8_t activity, uint8_t skill_id, uint8_t skill_level, uint32_t oid, int16_t x, int16_t y, uint16_t fh, uint8_t stance)
 {
     struct MapObject *obj = object_list_get(&map->objectList, oid);
     if (obj == NULL || (obj->type != MAP_OBJECT_MONSTER && obj->type != MAP_OBJECT_BOSS))
@@ -1337,6 +1337,15 @@ bool map_move_monster(struct Map *map, struct MapPlayer *controller, uint8_t act
     struct MapMonster *monster = obj->type == MAP_OBJECT_MONSTER ? &map->monsters[obj->index] : &map->boss;
     if (monster->monster.hp <= 0 || monster->controller != controller)
         return false;
+
+    activity >>= 1;
+
+    if (activity >= 42 && activity <= 59) {
+        switch (skill_id) {
+        case 100:
+        break;
+        }
+    }
 
     monster->monster.x = x;
     monster->monster.y = y;

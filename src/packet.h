@@ -132,7 +132,7 @@ void destroy_reactor_packet(uint32_t oid, uint8_t state, int16_t x, int16_t y, u
 void npc_action_packet(size_t size, uint8_t *data, uint8_t *packet);
 
 #define MOVE_MONSTER_PACKET_MAX_LENGTH 3843
-size_t move_monster_packet(uint32_t oid, uint8_t activity, size_t len, uint8_t *data, uint8_t *packet);
+size_t move_monster_packet(uint32_t oid, bool skill_possible, uint8_t activity, uint8_t skill_id, uint8_t skill_level, uint16_t option, size_t len, uint8_t *data, uint8_t *packet);
 
 #define MOVE_MONSTER_RESPONSE_PACKET_LENGTH 13
 void move_monster_response_packet(uint32_t oid, uint16_t moveid, uint8_t *packet);

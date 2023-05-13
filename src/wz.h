@@ -85,6 +85,12 @@ struct MapInfo {
     struct PortalInfo *portals;
 };
 
+struct MobSkillInfo {
+    uint8_t skill;
+    uint8_t level;
+    uint8_t action;
+};
+
 struct MobInfo {
     uint32_t id;
     bool bodyAttack;
@@ -99,6 +105,8 @@ struct MobInfo {
     int16_t acc;
     int16_t avoid;
     int32_t exp;
+    size_t skillCount;
+    struct MobSkillInfo *skills;
     bool undead;
     bool boss;
 };
@@ -344,9 +352,13 @@ struct ReactorInfo {
 
 struct SkillLevelInfo {
     int16_t mpCon;
-    int16_t time;
+    int16_t interval;
     int16_t damage;
     int16_t bulletCount;
+    int16_t count;
+    int16_t x;
+    int16_t y;
+    int16_t hp;
 };
 
 struct SkillInfo {

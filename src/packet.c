@@ -688,16 +688,19 @@ void npc_action_packet(size_t size, uint8_t *data, uint8_t *packet)
     writer_array(&writer, size, data);
 }
 
-size_t move_monster_packet(uint32_t oid, uint8_t activity, size_t len, uint8_t *data, uint8_t *packet)
+size_t move_monster_packet(uint32_t oid, bool skill_possible, uint8_t activity, uint8_t skill_id, uint8_t skill_level, uint16_t option, size_t len, uint8_t *data, uint8_t *packet)
 {
     struct Writer writer;
     writer_init(&writer, MOVE_MONSTER_PACKET_MAX_LENGTH, packet);
 
     writer_u16(&writer, 0x00EF);
     writer_u32(&writer, oid);
-    writer_u16(&writer, 0);
+    writer_u8(&writer, 0);
+    writer_bool(&writer, false);
     writer_u8(&writer, activity);
-    writer_u32(&writer, 0);
+    writer_u8(&writer, skill_id);
+    writer_u8(&writer, skill_level);
+    writer_u16(&writer, option);
     writer_array(&writer, len, data);
 
     return writer.pos;
@@ -711,8 +714,8 @@ void move_monster_response_packet(uint32_t oid, uint16_t moveid, uint8_t *packet
     writer_u16(&writer, 0x00F0);
     writer_u32(&writer, oid);
     writer_u16(&writer, moveid);
-    writer_bool(&writer, false);
-    writer_i16(&writer, 5);
+    writer_bool(&writer, true);
+    writer_i16(&writer, 100);
     writer_u8(&writer, 0);
     writer_u8(&writer, 0);
 }

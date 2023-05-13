@@ -1221,16 +1221,22 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
         uint32_t oid;
         uint16_t moveid;
         uint8_t activity;
+        uint8_t skill_id;
+        uint8_t skill_level;
+        uint16_t option;
         int16_t x, y;
         uint16_t fh;
         uint8_t stance;
-        size_t len = 5; // startx, starty, count
+        size_t len = 5; // startx (uint16_t), starty (uint16_t), count (uint8_t)
         READER_BEGIN(size, packet);
         READ_OR_ERROR(reader_u32, &oid);
         READ_OR_ERROR(reader_u16, &moveid);
         SKIP(1);
         READ_OR_ERROR(reader_u8, &activity);
-        SKIP(21);
+        READ_OR_ERROR(reader_u8, &skill_id);
+        READ_OR_ERROR(reader_u8, &skill_level);
+        READ_OR_ERROR(reader_u16, &option);
+        SKIP(17);
         uint8_t count;
         READ_OR_ERROR(reader_u8, &count);
         for (uint8_t i = 0; i < count; i++) {
@@ -1295,10 +1301,10 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
         SKIP(9);
         READER_END();
 
-        if (map_move_monster(map, client_get_map(client)->player, activity, oid, x, y, fh, stance, len, packet + 25)) {
+        if (map_move_monster(map, client_get_map(client)->player, activity, skill_id, skill_level, oid, x, y, fh, stance)) {
             {
                 uint8_t send[MOVE_MONSTER_PACKET_MAX_LENGTH];
-                size_t packet_len = move_monster_packet(oid, -1, len, packet + 25, send);
+                size_t packet_len = move_monster_packet(oid, true, activity, skill_id, skill_level, option, len, packet + 25, send);
                 session_broadcast_to_room(session, packet_len, send);
             }
 

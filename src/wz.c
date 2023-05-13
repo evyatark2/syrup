@@ -1,6 +1,7 @@
 #include "wz.h"
 
 #include <assert.h>
+#include <ctype.h>
 #include <errno.h>
 #include <stdbool.h>
 #include <string.h>
@@ -75,6 +76,10 @@ static struct ReactorInfo *REACTOR_INFOS;
 cmph_t *SKILL_INFO_MPH;
 static size_t SKILL_INFO_COUNT;
 static struct SkillInfo *SKILL_INFOS;
+
+cmph_t *MOB_SKILL_INFO_MPH;
+static size_t MOB_SKILL_INFO_COUNT;
+static struct SkillInfo *MOB_SKILL_INFOS;
 
 enum MapItemType {
     MAP_ITEM_TYPE_TOP_LEVEL,
@@ -318,6 +323,8 @@ static void on_reactor_second_pass_start(void *user_data, const XML_Char *name, 
 static void on_reactor_second_pass_end(void *user_data, const XML_Char *name);
 static void on_skill_start(void *user_data, const XML_Char *name, const XML_Char **attrs);
 static void on_skill_end(void *user_data, const XML_Char *name);
+static void on_mob_skill_start(void *user_data, const XML_Char *name, const XML_Char **attrs);
+static void on_mob_skill_end(void *user_data, const XML_Char *name);
 
 int wz_init(void)
 {
@@ -361,8 +368,9 @@ int wz_init(void)
 
             struct dirent *entry;
             while ((entry = readdir(skill_dir)) != NULL) {
-                if (entry->d_name[0] == '.' || entry->d_type != DT_REG)
+                if (entry->d_name[0] == '.' || !isdigit(entry->d_name[0]) || entry->d_type != DT_REG)
                     continue;
+
                 int fd = openat(dirfd(skill_dir), entry->d_name, O_RDONLY);
                 off_t len = lseek(fd, 0, SEEK_END);
                 lseek(fd, 0, SEEK_SET);
@@ -397,6 +405,48 @@ int wz_init(void)
             }
 
             fprintf(stderr, "Loaded skills\n");
+        }
+
+        {
+            struct SkillParserContext ctx = {
+                .head = NULL,
+                .skillCapacity = 1,
+            };
+
+            MOB_SKILL_INFOS = malloc(sizeof(struct SkillInfo));
+
+            int fd = open("wz/Skill.wz/MobSkill.img.xml", O_RDONLY);
+            off_t len = lseek(fd, 0, SEEK_END);
+            lseek(fd, 0, SEEK_SET);
+            char *data = malloc(len);
+            read(fd, data, len);
+            close(fd);
+
+            XML_SetElementHandler(parser, on_mob_skill_start, on_mob_skill_end);
+            XML_SetUserData(parser, &ctx);
+            XML_Parse(parser, data, len, true);
+            free(data);
+            XML_ParserReset(parser, NULL);
+
+            cmph_io_adapter_t *adapter = cmph_io_struct_vector_adapter(MOB_SKILL_INFOS, sizeof(struct SkillInfo), offsetof(struct SkillInfo, id), sizeof(uint32_t), MOB_SKILL_INFO_COUNT);
+            cmph_config_t *config = cmph_config_new(adapter);
+            cmph_config_set_algo(config, CMPH_BDZ);
+            MOB_SKILL_INFO_MPH = cmph_new(config);
+            cmph_config_destroy(config);
+            cmph_io_struct_vector_adapter_destroy(adapter);
+            size_t i = 0;
+            while (i < MOB_SKILL_INFO_COUNT) {
+                uint32_t j = cmph_search(MOB_SKILL_INFO_MPH, (void *)&MOB_SKILL_INFOS[i].id, sizeof(uint32_t));
+                if (i != j) {
+                    struct SkillInfo temp = MOB_SKILL_INFOS[j];
+                    MOB_SKILL_INFOS[j] = MOB_SKILL_INFOS[i];
+                    MOB_SKILL_INFOS[i] = temp;
+                } else {
+                    i++;
+                }
+            }
+
+            fprintf(stderr, "Loaded mob skills\n");
         }
 
         {
@@ -3926,9 +3976,13 @@ static void on_skill_start(void *user_data, const XML_Char *name, const XML_Char
             }
 
             SKILL_INFOS[SKILL_INFO_COUNT].levels[SKILL_INFOS[SKILL_INFO_COUNT].levelCount].mpCon = 0;
-            SKILL_INFOS[SKILL_INFO_COUNT].levels[SKILL_INFOS[SKILL_INFO_COUNT].levelCount].time = 0;
+            SKILL_INFOS[SKILL_INFO_COUNT].levels[SKILL_INFOS[SKILL_INFO_COUNT].levelCount].interval = 0;
             SKILL_INFOS[SKILL_INFO_COUNT].levels[SKILL_INFOS[SKILL_INFO_COUNT].levelCount].damage = 0;
             SKILL_INFOS[SKILL_INFO_COUNT].levels[SKILL_INFOS[SKILL_INFO_COUNT].levelCount].bulletCount = 0;
+            SKILL_INFOS[SKILL_INFO_COUNT].levels[SKILL_INFOS[SKILL_INFO_COUNT].levelCount].count = 1;
+            SKILL_INFOS[SKILL_INFO_COUNT].levels[SKILL_INFOS[SKILL_INFO_COUNT].levelCount].x = 1;
+            SKILL_INFOS[SKILL_INFO_COUNT].levels[SKILL_INFOS[SKILL_INFO_COUNT].levelCount].y = 1;
+            SKILL_INFOS[SKILL_INFO_COUNT].levels[SKILL_INFOS[SKILL_INFO_COUNT].levelCount].hp = 100;
 
             struct SkillParserStackNode *new = malloc(sizeof(struct SkillParserStackNode));
             new->next = ctx->head;
@@ -3954,12 +4008,20 @@ static void on_skill_start(void *user_data, const XML_Char *name, const XML_Char
 
                 if (!strcmp(key, "mpCon"))
                     SKILL_INFOS[SKILL_INFO_COUNT].levels[SKILL_INFOS[SKILL_INFO_COUNT].levelCount].mpCon = strtol(value, NULL, 10);
-                else if (!strcmp(key, "time"))
-                    SKILL_INFOS[SKILL_INFO_COUNT].levels[SKILL_INFOS[SKILL_INFO_COUNT].levelCount].time = strtol(value, NULL, 10);
+                else if (!strcmp(key, "interval"))
+                    SKILL_INFOS[SKILL_INFO_COUNT].levels[SKILL_INFOS[SKILL_INFO_COUNT].levelCount].interval = strtol(value, NULL, 10);
                 else if (!strcmp(key, "damage"))
                     SKILL_INFOS[SKILL_INFO_COUNT].levels[SKILL_INFOS[SKILL_INFO_COUNT].levelCount].damage = strtol(value, NULL, 10);
                 else if (!strcmp(key, "bulletCount"))
                     SKILL_INFOS[SKILL_INFO_COUNT].levels[SKILL_INFOS[SKILL_INFO_COUNT].levelCount].bulletCount = strtol(value, NULL, 10);
+                else if (!strcmp(key, "count"))
+                    SKILL_INFOS[SKILL_INFO_COUNT].levels[SKILL_INFOS[SKILL_INFO_COUNT].levelCount].count = strtol(value, NULL, 10);
+                else if (!strcmp(key, "x"))
+                    SKILL_INFOS[SKILL_INFO_COUNT].levels[SKILL_INFOS[SKILL_INFO_COUNT].levelCount].x = strtol(value, NULL, 10);
+                else if (!strcmp(key, "y"))
+                    SKILL_INFOS[SKILL_INFO_COUNT].levels[SKILL_INFOS[SKILL_INFO_COUNT].levelCount].y = strtol(value, NULL, 10);
+                else if (!strcmp(key, "hp"))
+                    SKILL_INFOS[SKILL_INFO_COUNT].levels[SKILL_INFOS[SKILL_INFO_COUNT].levelCount].hp = strtol(value, NULL, 10);
             }
         break;
 
@@ -4008,6 +4070,136 @@ static void on_skill_end(void *user_data, const XML_Char *name)
         SKILL_INFOS[SKILL_INFO_COUNT].levelCount++;
     else if (ctx->head->type == SKILL_ITEM_TYPE_SKILL)
         SKILL_INFO_COUNT++;
+
+    struct SkillParserStackNode *next = ctx->head->next;
+    free(ctx->head);
+    ctx->head = next;
+}
+
+static void on_mob_skill_start(void *user_data, const XML_Char *name, const XML_Char **attrs)
+{
+    struct SkillParserContext *ctx = user_data;
+    if (ctx->skip > 0) {
+        ctx->skip++;
+        return;
+    }
+
+    if (ctx->head == NULL) {
+        ctx->head = malloc(sizeof(struct SkillParserStackNode));
+        ctx->head->next = NULL;
+        ctx->head->type = SKILL_ITEM_TYPE_TOP_LEVEL;
+        if (strcmp(name, "imgdir"))
+            assert(0); // ERROR
+    } else {
+        switch (ctx->head->type) {
+        case SKILL_ITEM_TYPE_TOP_LEVEL: {
+            if (strcmp(name, "imgdir"))
+                assert(0); // ERROR
+
+            if (MOB_SKILL_INFO_COUNT == ctx->skillCapacity) {
+                MOB_SKILL_INFOS = realloc(MOB_SKILL_INFOS, (ctx->skillCapacity * 2) * sizeof(struct SkillInfo));
+                ctx->skillCapacity *= 2;
+            }
+
+            MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].id = strtol(attrs[1], NULL, 10);
+            MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].levelCount = 0;
+            struct SkillParserStackNode *new = malloc(sizeof(struct SkillParserStackNode));
+            new->next = ctx->head;
+            new->type = SKILL_ITEM_TYPE_SKILL;
+            ctx->head = new;
+        }
+        break;
+
+        case SKILL_ITEM_TYPE_SKILL:
+            if (!strcmp(name, "imgdir")) {
+                if (!strcmp(attrs[1], "level")) {
+                    struct SkillParserStackNode *new = malloc(sizeof(struct SkillParserStackNode));
+                    new->next = ctx->head;
+                    new->type = SKILL_ITEM_TYPE_LEVELS;
+                    ctx->head = new;
+
+                    ctx->capacity = 1;
+                    MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].levels = malloc(sizeof(struct SkillLevelInfo));
+                } else {
+                    ctx->skip++;
+                }
+            } else {
+                ctx->skip++;
+            }
+        break;
+
+        case SKILL_ITEM_TYPE_LEVELS: {
+            if (MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].levelCount == ctx->capacity) {
+                MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].levels = realloc(MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].levels,
+                        (ctx->capacity * 2) * sizeof(struct SkillLevelInfo));
+                ctx->capacity *= 2;
+            }
+
+            MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].levels[MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].levelCount].mpCon = 0;
+            MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].levels[MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].levelCount].interval = 0;
+            MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].levels[MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].levelCount].damage = 0;
+            MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].levels[MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].levelCount].bulletCount = 0;
+            MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].levels[MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].levelCount].count = 1;
+            MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].levels[MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].levelCount].x = 1;
+            MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].levels[MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].levelCount].y = 1;
+            MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].levels[MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].levelCount].hp = 100;
+
+            struct SkillParserStackNode *new = malloc(sizeof(struct SkillParserStackNode));
+            new->next = ctx->head;
+            new->type = SKILL_ITEM_TYPE_LEVEL;
+            ctx->head = new;
+        }
+        break;
+
+
+        case SKILL_ITEM_TYPE_LEVEL:
+            ctx->skip++;
+            if (!strcmp(name, "int")) {
+                const XML_Char *key = NULL;
+                const XML_Char *value = NULL;
+                for (size_t i = 0; attrs[i] != NULL; i += 2) {
+                    if (!strcmp(attrs[i], "name"))
+                        key = attrs[i+1];
+                    else if (!strcmp(attrs[i], "value"))
+                        value = attrs[i+1];
+                }
+
+                assert(key != NULL && value != NULL);
+
+                if (!strcmp(key, "mpCon"))
+                    MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].levels[MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].levelCount].mpCon = strtol(value, NULL, 10);
+                else if (!strcmp(key, "interval"))
+                    MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].levels[MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].levelCount].interval = strtol(value, NULL, 10);
+                else if (!strcmp(key, "damage"))
+                    MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].levels[MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].levelCount].damage = strtol(value, NULL, 10);
+                else if (!strcmp(key, "bulletCount"))
+                    MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].levels[MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].levelCount].bulletCount = strtol(value, NULL, 10);
+                else if (!strcmp(key, "count"))
+                    MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].levels[MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].levelCount].count = strtol(value, NULL, 10);
+                else if (!strcmp(key, "x"))
+                    MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].levels[MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].levelCount].x = strtol(value, NULL, 10);
+                else if (!strcmp(key, "y"))
+                    MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].levels[MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].levelCount].y = strtol(value, NULL, 10);
+                else if (!strcmp(key, "hp"))
+                    MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].levels[MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].levelCount].hp = strtol(value, NULL, 10);
+            }
+        break;
+        }
+    }
+}
+
+static void on_mob_skill_end(void *user_data, const XML_Char *name)
+{
+    struct SkillParserContext *ctx = user_data;
+    if (ctx->skip > 0) {
+        ctx->skip--;
+        return;
+    }
+
+    if (ctx->head->type == SKILL_ITEM_TYPE_LEVEL)
+        MOB_SKILL_INFOS[MOB_SKILL_INFO_COUNT].levelCount++;
+    else if (ctx->head->type == SKILL_ITEM_TYPE_SKILL)
+        MOB_SKILL_INFO_COUNT++;
 
     struct SkillParserStackNode *next = ctx->head->next;
     free(ctx->head);
