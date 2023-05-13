@@ -1661,7 +1661,12 @@ static void do_kill_room(void *data, void *ctx)
 {
     struct Room *room = ((struct RoomId *)data)->room;
 
-    hash_set_u32_foreach(room->sessions, do_kick, room);
+    if (hash_set_u32_size(room->sessions) != 0) {
+        hash_set_u32_foreach(room->sessions, do_kick, room);
+    } else {
+        // ctx is the manager
+        destroy_room(ctx, room);
+    }
 }
 
 static void on_session_join(int fd, short what, void *ctx_)

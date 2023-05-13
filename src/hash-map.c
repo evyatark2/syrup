@@ -14,6 +14,7 @@ struct HashSet {
     // 0 - free, 1 - occupied, 2 - deleted
     uint8_t *states;
     void *data;
+    bool iterating;
 };
 
 static int hash_set_init(struct HashSet *set, size_t stride, size_t key_offset);
@@ -21,8 +22,9 @@ static void hash_set_terminate(struct HashSet *set);
 static int hash_set_insert(struct HashSet *set, const void *data, size_t key_size);
 static void *hash_set_get(struct HashSet *set, const void *key, size_t key_size);
 static void hash_set_remove(struct HashSet *set, const void *key, size_t key_size);
-static void hash_set_foreach_with_remove(struct HashSet *set, bool f(void *data, void *ctx), void *ctx, size_t key_size);
 static void hash_set_clear(struct HashSet *set);
+
+static void realloc_set(struct HashSet *set, size_t key_size);
 
 struct HashSetU32 {
     struct HashSet set;
@@ -71,15 +73,15 @@ size_t hash_set_u32_size(struct HashSetU32 *set)
 
 void hash_set_u32_foreach(struct HashSetU32 *set, void f(void *data, void *ctx), void *ctx)
 {
+    set->set.iterating = true;
     for (size_t i = 0; i < set->set.capacity; i++) {
         if (set->set.states[i] == 1)
             f((char *)set->set.data + i * set->set.stride, ctx);
     }
-}
-
-void hash_set_u32_foreach_with_remove(struct HashSetU32 *set, bool f(void *data, void *ctx), void *ctx)
-{
-    hash_set_foreach_with_remove(&set->set, f, ctx, sizeof(uint32_t));
+    set->set.iterating = false;
+    
+    if (set->set.count < set->set.capacity / 4)
+        realloc_set(&set->set, sizeof(uint32_t));
 }
 
 void hash_set_u32_clear(struct HashSetU32 *set)
@@ -203,11 +205,6 @@ void hash_set_addr_foreach(struct HashSetAddr *set, void f(void *data, void *ctx
     }
 }
 
-void hash_set_addr_foreach_with_remove(struct HashSetAddr *set, bool f(void *data, void *ctx), void *ctx)
-{
-    hash_set_foreach_with_remove(&set->set, f, ctx, sizeof(struct sockaddr_storage));
-}
-
 static int hash_set_init(struct HashSet *set, size_t stride, size_t key_offset)
 {
     set->data = malloc(stride);
@@ -226,6 +223,7 @@ static int hash_set_init(struct HashSet *set, size_t stride, size_t key_offset)
     set->count = 0;
     set->stride = stride;
     set->keyOffset = key_offset;
+    set->iterating = false;
 
     return 0;
 }
@@ -310,84 +308,8 @@ static void hash_set_remove(struct HashSet *set, const void *key, size_t key_siz
 
     set->count--;
 
-    if (set->count < set->capacity / 4) {
-        void *new = malloc((set->capacity / 2) * set->stride);
-        if (new == NULL)
-            return;
-
-        uint8_t *new_states = malloc((set->capacity / 2) * sizeof(uint8_t));
-        if (new_states == NULL) {
-            free(new);
-            return;
-        }
-
-        for (size_t i = 0; i < set->capacity / 2; i++)
-            new_states[i] = 0;
-
-        for (size_t i = 0; i < set->capacity; i++) {
-            if (set->states[i] == 1) {
-                size_t new_i = XXH3_64bits((((char *)set->data + i * set->stride) + set->keyOffset), key_size) % (set->capacity / 2);
-                while (new_states[new_i] != 0) {
-                    new_i++;
-                    new_i %= set->capacity / 2;
-                }
-
-                new_states[new_i] = 1;
-                memcpy((char *)new + new_i * set->stride, (char *)set->data + i * set->stride, set->stride);
-            }
-        }
-
-        free(set->data);
-        free(set->states);
-        set->data = new;
-        set->states = new_states;
-        set->capacity /= 2;
-    }
-}
-
-static void hash_set_foreach_with_remove(struct HashSet *set, bool f(void *data, void *ctx), void *ctx, size_t key_size)
-{
-    for (size_t i = 0; i < set->capacity; i++) {
-        if (set->states[i] == 1) {
-            if (f((char *)set->data + i * set->stride, ctx)) {
-                set->states[i] = 2;
-                set->count--;
-            }
-        }
-    }
-
-    if (set->count < set->capacity / 4) {
-        void *new = malloc((set->capacity / 2) * set->stride);
-        if (new == NULL)
-            return;
-
-        uint8_t *new_states = malloc((set->capacity / 2) * sizeof(uint8_t));
-        if (new_states == NULL) {
-            free(new);
-            return;
-        }
-
-        for (size_t i = 0; i < set->capacity / 2; i++)
-            new_states[i] = 0;
-
-        for (size_t i = 0; i < set->capacity; i++) {
-            if (set->states[i] == 1) {
-                size_t new_i = XXH3_64bits((((char *)set->data + i * set->stride) + set->keyOffset), key_size) % (set->capacity / 2);
-                while (new_states[new_i] != 0) {
-                    new_i++;
-                    new_i %= set->capacity / 2;
-                }
-
-                new_states[new_i] = 1;
-                memcpy((char *)new + new_i * set->stride, (char *)set->data + i * set->stride, set->stride);
-            }
-        }
-
-        free(set->data);
-        free(set->states);
-        set->data = new;
-        set->states = new_states;
-        set->capacity /= 2;
+    if (!set->iterating && set->count < set->capacity / 4) {
+        realloc_set(set, key_size);
     }
 }
 
@@ -396,5 +318,41 @@ static void hash_set_clear(struct HashSet *set)
     set->capacity = 1;
     set->count = 0;
     set->states[0] = 0;
+}
+
+static void realloc_set(struct HashSet *set, size_t key_size)
+{
+        void *new = malloc((set->capacity / 2) * set->stride);
+        if (new == NULL)
+            return;
+
+        uint8_t *new_states = malloc((set->capacity / 2) * sizeof(uint8_t));
+        if (new_states == NULL) {
+            free(new);
+            return;
+        }
+
+        for (size_t i = 0; i < set->capacity / 2; i++)
+            new_states[i] = 0;
+
+        for (size_t i = 0; i < set->capacity; i++) {
+            if (set->states[i] == 1) {
+                size_t new_i = XXH3_64bits((((char *)set->data + i * set->stride) + set->keyOffset), key_size) % (set->capacity / 2);
+                while (new_states[new_i] != 0) {
+                    new_i++;
+                    new_i %= set->capacity / 2;
+                }
+
+                new_states[new_i] = 1;
+                memcpy((char *)new + new_i * set->stride, (char *)set->data + i * set->stride, set->stride);
+            }
+        }
+
+        free(set->data);
+        free(set->states);
+        set->data = new;
+        set->states = new_states;
+        set->capacity /= 2;
+
 }
 
