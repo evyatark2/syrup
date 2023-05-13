@@ -199,27 +199,27 @@ struct LoginServer *login_server_create(OnLog *on_log, CreateUserContext *create
 
             channel->event = bufferevent_socket_new(server->loop, -1, BEV_OPT_THREADSAFE);
             switch (domain) {
-            case AF_INET: {
+            case PF_INET: {
                 struct sockaddr_in addr = {
                     .sin_family = AF_INET,
                     .sin_addr = addr4,
-                    .sin_port = htons(strtol(strchr(LOGIN_CONFIG.worlds[i].channels[j].host, ':') + 1, NULL, 10)),
+                    .sin_port = htons(LOGIN_CONFIG.worlds[i].channels[j].port),
                 };
                 memcpy(&channel->addr, &addr, sizeof(struct sockaddr_un));
                 channel->socklen = sizeof(struct sockaddr_in);
             }
                 break;
-            case AF_INET6: {
+            case PF_INET6: {
                 struct sockaddr_in6 addr = {
                     .sin6_family = AF_INET,
                     .sin6_addr = addr6,
-                    .sin6_port = htons(strtol(strchr(LOGIN_CONFIG.worlds[i].channels[j].host, ']') + 2, NULL, 10)),
+                    .sin6_port = htons(LOGIN_CONFIG.worlds[i].channels[j].port),
                 };
                 memcpy(&channel->addr, &addr, sizeof(struct sockaddr_in6));
                 channel->socklen = sizeof(struct sockaddr_in6);
             }
             break;
-            case AF_UNIX: {
+            case PF_UNIX: {
                 struct sockaddr_un addr = {
                     .sun_family = AF_UNIX,
                 };
