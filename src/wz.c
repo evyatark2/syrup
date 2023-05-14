@@ -105,26 +105,6 @@ struct MapParserContext {
     struct Foothold currentFoothold;
 };
 
-enum MobItemType {
-    MOB_ITEM_TYPE_TOP_LEVEL,
-    MOB_ITEM_TYPE_INFO,
-    MOB_ITEM_TYPE_SKILLS,
-    MOB_ITEM_TYPE_SKILL
-};
-
-struct MobParserStackNode {
-    struct MobParserStackNode *next;
-    enum MobItemType type;
-};
-
-struct MobParserContext {
-    XML_Parser parser;
-    struct MobParserStackNode *head;
-    //uint32_t currentMob;
-    uint32_t currentSkill;
-    uint32_t skip;
-};
-
 enum QuestCheckItemType {
     QUEST_CHECK_ITEM_TYPE_TOP_LEVEL,
     QUEST_CHECK_ITEM_TYPE_QUEST,
@@ -233,23 +213,6 @@ struct EquipParserContext {
     uint32_t skip;
 };
 
-enum ConsumableItemType {
-    CONSUMABLE_ITEM_TYPE_TOP_LEVEL,
-    CONSUMABLE_ITEM_TYPE_ITEM,
-    CONSUMABLE_ITEM_TYPE_SPEC,
-};
-
-struct ConsumableParserStackNode {
-    struct ConsumableParserStackNode *next;
-    enum ConsumableItemType type;
-};
-
-struct ConsumableParserContext {
-    struct ConsumableParserStackNode *head;
-    size_t itemCapacity;
-    uint32_t skip;
-};
-
 enum ReactorItemType {
     REACTOR_ITEM_TYPE_TOP_LEVEL,
     REACTOR_ITEM_TYPE_INFO,
@@ -296,10 +259,66 @@ struct SkillParserContext {
     uint32_t skip;
 };
 
+enum BindType {
+    BIND_TYPE_BOOL,
+    BIND_TYPE_I8,
+    BIND_TYPE_U8,
+    BIND_TYPE_I16,
+    BIND_TYPE_U16,
+    BIND_TYPE_I32,
+    BIND_TYPE_U32,
+    BIND_TYPE_I64,
+    BIND_TYPE_U64,
+    BIND_TYPE_ARRAY,
+    BIND_TYPE_SET
+};
+
+struct BindPoint;
+
+struct BindTreeNode {
+    struct BindPoint *point;
+    struct BindTreeNode *parent;
+    size_t childCount;
+    struct BindTreeNode *children;
+    char *key;
+    enum BindType type;
+    size_t offset;
+    size_t offset2;
+    struct BindPoint *bp;
+};
+
+struct BindTree {
+    struct BindTreeNode *root;
+};
+
+struct BindPoint {
+    struct BindPoint *next;
+    size_t stride;
+    struct BindTree tree;
+    struct BindTreeNode *current;
+    bool skipTopLevel;
+    bool topLevel;
+    uint8_t *data;
+    size_t capacity;
+    size_t count;
+};
+
+struct Parser {
+    int32_t skip;
+    XML_Parser parser;
+    struct BindPoint *head;
+};
+
+static struct Parser *parser_new(size_t stride);
+static void parser_destroy(struct Parser *parser);
+static struct BindPoint *parser_get_root_bind_point(struct Parser *);
+static void parser_id_index(struct BindPoint *bp, enum BindType type, size_t offset);
+static void parser_bind(struct BindPoint *bp, const char *path, enum BindType type, size_t offset);
+static struct BindPoint *parser_bind_array(struct BindPoint *bp, size_t stride, const char *path, enum BindType type, size_t nmemb, size_t array);
+static void *parser_parse(struct Parser *parser, void *data, size_t len, size_t *count);
+
 static void on_map_start(void *user_data, const XML_Char *name, const XML_Char **attrs);
 static void on_map_end(void *user_data, const XML_Char *name);
-static void on_mob_start(void *user_data, const XML_Char *name, const XML_Char **attrs);
-static void on_mob_end(void *user_data, const XML_Char *name);
 static void on_quest_check_start(void *user_data, const XML_Char *name, const XML_Char **attrs);
 static void on_quest_check_end(void *user_data, const XML_Char *name);
 static void on_quest_act_start(void *user_data, const XML_Char *name, const XML_Char **attrs);
@@ -310,8 +329,6 @@ static void on_equip_item_start(void *user_data, const XML_Char *name, const XML
 static void on_equip_item_end(void *user_data, const XML_Char *name);
 static void on_equip_start(void *user_data, const XML_Char *name, const XML_Char **attrs);
 static void on_equip_end(void *user_data, const XML_Char *name);
-static void on_consumable_start(void *user_data, const XML_Char *name, const XML_Char **attrs);
-static void on_consumable_end(void *user_data, const XML_Char *name);
 static void on_reactor_start(void *user_data, const XML_Char *name, const XML_Char **attrs);
 static void on_reactor_end(void *user_data, const XML_Char *name);
 static void on_reactor_second_pass_start(void *user_data, const XML_Char *name, const XML_Char **attrs);
@@ -351,17 +368,173 @@ int wz_init(void)
         XML_Parser parser = XML_ParserCreate(NULL);
 
         {
-            struct SkillParserContext ctx = {
-                .head = NULL,
-                .skillCapacity = 1,
-            };
+            DIR *mobs_dir = opendir("wz/Mob.wz");
+            struct dirent *entry;
+            size_t count = 0;
+            while ((entry = readdir(mobs_dir)) != NULL) {
+                if (entry->d_name[0] != '.' && entry->d_type == DT_REG)
+                    count++;
+            }
+
+            MOB_INFOS = calloc(count, sizeof(struct MobInfo));
+            rewinddir(mobs_dir);
+
+            struct Parser *parser = parser_new(sizeof(struct MobInfo));
+            struct BindPoint *bp = parser_get_root_bind_point(parser);
+            parser_bind(bp, "/info/bodyAttack" , BIND_TYPE_BOOL, offsetof(struct MobInfo, bodyAttack));
+            parser_bind(bp, "/info/level"      , BIND_TYPE_U8, offsetof(struct MobInfo, level));
+            parser_bind(bp, "/info/maxHP"      , BIND_TYPE_I32, offsetof(struct MobInfo, hp));
+            parser_bind(bp, "/info/maxMP"      , BIND_TYPE_I32, offsetof(struct MobInfo, mp));
+            parser_bind(bp, "/info/speed"      , BIND_TYPE_I8, offsetof(struct MobInfo, speed));
+            parser_bind(bp, "/info/flySpeed"   , BIND_TYPE_I8, offsetof(struct MobInfo, speed));
+            parser_bind(bp, "/info/PADamage"   , BIND_TYPE_I16, offsetof(struct MobInfo, atk));
+            parser_bind(bp, "/info/PDDamage"   , BIND_TYPE_I16, offsetof(struct MobInfo, def));
+            parser_bind(bp, "/info/MADamage"   , BIND_TYPE_I16, offsetof(struct MobInfo, matk));
+            parser_bind(bp, "/info/MDDamage"   , BIND_TYPE_I16, offsetof(struct MobInfo, mdef));
+            parser_bind(bp, "/info/acc"        , BIND_TYPE_I16, offsetof(struct MobInfo, acc));
+            parser_bind(bp, "/info/eva"        , BIND_TYPE_I16, offsetof(struct MobInfo, avoid));
+            parser_bind(bp, "/info/exp"        , BIND_TYPE_I32, offsetof(struct MobInfo, exp));
+            parser_bind(bp, "/info/undead"     , BIND_TYPE_BOOL, offsetof(struct MobInfo, undead));
+            parser_bind(bp, "/info/boss"       , BIND_TYPE_BOOL, offsetof(struct MobInfo, boss));
+            struct BindPoint *skills =
+                parser_bind_array(bp, sizeof(struct MobSkillInfo), "/info/skill", BIND_TYPE_ARRAY,
+                                  offsetof(struct MobInfo, skillCount), offsetof(struct MobInfo, skills));
+            parser_bind(skills, "/skill", BIND_TYPE_U8, offsetof(struct MobSkillInfo, skill));
+            parser_bind(skills, "/level", BIND_TYPE_U8, offsetof(struct MobSkillInfo, level));
+            parser_bind(skills, "/action", BIND_TYPE_U8, offsetof(struct MobSkillInfo, action));
+
+            size_t capacity = 1;
+            while ((entry = readdir(mobs_dir)) != NULL) {
+                if (entry->d_name[0] == '.' || entry->d_type != DT_REG)
+                    continue;
+
+                if (MOB_INFO_COUNT == capacity) {
+                    MOB_INFOS = realloc(MOB_INFOS, (capacity * 2) * sizeof(struct MobInfo));
+                    memset(MOB_INFOS + capacity, 0, capacity * sizeof(struct MobInfo));
+                    capacity = capacity * 2;
+                }
+
+                int fd = openat(dirfd(mobs_dir), entry->d_name, O_RDONLY);
+                off_t len = lseek(fd, 0, SEEK_END);
+                lseek(fd, 0, SEEK_SET);
+                char *data = malloc(len);
+                read(fd, data, len);
+                close(fd);
+
+                void *info = parser_parse(parser, data, len, NULL);
+                MOB_INFOS[MOB_INFO_COUNT] = *(struct MobInfo *)info;
+                MOB_INFOS[MOB_INFO_COUNT].id = strtol(entry->d_name, NULL, 10);
+                free(info);
+                MOB_INFO_COUNT++;
+            }
+            parser_destroy(parser);
+            closedir(mobs_dir);
+
+            cmph_io_adapter_t *adapter = cmph_io_struct_vector_adapter(MOB_INFOS, sizeof(struct MobInfo), offsetof(struct MobInfo, id), sizeof(uint32_t), MOB_INFO_COUNT);
+            cmph_config_t *config = cmph_config_new(adapter);
+            cmph_config_set_algo(config, CMPH_BDZ);
+            MOB_INFO_MPH = cmph_new(config);
+            cmph_config_destroy(config);
+            cmph_io_struct_vector_adapter_destroy(adapter);
+            size_t i = 0;
+            while (i < MOB_INFO_COUNT) {
+                uint32_t j = cmph_search(MOB_INFO_MPH, (void *)&MOB_INFOS[i].id, sizeof(uint32_t));
+                if (i != j) {
+                    struct MobInfo temp = MOB_INFOS[j];
+                    MOB_INFOS[j] = MOB_INFOS[i];
+                    MOB_INFOS[i] = temp;
+                } else {
+                    i++;
+                }
+            }
+
+            fprintf(stderr, "Loaded mobs\n");
+        }
+
+        {
+            DIR *dir = opendir("wz/Item.wz/Consume");
+
+            struct Parser *parser = parser_new(sizeof(struct ConsumableInfo));
+            struct BindPoint *bp = parser_get_root_bind_point(parser);
+            parser_id_index(bp, BIND_TYPE_U32, offsetof(struct ConsumableInfo, id));
+            parser_bind(bp, "/spec/hp" , BIND_TYPE_I16, offsetof(struct ConsumableInfo, hp));
+            parser_bind(bp, "/spec/mp" , BIND_TYPE_I16, offsetof(struct ConsumableInfo, mp));
+            parser_bind(bp, "/spec/hpR" , BIND_TYPE_U8, offsetof(struct ConsumableInfo, hpR));
+            parser_bind(bp, "/spec/mpR" , BIND_TYPE_U8, offsetof(struct ConsumableInfo, mpR));
+            parser_bind(bp, "/spec/pad" , BIND_TYPE_I16, offsetof(struct ConsumableInfo, atk));
+            parser_bind(bp, "/spec/mad" , BIND_TYPE_I16, offsetof(struct ConsumableInfo, matk));
+            parser_bind(bp, "/spec/pdd" , BIND_TYPE_I16, offsetof(struct ConsumableInfo, def));
+            parser_bind(bp, "/spec/mdd" , BIND_TYPE_I16, offsetof(struct ConsumableInfo, mdef));
+            parser_bind(bp, "/spec/acc" , BIND_TYPE_I16, offsetof(struct ConsumableInfo, acc));
+            parser_bind(bp, "/spec/eva" , BIND_TYPE_I16, offsetof(struct ConsumableInfo, avoid));
+            parser_bind(bp, "/spec/speed" , BIND_TYPE_I16, offsetof(struct ConsumableInfo, speed));
+            parser_bind(bp, "/spec/jump" , BIND_TYPE_I16, offsetof(struct ConsumableInfo, jump));
+            parser_bind(bp, "/spec/time" , BIND_TYPE_I32, offsetof(struct ConsumableInfo, time));
+            parser_bind(bp, "/spec/consumeOnPickup" , BIND_TYPE_BOOL, offsetof(struct ConsumableInfo, consumeOnPickup));
+
+            struct dirent *entry;
+            while ((entry = readdir(dir)) != NULL) {
+                if (entry->d_name[0] == '.' || entry->d_type != DT_REG)
+                    continue;
+
+                int fd = openat(dirfd(dir), entry->d_name, O_RDONLY);
+                off_t len = lseek(fd, 0, SEEK_END);
+                lseek(fd, 0, SEEK_SET);
+                char *data = malloc(len);
+                read(fd, data, len);
+                close(fd);
+
+                size_t count;
+                void *res = parser_parse(parser, data, len, &count);
+                free(data);
+
+                CONSUMABLE_INFOS = realloc(CONSUMABLE_INFOS, (CONSUMABLE_INFO_COUNT + count) * sizeof(struct ConsumableInfo));
+                memcpy(CONSUMABLE_INFOS + CONSUMABLE_INFO_COUNT, res, count * sizeof(struct ConsumableInfo));
+                CONSUMABLE_INFO_COUNT += count;
+                free(res);
+            }
+            closedir(dir);
+
+            cmph_io_adapter_t *adapter = cmph_io_struct_vector_adapter(CONSUMABLE_INFOS, sizeof(struct ConsumableInfo), offsetof(struct ConsumableInfo, id), sizeof(uint32_t), CONSUMABLE_INFO_COUNT);
+            cmph_config_t *config = cmph_config_new(adapter);
+            cmph_config_set_algo(config, CMPH_BDZ);
+            CONSUMABLE_INFO_MPH = cmph_new(config);
+            cmph_config_destroy(config);
+            cmph_io_struct_vector_adapter_destroy(adapter);
+            size_t i = 0;
+            while (i < CONSUMABLE_INFO_COUNT) {
+                uint32_t j = cmph_search(CONSUMABLE_INFO_MPH, (void *)&CONSUMABLE_INFOS[i].id, sizeof(uint32_t));
+                if (i != j) {
+                    struct ConsumableInfo temp = CONSUMABLE_INFOS[j];
+                    CONSUMABLE_INFOS[j] = CONSUMABLE_INFOS[i];
+                    CONSUMABLE_INFOS[i] = temp;
+                } else {
+                    i++;
+                }
+            }
+
+            fprintf(stderr, "Loaded consumables\n");
+        }
+
+        {
             DIR *skill_dir = opendir("wz/Skill.wz");
+
+            struct Parser *parser = parser_new(sizeof(struct SkillInfo));
+            struct BindPoint *bp = parser_get_root_bind_point(parser);
+            struct Temp {
+                size_t count;
+                struct SkillInfo *skills;
+            };
+            bp = parser_bind_array(bp, sizeof(struct SkillInfo), "/skill", BIND_TYPE_ARRAY, offsetof(struct Temp, count), offsetof(struct Temp, skills));
+            parser_id_index(bp, BIND_TYPE_U32, offsetof(struct SkillInfo, id));
+            parser_bind_array(bp, sizeof(uint32_t), "/req", BIND_TYPE_SET, -1, offsetof(struct SkillInfo, reqId));
+            bp = parser_bind_array(bp, sizeof(struct SkillLevelInfo), "/level", BIND_TYPE_ARRAY, offsetof(struct SkillInfo, levelCount), offsetof(struct SkillInfo, levels));
 
             SKILL_INFOS = malloc(sizeof(struct SkillInfo));
 
             struct dirent *entry;
             while ((entry = readdir(skill_dir)) != NULL) {
-                if (entry->d_name[0] == '.' || entry->d_type != DT_REG)
+                if (entry->d_name[0] == '.' || !isdigit(entry->d_name[0]) || entry->d_type != DT_REG)
                     continue;
                 int fd = openat(dirfd(skill_dir), entry->d_name, O_RDONLY);
                 off_t len = lseek(fd, 0, SEEK_END);
@@ -370,11 +543,14 @@ int wz_init(void)
                 read(fd, data, len);
                 close(fd);
 
-                XML_SetElementHandler(parser, on_skill_start, on_skill_end);
-                XML_SetUserData(parser, &ctx);
-                XML_Parse(parser, data, len, true);
+                size_t count;
+                void *res = parser_parse(parser, data, len, &count);
                 free(data);
-                XML_ParserReset(parser, NULL);
+
+                SKILL_INFOS = realloc(SKILL_INFOS, (SKILL_INFO_COUNT + count) * sizeof(struct SkillInfo));
+                memcpy(SKILL_INFOS + SKILL_INFO_COUNT, res, count * sizeof(struct SkillInfo));
+                free(res);
+                SKILL_INFO_COUNT += count;
             }
             closedir(skill_dir);
 
@@ -648,66 +824,6 @@ int wz_init(void)
         }
 
         {
-            struct MobParserContext ctx = {
-                .parser = parser,
-                .head = NULL,
-            };
-            DIR *mobs_dir = opendir("wz/Mob.wz");
-            struct dirent *entry;
-            size_t count = 0;
-            while ((entry = readdir(mobs_dir)) != NULL) {
-                if (entry->d_name[0] != '.' && entry->d_type == DT_REG)
-                    count++;
-            }
-
-            MOB_INFOS = malloc(count * sizeof(struct MobInfo));
-            rewinddir(mobs_dir);
-
-            while ((entry = readdir(mobs_dir)) != NULL) {
-                if (entry->d_name[0] == '.' || entry->d_type != DT_REG)
-                    continue;
-                int fd = openat(dirfd(mobs_dir), entry->d_name, O_RDONLY);
-                off_t len = lseek(fd, 0, SEEK_END);
-                lseek(fd, 0, SEEK_SET);
-                char *data = malloc(len);
-                read(fd, data, len);
-                close(fd);
-
-                //ctx.currentSkill = 1;
-                //MOB_INFOS[ctx.currentMob].lifeCount = 0;
-                //MOB_INFOS[ctx.currentMob].lives = malloc(sizeof(struct LifeInfo));
-
-                XML_SetElementHandler(parser, on_mob_start, on_mob_end);
-                XML_SetUserData(parser, &ctx);
-                XML_Parse(parser, data, len, true);
-                free(data);
-                XML_ParserReset(parser, NULL);
-                MOB_INFO_COUNT++;
-            }
-            closedir(mobs_dir);
-
-            cmph_io_adapter_t *adapter = cmph_io_struct_vector_adapter(MOB_INFOS, sizeof(struct MobInfo), offsetof(struct MobInfo, id), sizeof(uint32_t), MOB_INFO_COUNT);
-            cmph_config_t *config = cmph_config_new(adapter);
-            cmph_config_set_algo(config, CMPH_BDZ);
-            MOB_INFO_MPH = cmph_new(config);
-            cmph_config_destroy(config);
-            cmph_io_struct_vector_adapter_destroy(adapter);
-            size_t i = 0;
-            while (i < MOB_INFO_COUNT) {
-                uint32_t j = cmph_search(MOB_INFO_MPH, (void *)&MOB_INFOS[i].id, sizeof(uint32_t));
-                if (i != j) {
-                    struct MobInfo temp = MOB_INFOS[j];
-                    MOB_INFOS[j] = MOB_INFOS[i];
-                    MOB_INFOS[i] = temp;
-                } else {
-                    i++;
-                }
-            }
-
-            fprintf(stderr, "Loaded mobs\n");
-        }
-
-        {
             struct MapParserContext ctx = {
                 .head = NULL,
             };
@@ -885,55 +1001,6 @@ int wz_init(void)
             }
 
             fprintf(stderr, "Loaded items\n");
-        }
-
-        {
-            struct ConsumableParserContext ctx = {
-                .head = NULL,
-                .itemCapacity = 1,
-            };
-            DIR *dir = opendir("wz/Item.wz/Consume");
-
-            CONSUMABLE_INFOS = malloc(sizeof(struct ConsumableInfo));
-
-            struct dirent *entry;
-            while ((entry = readdir(dir)) != NULL) {
-                if (entry->d_name[0] == '.' || entry->d_type != DT_REG)
-                    continue;
-                int fd = openat(dirfd(dir), entry->d_name, O_RDONLY);
-                off_t len = lseek(fd, 0, SEEK_END);
-                lseek(fd, 0, SEEK_SET);
-                char *data = malloc(len);
-                read(fd, data, len);
-                close(fd);
-
-                XML_SetElementHandler(parser, on_consumable_start, on_consumable_end);
-                XML_SetUserData(parser, &ctx);
-                XML_Parse(parser, data, len, true);
-                free(data);
-                XML_ParserReset(parser, NULL);
-            }
-            closedir(dir);
-
-            cmph_io_adapter_t *adapter = cmph_io_struct_vector_adapter(CONSUMABLE_INFOS, sizeof(struct ConsumableInfo), offsetof(struct ConsumableInfo, id), sizeof(uint32_t), CONSUMABLE_INFO_COUNT);
-            cmph_config_t *config = cmph_config_new(adapter);
-            cmph_config_set_algo(config, CMPH_BDZ);
-            CONSUMABLE_INFO_MPH = cmph_new(config);
-            cmph_config_destroy(config);
-            cmph_io_struct_vector_adapter_destroy(adapter);
-            size_t i = 0;
-            while (i < CONSUMABLE_INFO_COUNT) {
-                uint32_t j = cmph_search(CONSUMABLE_INFO_MPH, (void *)&CONSUMABLE_INFOS[i].id, sizeof(uint32_t));
-                if (i != j) {
-                    struct ConsumableInfo temp = CONSUMABLE_INFOS[j];
-                    CONSUMABLE_INFOS[j] = CONSUMABLE_INFOS[i];
-                    CONSUMABLE_INFOS[i] = temp;
-                } else {
-                    i++;
-                }
-            }
-
-            fprintf(stderr, "Loaded consumables\n");
         }
 
         XML_ParserFree(parser);
@@ -1371,6 +1438,327 @@ const struct SkillInfo *wz_get_skill_info(uint32_t id)
     return info;
 }
 
+static struct Parser *parser_new(size_t stride)
+{
+    struct Parser *parser = malloc(sizeof(struct Parser));
+
+    parser->skip = 0;
+    parser->parser = XML_ParserCreate(NULL);
+    parser->head = malloc(sizeof(struct BindPoint));
+    parser->head->next = NULL;
+    parser->head->stride = stride;
+    parser->head->skipTopLevel = true;
+    parser->head->tree.root = malloc(sizeof(struct BindTreeNode));
+    parser->head->tree.root->point = parser->head;
+    parser->head->tree.root->parent = NULL;
+    parser->head->tree.root->childCount = 0;
+    parser->head->tree.root->children = NULL;
+    parser->head->tree.root->key = strdup("/");
+    parser->head->tree.root->bp = NULL;
+    parser->head->tree.root->offset = -1;
+    parser->head->current = parser->head->tree.root;
+
+    return parser;
+}
+
+static struct BindPoint *parser_get_root_bind_point(struct Parser *parser)
+{
+    return parser->head;
+}
+
+static void parser_id_index(struct BindPoint *bp, enum BindType type, size_t offset)
+{
+    bp->tree.root->type = type;
+    bp->tree.root->offset = offset;
+    bp->tree.root->offset2 = 0;
+}
+
+static void parser_bind(struct BindPoint *bp, const char *path, enum BindType type, size_t offset)
+{
+    char *path_dup = strdup(path);
+    const char *node = strtok(path_dup, "/");
+    struct BindTreeNode *tree_node = bp->tree.root;
+    do {
+        bool found = false;
+        for (size_t i = 0; i < tree_node->childCount; i++) {
+            if (!strcmp(node, tree_node->children[i].key)) {
+                tree_node = &tree_node->children[i];
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            tree_node->children = realloc(tree_node->children, (tree_node->childCount + 1) * sizeof(struct BindTreeNode));
+
+            tree_node->children[tree_node->childCount].point = bp;
+            tree_node->children[tree_node->childCount].parent = tree_node;
+            tree_node->children[tree_node->childCount].childCount = 0;
+            tree_node->children[tree_node->childCount].children = NULL;
+            tree_node->children[tree_node->childCount].key = strdup(node);
+            tree_node->children[tree_node->childCount].bp = NULL;
+            tree_node->children[tree_node->childCount].offset = -1;
+            tree_node->childCount++;
+
+            tree_node = &tree_node->children[tree_node->childCount - 1];
+        }
+    } while ((node = strtok(NULL, "/")) != NULL);
+
+    free(path_dup);
+
+    tree_node->type = type;
+    tree_node->offset = offset;
+}
+
+static void destroy_bp(struct BindPoint *bp);
+
+static void destroy_tree(struct BindTreeNode *node)
+{
+    free(node->key);
+    for (size_t i = 0; i < node->childCount; i++) {
+        if (node->children[i].bp != NULL)
+            destroy_bp(node->children[i].bp);
+        else
+            destroy_tree(&node->children[i]);
+    }
+    free(node->children);
+}
+
+static void destroy_bp(struct BindPoint *bp)
+{
+    destroy_tree(bp->tree.root);
+}
+
+static void parser_destroy(struct Parser *parser)
+{
+    destroy_bp(parser->head);
+}
+
+static struct BindPoint *parser_bind_array(struct BindPoint *bp, size_t stride, const char *path, enum BindType type, size_t nmemb, size_t array)
+{
+    char *path_dup = strdup(path);
+    const char *node = strtok(path_dup, "/");
+    struct BindTreeNode *tree_node = bp->tree.root;
+    while (node != NULL) {
+        bool found = false;
+        for (size_t i = 0; i < tree_node->childCount; i++) {
+            if (!strcmp(node, tree_node->children[i].key)) {
+                tree_node = &tree_node->children[i];
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            tree_node->children = realloc(tree_node->children, (tree_node->childCount + 1) * sizeof(struct BindTreeNode));
+
+            tree_node->children[tree_node->childCount].point = bp;
+            tree_node->children[tree_node->childCount].parent = tree_node;
+            tree_node->children[tree_node->childCount].childCount = 0;
+            tree_node->children[tree_node->childCount].children = NULL;
+            tree_node->children[tree_node->childCount].key = strdup(node);
+            tree_node->children[tree_node->childCount].bp = NULL;
+            tree_node->children[tree_node->childCount].offset = -1;
+            tree_node->childCount++;
+
+            tree_node = &tree_node->children[tree_node->childCount - 1];
+        }
+
+        node = strtok(NULL, "/");
+    }
+
+    free(path_dup);
+
+    tree_node->offset = nmemb;
+    tree_node->offset2 = array;
+    tree_node->bp = malloc(sizeof(struct BindPoint));
+    bp = tree_node->bp;
+
+    bp->stride = stride;
+    bp->skipTopLevel = true;
+    bp->tree.root = malloc(sizeof(struct BindTreeNode));
+    bp->tree.root->point = bp;
+    bp->tree.root->parent = NULL;
+    bp->tree.root->childCount = 0;
+    bp->tree.root->children = NULL;
+    bp->tree.root->key = strdup("/");
+    bp->tree.root->type = type;
+    bp->tree.root->bp = NULL;
+
+    return bp;
+}
+
+static void on_start(void *user_data, const XML_Char *name, const XML_Char **attrs);
+static void on_end(void *user_data, const XML_Char *name);
+
+static void *parser_parse(struct Parser *parser, void *data, size_t len, size_t *count)
+{
+    XML_ParserReset(parser->parser, NULL);
+    XML_SetElementHandler(parser->parser, on_start, on_end);
+    XML_SetUserData(parser->parser, parser);
+
+    parser->head->data = calloc(1, parser->head->stride);
+    parser->head->capacity = 1;
+    parser->head->count = 0;
+    parser->head->topLevel = parser->head->skipTopLevel;
+
+    XML_Parse(parser->parser, data, len, true);
+
+    if (count != NULL)
+        *count = parser->head->count;
+
+    return parser->head->data;
+}
+
+static void on_start(void *user_data, const XML_Char *name, const XML_Char **attrs)
+{
+    struct Parser *parser = user_data;
+    if (parser->skip > 0) {
+        parser->skip++;
+        return;
+    }
+
+    if (parser->head->topLevel) {
+        parser->head->topLevel = false;
+        return;
+    }
+
+    if (parser->head->count == parser->head->capacity) {
+        parser->head->data = realloc(parser->head->data, parser->head->capacity * 2 * parser->head->stride);
+        memset(parser->head->data + parser->head->capacity * parser->head->stride, 0, parser->head->capacity * parser->head->stride);
+        parser->head->capacity *= 2;
+    }
+
+    if (strcmp(name, "imgdir")) {
+        const XML_Char *key = NULL;
+        const XML_Char *value = NULL;
+        for (size_t i = 0; attrs[i] != NULL; i += 2) {
+            if (!strcmp(attrs[i], "name"))
+                key = attrs[i+1];
+            else if (!strcmp(attrs[i], "value"))
+                value = attrs[i+1];
+        }
+
+        assert(key != NULL && value != NULL);
+
+        if (!strcmp(name, "int")) {
+            for (size_t i = 0; i < parser->head->current->childCount; i++) {
+                if (!strcmp(parser->head->current->children[i].key, key)) {
+                    struct BindTreeNode *node = &parser->head->current->children[i];
+                    void *ptr = (parser->head->data + parser->head->stride * parser->head->count)
+                        + node->offset;
+
+                    switch (node->type) {
+                    case BIND_TYPE_BOOL:    *(bool *)ptr = strtol(value, NULL, 10);      break;
+                    case BIND_TYPE_I8:      *(int8_t *)ptr = strtol(value, NULL, 10);    break;
+                    case BIND_TYPE_U8:      *(uint8_t *)ptr = strtol(value, NULL, 10);   break;
+                    case BIND_TYPE_I16:     *(int16_t *)ptr = strtol(value, NULL, 10);   break;
+                    case BIND_TYPE_U16:     *(uint16_t *)ptr = strtol(value, NULL, 10);  break;
+                    case BIND_TYPE_I32:     *(int32_t *)ptr = strtol(value, NULL, 10);   break;
+                    case BIND_TYPE_U32:     *(uint32_t *)ptr = strtol(value, NULL, 10);  break;
+
+                    default: assert(0);
+                    }
+
+                    break;
+                }
+            }
+
+        } else if (!strcmp(name, "float")) {
+        } else if (!strcmp(name, "string")) {
+        } else {
+            // canvas and vector elements will take this branch
+            // but hopefully they are all in skipped imgdirs
+            // so that we won't even encounter them in the first place
+            assert(0);
+        }
+
+        parser->skip++;
+    } else {
+        const XML_Char *key = NULL;
+        for (size_t i = 0; attrs[i] != NULL; i += 2) {
+            if (!strcmp(attrs[i], "name"))
+                key = attrs[i+1];
+        }
+
+        assert(key != NULL);
+
+        for (size_t i = 0; i < parser->head->current->childCount; i++) {
+            if (!strcmp(parser->head->current->children[i].key, key)) {
+                if (parser->head->current->children[i].bp != NULL) {
+                    struct BindPoint *bp = parser->head->current->children[i].bp;
+                    parser->head->current = &parser->head->current->children[i];
+                    bp->next = parser->head;
+                    bp->data = calloc(1, bp->stride);
+                    bp->count = 0;
+                    bp->capacity = 1;
+
+                    parser->head = bp;
+
+                    parser->head->current = bp->tree.root;
+                    if (parser->head->skipTopLevel)
+                        parser->head->topLevel = true;
+                } else {
+                    //parser->head->current = parser->current;
+                    parser->head->current = &parser->head->current->children[i];
+                }
+                return;
+            }
+        }
+
+        if (parser->head->current->offset != -1 && parser->head->current->offset2 == 0) {
+            void *ptr = (parser->head->data + parser->head->stride * parser->head->count)
+                + parser->head->current->offset;
+
+            switch (parser->head->current->type) {
+            case BIND_TYPE_BOOL:    *(bool *)ptr = strtol(key, NULL, 10);      break;
+            case BIND_TYPE_I8:      *(int8_t *)ptr = strtol(key, NULL, 10);    break;
+            case BIND_TYPE_U8:      *(uint8_t *)ptr = strtol(key, NULL, 10);   break;
+            case BIND_TYPE_I16:     *(int16_t *)ptr = strtol(key, NULL, 10);   break;
+            case BIND_TYPE_U16:     *(uint16_t *)ptr = strtol(key, NULL, 10);  break;
+            case BIND_TYPE_I32:     *(int32_t *)ptr = strtol(key, NULL, 10);   break;
+            case BIND_TYPE_U32:     *(uint32_t *)ptr = strtol(key, NULL, 10);  break;
+
+            default: assert(0);
+            }
+
+            parser->head->current->offset2 = 1;
+        } else {
+            parser->skip++;
+        }
+    }
+}
+
+static void on_end(void *user_data, const XML_Char *name)
+{
+    struct Parser *parser = user_data;
+    if (parser->skip > 0) {
+        parser->skip--;
+        return;
+    }
+
+    if (parser->head->current->parent != NULL) {
+        parser->head->current = parser->head->current->parent;
+    } else if (parser->head->next != NULL) {
+        if (!parser->head->topLevel) {
+            parser->head->count++;
+            if (parser->head->skipTopLevel)
+                parser->head->topLevel = true;
+            return;
+        }
+
+        parser->head->topLevel = false;
+
+        *(size_t *)(parser->head->next->data + parser->head->next->count * parser->head->next->stride + parser->head->next->current->offset) = parser->head->count;
+        *(void **)(parser->head->next->data + parser->head->next->count * parser->head->next->stride + parser->head->next->current->offset2) = parser->head->data;
+        parser->head = parser->head->next;
+        parser->head->current = parser->head->current->parent;
+    } else if (parser->head->current->offset != -1 && parser->head->current->offset2 == 1) {
+        parser->head->count++;
+        parser->head->current->offset2 = 0;
+    }
+}
+
 static void on_map_start(void *user_data, const XML_Char *name, const XML_Char **attrs)
 {
     struct MapParserContext *ctx = user_data;
@@ -1751,131 +2139,6 @@ static void on_map_end(void *user_data, const XML_Char *name)
     }
 
     struct MapParserStackNode *next = ctx->head->next;
-    free(ctx->head);
-    ctx->head = next;
-}
-
-static void on_mob_start(void *user_data, const XML_Char *name, const XML_Char **attrs)
-{
-    struct MobParserContext *ctx = user_data;
-    if (ctx->skip > 0) {
-        ctx->skip++;
-        return;
-    }
-
-    if (ctx->head == NULL) {
-        ctx->head = malloc(sizeof(struct MobParserStackNode));
-        ctx->head->next = NULL;
-        ctx->head->type = MOB_ITEM_TYPE_TOP_LEVEL;
-        assert(!strcmp(name, "imgdir"));
-
-        const char *id = NULL;
-        for (size_t i = 0; attrs[i] != NULL; i += 2) {
-            if (!strcmp(attrs[i], "name"))
-                id = attrs[i+1];
-        }
-
-        assert(id != NULL);
-
-        MOB_INFOS[MOB_INFO_COUNT].id = strtol(id, NULL, 10);
-        MOB_INFOS[MOB_INFO_COUNT].bodyAttack = false;
-        MOB_INFOS[MOB_INFO_COUNT].exp = 0;
-        MOB_INFOS[MOB_INFO_COUNT].undead = false;
-        MOB_INFOS[MOB_INFO_COUNT].boss = false;
-    } else {
-        switch (ctx->head->type) {
-        case MOB_ITEM_TYPE_TOP_LEVEL:
-            assert(!strcmp(name, "imgdir"));
-
-            size_t i = 0;
-            while (attrs[i] != NULL && strcmp(attrs[i], "name"))
-                i += 2;
-
-            assert(attrs[i] != NULL);
-
-            i++;
-            if (!strcmp(attrs[i], "info")) {
-                struct MobParserStackNode *new = malloc(sizeof(struct MobParserStackNode));
-                new->next = ctx->head;
-                new->type = MOB_ITEM_TYPE_INFO;
-                ctx->head = new;
-            } else {
-                ctx->skip++;
-            }
-        break;
-
-        case MOB_ITEM_TYPE_INFO: {
-            ctx->skip++;
-            if (!strcmp(name, "int")) {
-                const XML_Char *key = NULL;
-                const XML_Char *value = NULL;
-                for (size_t i = 0; attrs[i] != NULL; i += 2) {
-                    if (!strcmp(attrs[i], "name"))
-                        key = attrs[i+1];
-                    else if (!strcmp(attrs[i], "value"))
-                        value = attrs[i+1];
-                }
-
-                assert(key != NULL && value != NULL);
-
-                if (!strcmp(key, "bodyAttack")) {
-                    MOB_INFOS[MOB_INFO_COUNT].bodyAttack = strtol(value, NULL, 10);
-                } else if (!strcmp(key, "level")) {
-                    MOB_INFOS[MOB_INFO_COUNT].level = strtol(value, NULL, 10);
-                } else if (!strcmp(key, "maxHP")) {
-                    MOB_INFOS[MOB_INFO_COUNT].hp = strtol(value, NULL, 10);
-                } else if (!strcmp(key, "maxMP")) {
-                    MOB_INFOS[MOB_INFO_COUNT].mp = strtol(value, NULL, 10);
-                } else if (!strcmp(key, "speed")) {
-                    MOB_INFOS[MOB_INFO_COUNT].speed = strtol(value, NULL, 10);
-                } else if (!strcmp(key, "flySpeed")) {
-                    MOB_INFOS[MOB_INFO_COUNT].speed = strtol(value, NULL, 10);
-                } else if (!strcmp(key, "PADamage")) {
-                    MOB_INFOS[MOB_INFO_COUNT].atk = strtol(value, NULL, 10);
-                } else if (!strcmp(key, "PDDamage")) {
-                    MOB_INFOS[MOB_INFO_COUNT].def = strtol(value, NULL, 10);
-                } else if (!strcmp(key, "MADamage")) {
-                    MOB_INFOS[MOB_INFO_COUNT].matk = strtol(value, NULL, 10);
-                } else if (!strcmp(key, "MDDamage")) {
-                    MOB_INFOS[MOB_INFO_COUNT].mdef = strtol(value, NULL, 10);
-                } else if (!strcmp(key, "acc")) {
-                    MOB_INFOS[MOB_INFO_COUNT].acc = strtol(value, NULL, 10);
-                } else if (!strcmp(key, "eva")) {
-                    MOB_INFOS[MOB_INFO_COUNT].avoid = strtol(value, NULL, 10);
-                } else if (!strcmp(key, "exp")) {
-                    MOB_INFOS[MOB_INFO_COUNT].exp = strtol(value, NULL, 10);
-                } else if (!strcmp(key, "undead")) {
-                    MOB_INFOS[MOB_INFO_COUNT].undead = strtol(value, NULL, 10);
-                } else if (!strcmp(key, "boss")) {
-                    MOB_INFOS[MOB_INFO_COUNT].boss = strtol(value, NULL, 10);
-                }
-            }
-        }
-        break;
-
-        default:
-            ctx->skip++;
-        }
-    }
-}
-
-static void on_mob_end(void *user_data, const XML_Char *name)
-{
-    struct MobParserContext *ctx = user_data;
-    if (ctx->skip > 0) {
-        ctx->skip--;
-        return;
-    }
-
-    if (ctx->head->type == MOB_ITEM_TYPE_INFO) {
-        // We don't need any further information except for the mob's info
-        free(ctx->head->next);
-        free(ctx->head);
-        ctx->head = NULL;
-        XML_StopParser(ctx->parser, false);
-        return;
-    }
-    struct MobParserStackNode *next = ctx->head->next;
     free(ctx->head);
     ctx->head = next;
 }
@@ -3367,130 +3630,6 @@ static void on_equip_end(void *user_data, const XML_Char *name)
     }
 
     struct EquipParserStackNode *next = ctx->head->next;
-    free(ctx->head);
-    ctx->head = next;
-}
-
-static void on_consumable_start(void *user_data, const XML_Char *name, const XML_Char **attrs)
-{
-    struct ConsumableParserContext *ctx = user_data;
-    if (ctx->skip > 0) {
-        ctx->skip++;
-        return;
-    }
-
-    if (ctx->head == NULL) {
-        ctx->head = malloc(sizeof(struct ConsumableParserStackNode));
-        ctx->head->next = NULL;
-        ctx->head->type = CONSUMABLE_ITEM_TYPE_TOP_LEVEL;
-        assert(!strcmp(name, "imgdir"));
-    } else {
-        switch (ctx->head->type) {
-        case CONSUMABLE_ITEM_TYPE_TOP_LEVEL:
-            assert(!strcmp(name, "imgdir"));
-
-            if (CONSUMABLE_INFO_COUNT == ctx->itemCapacity) {
-                CONSUMABLE_INFOS = realloc(CONSUMABLE_INFOS, (ctx->itemCapacity * 2) * sizeof(struct ConsumableInfo));
-                ctx->itemCapacity *= 2;
-            }
-
-            CONSUMABLE_INFOS[CONSUMABLE_INFO_COUNT].id = strtol(attrs[1], NULL, 10);
-            CONSUMABLE_INFOS[CONSUMABLE_INFO_COUNT].hp = 0;
-            CONSUMABLE_INFOS[CONSUMABLE_INFO_COUNT].mp = 0;
-            CONSUMABLE_INFOS[CONSUMABLE_INFO_COUNT].hpR = 0;
-            CONSUMABLE_INFOS[CONSUMABLE_INFO_COUNT].mpR = 0;
-            CONSUMABLE_INFOS[CONSUMABLE_INFO_COUNT].atk = 0;
-            CONSUMABLE_INFOS[CONSUMABLE_INFO_COUNT].matk = 0;
-            CONSUMABLE_INFOS[CONSUMABLE_INFO_COUNT].def = 0;
-            CONSUMABLE_INFOS[CONSUMABLE_INFO_COUNT].mdef = 0;
-            CONSUMABLE_INFOS[CONSUMABLE_INFO_COUNT].acc = 0;
-            CONSUMABLE_INFOS[CONSUMABLE_INFO_COUNT].avoid = 0;
-            CONSUMABLE_INFOS[CONSUMABLE_INFO_COUNT].speed = 0;
-            CONSUMABLE_INFOS[CONSUMABLE_INFO_COUNT].jump = 0;
-            CONSUMABLE_INFOS[CONSUMABLE_INFO_COUNT].time = 0;
-            CONSUMABLE_INFOS[CONSUMABLE_INFO_COUNT].consumeOnPickup = false;
-            struct ConsumableParserStackNode *new = malloc(sizeof(struct ConsumableParserStackNode));
-            new->next = ctx->head;
-            new->type = CONSUMABLE_ITEM_TYPE_ITEM;
-            ctx->head = new;
-        break;
-
-        case CONSUMABLE_ITEM_TYPE_ITEM:
-            if (!strcmp(name, "imgdir")) {
-                if (!strcmp(attrs[1], "spec")) {
-                    struct ConsumableParserStackNode *new = malloc(sizeof(struct ConsumableParserStackNode));
-                    new->next = ctx->head;
-                    new->type = CONSUMABLE_ITEM_TYPE_SPEC;
-                    ctx->head = new;
-                } else {
-                    ctx->skip++;
-                }
-            } else {
-                ctx->skip++;
-            }
-        break;
-
-        case CONSUMABLE_ITEM_TYPE_SPEC: {
-            ctx->skip++;
-            if (!strcmp(name, "int")) {
-                const XML_Char *key = NULL;
-                const XML_Char *value = NULL;
-                for (size_t i = 0; attrs[i] != NULL; i += 2) {
-                    if (!strcmp(attrs[i], "name"))
-                        key = attrs[i+1];
-                    else if (!strcmp(attrs[i], "value"))
-                        value = attrs[i+1];
-                }
-
-                assert(key != NULL && value != NULL);
-
-                if (!strcmp(key, "hp"))
-                    CONSUMABLE_INFOS[CONSUMABLE_INFO_COUNT].hp = strtol(value, NULL, 10);
-                else if (!strcmp(key, "mp"))
-                    CONSUMABLE_INFOS[CONSUMABLE_INFO_COUNT].mp = strtol(value, NULL, 10);
-                else if (!strcmp(key, "hpR"))
-                    CONSUMABLE_INFOS[CONSUMABLE_INFO_COUNT].hpR = strtol(value, NULL, 10);
-                else if (!strcmp(key, "mpR"))
-                    CONSUMABLE_INFOS[CONSUMABLE_INFO_COUNT].mpR = strtol(value, NULL, 10);
-                else if (!strcmp(key, "pad"))
-                    CONSUMABLE_INFOS[CONSUMABLE_INFO_COUNT].atk = strtol(value, NULL, 10);
-                else if (!strcmp(key, "mad"))
-                    CONSUMABLE_INFOS[CONSUMABLE_INFO_COUNT].matk = strtol(value, NULL, 10);
-                else if (!strcmp(key, "pdd"))
-                    CONSUMABLE_INFOS[CONSUMABLE_INFO_COUNT].def = strtol(value, NULL, 10);
-                else if (!strcmp(key, "mdd"))
-                    CONSUMABLE_INFOS[CONSUMABLE_INFO_COUNT].mdef = strtol(value, NULL, 10);
-                else if (!strcmp(key, "acc"))
-                    CONSUMABLE_INFOS[CONSUMABLE_INFO_COUNT].acc = strtol(value, NULL, 10);
-                else if (!strcmp(key, "eva"))
-                    CONSUMABLE_INFOS[CONSUMABLE_INFO_COUNT].avoid = strtol(value, NULL, 10);
-                else if (!strcmp(key, "speed"))
-                    CONSUMABLE_INFOS[CONSUMABLE_INFO_COUNT].speed = strtol(value, NULL, 10);
-                else if (!strcmp(key, "jump"))
-                    CONSUMABLE_INFOS[CONSUMABLE_INFO_COUNT].jump = strtol(value, NULL, 10);
-                else if (!strcmp(key, "time"))
-                    CONSUMABLE_INFOS[CONSUMABLE_INFO_COUNT].time = strtol(value, NULL, 10);
-                else if (!strcmp(key, "consumeOnPickup"))
-                    CONSUMABLE_INFOS[CONSUMABLE_INFO_COUNT].consumeOnPickup = strtol(value, NULL, 10) > 0;
-            }
-        }
-        break;
-        }
-    }
-}
-
-static void on_consumable_end(void *user_data, const XML_Char *name)
-{
-    struct ConsumableParserContext *ctx = user_data;
-    if (ctx->skip > 0) {
-        ctx->skip--;
-        return;
-    }
-
-    if (ctx->head->type == CONSUMABLE_ITEM_TYPE_ITEM)
-        CONSUMABLE_INFO_COUNT++;
-
-    struct ConsumableParserStackNode *next = ctx->head->next;
     free(ctx->head);
     ctx->head = next;
 }
