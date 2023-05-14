@@ -937,7 +937,57 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
     }
     break;
 
-    // 59 00 70 FC 02 00 00 14 00 00 00 00 03 00 00
+    case RECEIVE_OPCODE_AUTO_AP_ASSIGN:{
+        uint32_t stat1;
+        uint32_t val1;
+        uint32_t stat2;
+        uint32_t val2;
+        READER_BEGIN(size, packet);
+        SKIP(8);
+        READ_OR_ERROR(reader_u32, &stat1);
+        READ_OR_ERROR(reader_u32, &val1);
+        READ_OR_ERROR(reader_u32, &stat2);
+        READ_OR_ERROR(reader_u32, &val2);
+        READER_END();
+
+        switch (stat1) {
+        case 0x40:
+            client_adjust_str(client, val1);
+        break;
+        case 0x80:
+            client_adjust_dex(client, val1);
+        break;
+        case 0x100:
+            client_adjust_int(client, val1);
+        break;
+        case 0x200:
+            client_adjust_luk(client, val1);
+        break;
+        default:
+            session_kick(session);
+        }
+
+        switch (stat2) {
+        case 0x40:
+            client_adjust_str(client, val2);
+        break;
+        case 0x80:
+            client_adjust_dex(client, val2);
+        break;
+        case 0x100:
+            client_adjust_int(client, val2);
+        break;
+        case 0x200:
+            client_adjust_luk(client, val2);
+        break;
+        default:
+            session_kick(session);
+        }
+
+        client_commit_stats(client);
+    }
+    break;
+
     case RECEIVE_OPCODE_HEAL_OVER_TIME: {
         int16_t hp, mp;
         READER_BEGIN(size, packet);
