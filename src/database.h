@@ -438,6 +438,8 @@ struct DatabaseRequest;
  */
 struct DatabaseRequest *database_request_create(struct DatabaseConnection *conn, const struct RequestParams *params);
 
+const struct RequestParams *database_request_get_params(struct DatabaseRequest *req);
+
 /**
  * Executes a request.
  * The first time this function is called on a certain \p req, status is ignored and \p req is transitioned to the Exexuting state if a positive value is returned or the Finished state if 0 is returned.

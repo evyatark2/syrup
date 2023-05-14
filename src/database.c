@@ -208,6 +208,11 @@ struct DatabaseRequest *database_request_create(struct DatabaseConnection *conn,
     return req;
 }
 
+const struct RequestParams *database_request_get_params(struct DatabaseRequest *req)
+{
+    return &req->params;
+}
+
 void database_request_destroy(struct DatabaseRequest *req)
 {
     mysql_stmt_close(req->stmt);

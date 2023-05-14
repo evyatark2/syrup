@@ -46,19 +46,6 @@ struct Client {
 
     struct DatabaseRequest *request;
     int databaseState;
-    // Theses fields are only used to temporarly store allocated memory
-    // during asynchronous database transactions
-    union {
-        struct {
-            void *quests;
-            void *progresses;
-            void *questInfos;
-            void *completedQuests;
-            void *skills;
-            void *monsterBook;
-            void *keyMap;
-        };
-    };
     enum Stat stats;
     struct Party *party;
     bool autoPickup;
@@ -882,8 +869,6 @@ struct ClientContResult client_resume(struct Client *client, int status)
                 return (struct ClientContResult) { .status = -1 };
             }
 
-            client->quests = params.updateCharacter.quests;
-
             struct AddQuestContext ctx = {
                 .quests = params.updateCharacter.quests,
                 .currentQuest = 0,
@@ -895,13 +880,11 @@ struct ClientContResult client_resume(struct Client *client, int status)
 
             params.updateCharacter.progresses = malloc(ctx.progressCount * sizeof(struct DatabaseProgress));
             if (params.updateCharacter.progresses == NULL) {
-                free(client->quests);
+                free(params.updateCharacter.quests);
                 if (client->handlerType == PACKET_TYPE_LOGOUT)
                     client_destroy(client);
                 return (struct ClientContResult) { .status = -1 };
             }
-
-            client->progresses = params.updateCharacter.progresses;
 
             struct AddProgressContext ctx2 = {
                 .progresses = params.updateCharacter.progresses,
@@ -913,14 +896,12 @@ struct ClientContResult client_resume(struct Client *client, int status)
 
             params.updateCharacter.questInfos = malloc(hash_set_u16_size(chr->questInfos) * sizeof(struct DatabaseInfoProgress));
             if (params.updateCharacter.questInfos == NULL) {
-                free(client->progresses);
-                free(client->quests);
+                free(params.updateCharacter.progresses);
+                free(params.updateCharacter.quests);
                 if (client->handlerType == PACKET_TYPE_LOGOUT)
                     client_destroy(client);
                 return (struct ClientContResult) { .status = -1 };
             }
-
-            client->questInfos = params.updateCharacter.questInfos;
 
             struct AddQuestInfoContext ctx3 = {
                 .infos = params.updateCharacter.questInfos,
@@ -932,15 +913,13 @@ struct ClientContResult client_resume(struct Client *client, int status)
 
             params.updateCharacter.completedQuests = malloc(hash_set_u16_size(chr->completedQuests) * sizeof(struct DatabaseCompletedQuest));
             if (params.updateCharacter.completedQuests == NULL) {
-                free(client->questInfos);
-                free(client->progresses);
-                free(client->quests);
+                free(params.updateCharacter.questInfos);
+                free(params.updateCharacter.progresses);
+                free(params.updateCharacter.quests);
                 if (client->handlerType == PACKET_TYPE_LOGOUT)
                     client_destroy(client);
                 return (struct ClientContResult) { .status = -1 };
             }
-
-            client->completedQuests = params.updateCharacter.completedQuests;
 
             struct AddCompletedQuestContext ctx4 = {
                 .quests = params.updateCharacter.completedQuests,
@@ -952,16 +931,14 @@ struct ClientContResult client_resume(struct Client *client, int status)
 
             params.updateCharacter.skills = malloc(hash_set_u32_size(chr->skills) * sizeof(struct DatabaseSkill));
             if (params.updateCharacter.completedQuests == NULL) {
-                free(client->completedQuests);
-                free(client->questInfos);
-                free(client->progresses);
-                free(client->quests);
+                free(params.updateCharacter.completedQuests);
+                free(params.updateCharacter.questInfos);
+                free(params.updateCharacter.progresses);
+                free(params.updateCharacter.quests);
                 if (client->handlerType == PACKET_TYPE_LOGOUT)
                     client_destroy(client);
                 return (struct ClientContResult) { .status = -1 };
             }
-
-            client->skills = params.updateCharacter.skills;
 
             struct AddSkillContext ctx5 = {
                 .skills = params.updateCharacter.skills,
@@ -973,17 +950,15 @@ struct ClientContResult client_resume(struct Client *client, int status)
 
             params.updateCharacter.monsterBook = malloc(hash_set_u32_size(chr->monsterBook) * sizeof(struct DatabaseMonsterBookEntry));
             if (params.updateCharacter.monsterBook == NULL) {
-                free(client->skills);
-                free(client->completedQuests);
-                free(client->questInfos);
-                free(client->progresses);
-                free(client->quests);
+                free(params.updateCharacter.skills);
+                free(params.updateCharacter.completedQuests);
+                free(params.updateCharacter.questInfos);
+                free(params.updateCharacter.progresses);
+                free(params.updateCharacter.quests);
                 if (client->handlerType == PACKET_TYPE_LOGOUT)
                     client_destroy(client);
                 return (struct ClientContResult) { .status = -1 };
             }
-
-            client->monsterBook = params.updateCharacter.monsterBook;
 
             struct AddMonsterBookContext ctx6 = {
                 .monsterBook = params.updateCharacter.monsterBook,
@@ -1001,18 +976,16 @@ struct ClientContResult client_resume(struct Client *client, int status)
 
             params.updateCharacter.keyMap = malloc(key_count * sizeof(struct DatabaseKeyMapEntry));
             if (params.updateCharacter.keyMap == NULL) {
-                free(client->monsterBook);
-                free(client->skills);
-                free(client->completedQuests);
-                free(client->questInfos);
-                free(client->progresses);
-                free(client->quests);
+                free(params.updateCharacter.monsterBook);
+                free(params.updateCharacter.skills);
+                free(params.updateCharacter.completedQuests);
+                free(params.updateCharacter.questInfos);
+                free(params.updateCharacter.progresses);
+                free(params.updateCharacter.quests);
                 if (client->handlerType == PACKET_TYPE_LOGOUT)
                     client_destroy(client);
                 return (struct ClientContResult) { .status = -1 };
             }
-
-            client->keyMap = params.updateCharacter.keyMap;
 
             params.updateCharacter.keyMapEntryCount = 0;
             for (uint8_t i = 0; i < KEYMAP_MAX_KEYS; i++) {
@@ -1026,13 +999,13 @@ struct ClientContResult client_resume(struct Client *client, int status)
 
             client->request = database_request_create(client->conn, &params);
             if (client->request == NULL) {
-                free(client->keyMap);
-                free(client->monsterBook);
-                free(client->skills);
-                free(client->completedQuests);
-                free(client->questInfos);
-                free(client->progresses);
-                free(client->quests);
+                free(params.updateCharacter.keyMap);
+                free(params.updateCharacter.monsterBook);
+                free(params.updateCharacter.skills);
+                free(params.updateCharacter.completedQuests);
+                free(params.updateCharacter.questInfos);
+                free(params.updateCharacter.progresses);
+                free(params.updateCharacter.quests);
                 if (client->handlerType == PACKET_TYPE_LOGOUT)
                     client_destroy(client);
                 return (struct ClientContResult) { .status = -1 };
@@ -1041,13 +1014,13 @@ struct ClientContResult client_resume(struct Client *client, int status)
             client->databaseState++;
             status = database_request_execute(client->request, 0);
             if (status <= 0) {
-                free(client->keyMap);
-                free(client->monsterBook);
-                free(client->skills);
-                free(client->completedQuests);
-                free(client->questInfos);
-                free(client->progresses);
-                free(client->quests);
+                free(params.updateCharacter.keyMap);
+                free(params.updateCharacter.monsterBook);
+                free(params.updateCharacter.skills);
+                free(params.updateCharacter.completedQuests);
+                free(params.updateCharacter.questInfos);
+                free(params.updateCharacter.progresses);
+                free(params.updateCharacter.quests);
                 database_request_destroy(client->request);
                 database_connection_unlock(client->conn);
                 if (client->handlerType == PACKET_TYPE_LOGOUT)
@@ -1062,13 +1035,14 @@ struct ClientContResult client_resume(struct Client *client, int status)
         if (client->databaseState == 2) {
             status = database_request_execute(client->request, status);
             if (status <= 0) {
-                free(client->keyMap);
-                free(client->monsterBook);
-                free(client->skills);
-                free(client->completedQuests);
-                free(client->questInfos);
-                free(client->progresses);
-                free(client->quests);
+                const struct RequestParams *params = database_request_get_params(client->request);
+                free(params->updateCharacter.keyMap);
+                free(params->updateCharacter.monsterBook);
+                free(params->updateCharacter.skills);
+                free(params->updateCharacter.completedQuests);
+                free(params->updateCharacter.questInfos);
+                free(params->updateCharacter.progresses);
+                free(params->updateCharacter.quests);
                 database_request_destroy(client->request);
                 database_connection_unlock(client->conn);
                 client->handlerType = PACKET_TYPE_NONE;
