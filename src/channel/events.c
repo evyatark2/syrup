@@ -76,6 +76,13 @@ bool event_area_boss_register(uint32_t map)
     return spawned;
 }
 
+static void event_global_respawn_reset(struct Event *e, void *ctx);
+
+void event_global_respawn_init(struct ChannelServer *server)
+{
+    event_global_respawn_reset(channel_server_get_event(server, EVENT_GLOBAL_RESPAWN), NULL);
+}
+
 static void area_boss_reset(struct Event *e, void *ctx_)
 {
     mtx_lock(&MAPS_MTX);
@@ -84,5 +91,12 @@ static void area_boss_reset(struct Event *e, void *ctx_)
     event_set_property(e, EVENT_AREA_BOSS_PROPERTY_RESET, 0);
     struct timespec tm = { .tv_sec = 15, .tv_nsec = 0 };
     event_schedule(e, area_boss_reset, NULL, &tm);
+}
+
+static void event_global_respawn_reset(struct Event *e, void *ctx)
+{
+    event_set_property(e, 0, 0);
+    struct timespec tm = { .tv_sec = 10, .tv_nsec = 0 };
+    event_schedule(e, event_global_respawn_reset, NULL, &tm);
 }
 

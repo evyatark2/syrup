@@ -48,7 +48,6 @@ static void on_unassigned_client_packet(struct Session *session, size_t size, ui
 static void on_client_resume(struct Session *session, int fd, int status);
 static int on_room_create(struct Room *room, void *thread_ctx);
 static void on_room_destroy(struct Room *room);
-static void on_client_command_result(struct Session *session, void *cmd, bool sent);
 static void on_client_command(struct Session *session, void *cmd);
 static void on_client_timer(struct Session *session);
 static void on_client_resume_timer(struct Session *session, int fd, int status);
@@ -116,7 +115,7 @@ int main(void)
         }
     };
 
-    SERVER = channel_server_create(7575, on_log, CHANNEL_CONFIG.listen, create_context, destroy_context, on_client_connect, on_client_disconnect, on_client_join, on_unassigned_client_packet, on_client_packet, on_room_create, on_room_destroy, on_client_command_result, on_client_command, on_client_timer, &ctx, 7);
+    SERVER = channel_server_create(7575, on_log, CHANNEL_CONFIG.listen, create_context, destroy_context, on_client_connect, on_client_disconnect, on_client_join, on_unassigned_client_packet, on_client_packet, on_room_create, on_room_destroy, on_client_command, on_client_timer, &ctx, 8);
     if (SERVER == NULL)
         return -1;
 
@@ -164,6 +163,7 @@ int main(void)
     }
 
     // TODO: Failure check
+    event_global_respawn_init(SERVER);
     event_boat_init(SERVER);
     event_train_init(SERVER);
     event_genie_init(SERVER);
@@ -1549,11 +1549,6 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
     default:
     break;
     }
-}
-
-static void on_client_command_result(struct Session *session, void *cmd, bool sent)
-{
-    client_notify_command_received(session_get_context(session), cmd, sent);
 }
 
 static void on_client_command(struct Session *session, void *ctx)

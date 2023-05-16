@@ -551,7 +551,8 @@ static void on_channel_event(struct bufferevent *bev, short what, void *ctx)
         if (channel->attempts < 3) {
             channel->attempts++;
             if (channel->attempts == 3) {
-                hash_set_u32_foreach(channel->clients, do_leave, channel);
+                if (channel->clients != NULL)
+                    hash_set_u32_foreach(channel->clients, do_leave, channel);
                 hash_set_u32_destroy(channel->clients);
                 channel->clients = NULL;
             }

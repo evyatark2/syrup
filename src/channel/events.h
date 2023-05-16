@@ -21,6 +21,8 @@
 #define EVENT_AREA_BOSS 6
 #define EVENT_AREA_BOSS_PROPERTY_RESET 0
 
+#define EVENT_GLOBAL_RESPAWN 7
+
 void event_boat_init(struct ChannelServer *server);
 void event_train_init(struct ChannelServer *server);
 void event_subway_init(struct ChannelServer *server);
@@ -30,3 +32,5 @@ void event_elevator_init(struct ChannelServer *server);
 
 void event_area_boss_init(struct ChannelServer *server);
 bool event_area_boss_register(uint32_t map);
+
+void event_global_respawn_init(struct ChannelServer *server);

@@ -10,6 +10,7 @@
 
 #include <fcntl.h>
 #include <limits.h>
+#include <semaphore.h>
 #include <sys/eventfd.h>
 #include <sys/timerfd.h>
 #include <sys/un.h>
@@ -38,8 +39,6 @@ struct Session {
     struct DecryptionContext *recieveContext;
     struct event *userEvent;
     OnResume *onResume;
-    struct event *commandEvent;
-    void *command;
     bool writeEnable;
     uint32_t targetRoom;
     void *userData;
@@ -65,8 +64,8 @@ struct Property {
     uint32_t id;
     int32_t value;
     mtx_t mtx;
-    size_t listenerCount;
-    struct Listener *listeners;
+    size_t eventCount;
+    struct event **events;
 };
 
 struct Event {
@@ -164,17 +163,12 @@ static void on_session_connect(struct evconnlistener *listener, evutil_socket_t 
 static void on_login_server_connect(struct evconnlistener *listener, evutil_socket_t fd, struct sockaddr *, int socklen, void *ctx);
 static void on_timer_expired(int fd, short what, void *ctx);
 
-struct TimerEvent;
-
 struct TimerHandle {
     struct Room *room;
     size_t index;
     void *data;
-    struct TimerEvent *node;
-    // Whether this timer should continue running even if all players leave the map
-    // Use 'false' for something like mob respawn timer
-    // Use 'true' for something like a drop timer
-    bool keepAlive;
+    void (*f)(struct Room *room, struct TimerHandle *handle);
+    struct event *event;
 };
 
 struct Room {
@@ -185,38 +179,16 @@ struct Room {
     size_t timerCount;
     struct TimerHandle **timers;
     void *userData;
-    struct event *userEvent;
     OnRoomResume *onResume;
     bool keepAlive;
 };
 
 static struct Room *create_room(struct RoomManager *manager, uint32_t id);
 
-static void on_resume_room(evutil_socket_t fd, short status, void *ctx);
-
 struct RoomId {
     uint32_t id;
     struct Room *room;
 };
-
-struct TimerEvent {
-    struct timespec time;
-    void (*f)(struct Room *room, struct TimerHandle *handle);
-    struct TimerHandle *handle;
-};
-
-struct TimerEventHeap {
-    size_t capacity;
-    size_t count;
-    struct TimerEvent *events;
-};
-
-static int event_heap_init(struct TimerEventHeap *heap);
-static void event_heap_destroy(struct TimerEventHeap *heap);
-static int event_heap_push(struct TimerEventHeap *heap, struct timespec tp, void (*f)(struct Room *, struct TimerHandle *), struct TimerHandle *handle);
-static struct TimerEvent *event_heap_top(struct TimerEventHeap *heap);
-static struct TimerEvent event_heap_removetop(struct TimerEventHeap *heap);
-static bool event_heap_remove(struct TimerEventHeap *heap, struct TimerEvent *node);
 
 struct SessionRoom {
     uint32_t id;
@@ -233,12 +205,9 @@ struct RoomManager {
 
     // Used when session_send_command() is called to indicate if the command was successfully sent to the target
     OnClientTimer *onClientTimer;
-    OnClientCommandResult *onClientCommandResult;
     OnClientCommand *onClientCommand;
 
     struct HashSetU32 *rooms; // Uses `RoomId`
-    struct event *timer;
-    struct TimerEventHeap heap;
     void *userData;
 };
 
@@ -255,19 +224,20 @@ struct WorkerCommand {
         struct {
             int fd;
             int tfd;
-            int efd;
             struct Session *session;
-        };
+        } new;
         // KICK
         struct {
             uint32_t id;
-        };
+        } kick;
         // USER_COMMAND
         struct {
+            uint32_t id;
             uint32_t target;
-            int finish;
+            sem_t sem;
+            int res;
             void *ctx;
-        };
+        } user;
     };
 };
 
@@ -281,20 +251,18 @@ static struct Session *create_session(struct ChannelServer *server, int fd, stru
 static void destroy_pending_session(struct Session *session);
 static void destroy_session(struct Session *session);
 static void kick_common(struct Worker *worker, struct Session *session, void (*destroy)(struct Session *session));
-static void destroy_room(struct RoomManager *manager, struct Room *room);
+static void destroy_room(struct Room *room);
 
 static short poll_to_libevent(int mask);
 static int libevent_to_poll(short mask);
 
 static void do_transfer(struct Session *session);
 
-struct ChannelServer *channel_server_create(uint16_t port, OnLog *on_log, const char *host, CreateUserContext *create_user_context, DestroyUserContext destroy_user_ctx, OnClientConnect *on_client_connect, OnClientDisconnect *on_client_disconnect, OnClientJoin *on_client_join, OnClientPacket *on_pending_client_packet, OnClientPacket *on_client_packet, OnRoomCreate *on_room_create, OnRoomDestroy *on_room_destroy, OnClientCommandResult on_client_command_result, OnClientCommand on_client_command, OnClientTimer on_client_timer, void *global_ctx, size_t event_count)
+struct ChannelServer *channel_server_create(uint16_t port, OnLog *on_log, const char *host, CreateUserContext *create_user_context, DestroyUserContext destroy_user_ctx, OnClientConnect *on_client_connect, OnClientDisconnect *on_client_disconnect, OnClientJoin *on_client_join, OnClientPacket *on_pending_client_packet, OnClientPacket *on_client_packet, OnRoomCreate *on_room_create, OnRoomDestroy *on_room_destroy, OnClientCommand on_client_command, OnClientTimer on_client_timer, void *global_ctx, size_t event_count)
 {
     struct ChannelServer *server = malloc(sizeof(struct ChannelServer));
     if (server == NULL)
         return NULL;
-
-    evthread_use_pthreads();
 
     server->worker.base = event_base_new();
     if (server->worker.base == NULL)
@@ -464,48 +432,6 @@ struct ChannelServer *channel_server_create(uint16_t port, OnLog *on_log, const 
             goto exit_threads;
         }
 
-        int fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
-        if (fd == -1) {
-            hash_set_u32_destroy(manager->rooms);
-            event_free(manager->worker.transportEvent);
-            event_base_free(manager->worker.base);
-            destroy_user_ctx(manager->worker.userData);
-            free(manager);
-            mtx_destroy(&server->worker.transportMuteces[server->threadCount]);
-            close(pair[0]);
-            close(pair[1]);
-            goto exit_threads;
-        }
-
-        manager->timer = event_new(manager->worker.base, fd, EV_READ | EV_PERSIST, on_timer_expired, manager);
-        if (manager->timer == NULL) {
-            close(fd);
-            hash_set_u32_destroy(manager->rooms);
-            event_free(manager->worker.transportEvent);
-            event_base_free(manager->worker.base);
-            destroy_user_ctx(manager->worker.userData);
-            free(manager);
-            mtx_destroy(&server->worker.transportMuteces[server->threadCount]);
-            close(pair[0]);
-            close(pair[1]);
-            goto exit_threads;
-        }
-        event_add(manager->timer, NULL);
-
-        if (event_heap_init(&manager->heap) == -1) {
-            event_free(manager->timer);
-            close(fd);
-            hash_set_u32_destroy(manager->rooms);
-            event_free(manager->worker.transportEvent);
-            event_base_free(manager->worker.base);
-            destroy_user_ctx(manager->worker.userData);
-            free(manager);
-            mtx_destroy(&server->worker.transportMuteces[server->threadCount]);
-            close(pair[0]);
-            close(pair[1]);
-            goto exit_threads;
-        }
-
         manager->worker.onLog = on_log;
         manager->worker.onClientDisconnect = on_client_disconnect;
         manager->worker.onClientPacket = on_client_packet;
@@ -523,15 +449,11 @@ struct ChannelServer *channel_server_create(uint16_t port, OnLog *on_log, const 
         manager->onClientJoin = on_client_join;
         manager->onRoomCreate = on_room_create;
         manager->onRoomDestroy = on_room_destroy;
-        manager->onClientCommandResult = on_client_command_result;
         manager->onClientCommand = on_client_command;
         manager->onClientTimer = on_client_timer;
         manager->userData = global_ctx;
 
         if (thrd_create(server->threads + server->threadCount, start_worker, manager) != thrd_success) {
-            event_heap_destroy(&manager->heap);
-            event_free(manager->timer);
-            close(fd);
             event_free(manager->worker.transportEvent);
             event_base_free(manager->worker.base);
             destroy_user_ctx(manager->worker.userData);
@@ -612,7 +534,7 @@ static void do_destroy_property(void *data, void *ctx)
 {
     struct Property *property = data;
     mtx_destroy(&property->mtx);
-    free(property->listeners);
+    free(property->events);
 }
 
 void channel_server_destroy(struct ChannelServer *server)
@@ -827,17 +749,15 @@ void do_transfer(struct Session *session)
     if (session->room == NULL) {
         // This is the first time session_change_room() has been called on this session
         struct ChannelServer *server = session->supervisor;
-        struct WorkerCommand transfer = {
-            .type = WORKER_COMMAND_NEW_CLIENT,
-            .fd = bufferevent_getfd(session->event),
-            .tfd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK),
-            .efd = -1,
-            .session = session,
-        };
+        struct WorkerCommand *transfer = malloc(sizeof(struct WorkerCommand));
+        transfer->type = WORKER_COMMAND_NEW_CLIENT;
+        transfer->new.fd = bufferevent_getfd(session->event);
+        transfer->new.tfd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
+        transfer->new.session = session;
 
         // Set the clock to fire off every 5 minutes
         struct itimerspec tm = { .it_value = { .tv_sec = 5 * 60 }, .it_interval = { .tv_sec = 5 * 60 } };
-        timerfd_settime(transfer.tfd, 0, &tm, &tm);
+        timerfd_settime(transfer->new.tfd, 0, &tm, &tm);
 
         struct bufferevent *event = session->event;
         struct sockaddr_storage addr = session->addr;
@@ -862,7 +782,7 @@ void do_transfer(struct Session *session)
 
             // See below why we send the client while roomMap is locked
             mtx_lock(&server->worker.transportMuteces[thread]);
-            sent = write(server->worker.transportSinks[thread], &transfer, sizeof(struct WorkerCommand)) != -1;
+            sent = write(server->worker.transportSinks[thread], &transfer, sizeof(struct WorkerCommand *)) != -1;
             mtx_unlock(&server->worker.transportMuteces[thread]);
 
             mtx_unlock(server->worker.roomMapLock);
@@ -881,24 +801,21 @@ void do_transfer(struct Session *session)
             bufferevent_free(event);
             hash_set_addr_remove(server->sessions, (void *)&addr);
         } else {
-            close(transfer.tfd);
+            close(transfer->new.tfd);
             if (!setjmp(session->jmp))
                 session_kick(session);
         }
     } else {
         struct RoomManager *manager = session->supervisor;
 
-        struct WorkerCommand transfer = {
-            .type = WORKER_COMMAND_NEW_CLIENT,
-            .fd = bufferevent_getfd(session->event),
-            .tfd = event_get_fd(session->timer),
-            .efd = session->commandEvent == NULL ? -1 : event_get_fd(session->commandEvent),
-            .session = session,
-        };
+        struct WorkerCommand *transfer = malloc(sizeof(struct WorkerCommand));
+        transfer->type = WORKER_COMMAND_NEW_CLIENT;
+        transfer->new.fd = bufferevent_getfd(session->event);
+        transfer->new.tfd = event_get_fd(session->timer);
+        transfer->new.session = session;
 
         struct Room *room = session->room;
 
-        struct event *command = session->commandEvent;
         struct event *timer = session->timer;
         struct bufferevent *event = session->event;
         uint32_t id = session->id;
@@ -931,20 +848,17 @@ void do_transfer(struct Session *session)
         // it is better practice to not let the possibilty of it even happening in the first place
         bool sent;
         mtx_lock(&manager->worker.transportMuteces[thread]);
-        sent = write(manager->worker.transportSinks[thread], &transfer, sizeof(struct WorkerCommand)) != -1;
+        sent = write(manager->worker.transportSinks[thread], &transfer, sizeof(struct WorkerCommand *)) != -1;
         mtx_unlock(&manager->worker.transportMuteces[thread]);
 
         mtx_unlock(manager->worker.roomMapLock);
 
         if (sent) {
-            if (command != NULL)
-                event_free(command);
-
             event_free(timer);
             bufferevent_free(event);
             hash_set_u32_remove(room->sessions, id);
-            if (hash_set_u32_size(room->sessions) == 0 && !room->keepAlive)
-                destroy_room(manager, room);
+            if (room->timerCount == 0 && hash_set_u32_size(room->sessions) == 0 && !room->keepAlive)
+                destroy_room(room);
 
             mtx_lock(manager->worker.sessionsLock);
             // By this time the client could be kicked by the other thread,
@@ -1093,34 +1007,13 @@ void session_enable_write(struct Session *session)
     session->writeEnable = true;
 }
 
-static void on_command_sent(int fd, short what, void *ctx)
-{
-    struct Session *session = ctx;
-    struct RoomManager *manager = session->supervisor;
-    eventfd_t res;
-    eventfd_read(fd, &res);
-    close(fd);
-    event_free(session->commandEvent);
-    session->commandEvent = NULL;
-
-    bufferevent_enable(session->event, EV_READ);
-    event_add(session->timer, NULL);
-
-    if (res == 1) {
-        manager->onClientCommandResult(session, NULL, true);
-    } else { // res == 2
-        manager->onClientCommandResult(session, session->command, false);
-    }
-}
-
 bool session_send_command(struct Session *session, uint32_t target, void *command)
 {
     struct RoomManager *manager = session->supervisor;
 
-    struct WorkerCommand cmd = {
-        .type = WORKER_COMMAND_USER_COMMAND,
-        .ctx = command,
-    };
+    struct WorkerCommand *cmd = malloc(sizeof(struct WorkerCommand));
+    cmd->type = WORKER_COMMAND_USER_COMMAND;
+    cmd->user.ctx = command;
 
     uint32_t room;
     {
@@ -1131,7 +1024,7 @@ bool session_send_command(struct Session *session, uint32_t target, void *comman
             return false;
         }
 
-        cmd.id = session_room->id;
+        cmd->user.id = session_room->id;
         room = session_room->room;
         mtx_unlock(manager->worker.sessionsLock);
     }
@@ -1150,53 +1043,30 @@ bool session_send_command(struct Session *session, uint32_t target, void *comman
         mtx_unlock(manager->worker.roomMapLock);
     }
 
-    cmd.finish = eventfd(0, EFD_NONBLOCK);
-    if (cmd.fd == -1)
-        return false;
-
-    session->command = cmd.ctx;
-    session->commandEvent = event_new(manager->worker.base, cmd.fd, EV_READ, on_command_sent, session);
-    if (session->commandEvent == NULL)
-        return false;
+    // Can't fail under this circumstence
+    sem_init(&cmd->user.sem, 0, 0);
 
     mtx_lock(&manager->worker.transportMuteces[thread]);
-    bool sent = write(manager->worker.transportSinks[thread], &cmd, sizeof(struct WorkerCommand)) != -1;
+    bool sent = write(manager->worker.transportSinks[thread], &cmd, sizeof(struct WorkerCommand *)) != -1;
     mtx_unlock(&manager->worker.transportMuteces[thread]);
 
-    if (!sent) {
-        event_free(session->commandEvent);
-        session->commandEvent = NULL;
-        close(cmd.fd);
-    } else {
-        bufferevent_disable(session->event, EV_READ);
-        event_del(session->timer);
+    if (sent) {
+        sem_wait(&cmd->user.sem);
+        sent = cmd->user.res;
     }
 
+    free(cmd);
     return sent;
+}
+
+void *room_get_base(struct Room *room)
+{
+    return room->manager->worker.base;
 }
 
 uint32_t room_get_id(struct Room *room)
 {
     return room->id;
-}
-
-int room_set_event(struct Room *room, int fd, int status, OnRoomResume *on_resume)
-{
-    room->userEvent = event_new(room->manager->worker.base, fd, poll_to_libevent(status) | EV_PERSIST, on_resume_room, room);
-    if (room->userEvent == NULL)
-        return -1;
-
-    event_add(room->userEvent, NULL);
-
-    room->onResume = on_resume;
-
-    return 0;
-}
-
-void room_close_event(struct Room *room)
-{
-    event_free(room->userEvent);
-    room->userEvent = NULL;
 }
 
 void room_set_context(struct Room *room, void *ctx)
@@ -1237,8 +1107,8 @@ void room_keep_alive(struct Room *room)
 void room_break_off(struct Room *room)
 {
     room->keepAlive = false;
-    if (hash_set_u32_size(room->sessions) == 0)
-        destroy_room(room->manager, room);
+    if (room->timerCount == 0 && hash_set_u32_size(room->sessions) == 0)
+        destroy_room(room);
 }
 
 void event_set_property(struct Event *event, uint32_t property, int32_t value)
@@ -1248,17 +1118,17 @@ void event_set_property(struct Event *event, uint32_t property, int32_t value)
         struct Property prop = {
             .id = property,
             .value = value,
-            .listenerCount = 0,
-            .listeners = NULL
+            .eventCount = 0,
+            .events = NULL
         };
         mtx_init(&prop.mtx, mtx_plain);
         hash_set_u32_insert(event->properties, &prop);
     } else {
         mtx_lock(&prop->mtx);
         prop->value = value;
-        for (size_t i = 0; i < prop->listenerCount; i++) {
-            if (prop->listeners[i].listener != NULL)
-                prop->listeners[i].listener(prop->listeners[i].ctx);
+        for (size_t i = 0; i < prop->eventCount; i++) {
+            if (prop->events[i] != NULL)
+                evuser_trigger(prop->events[i]);
         }
         mtx_unlock(&prop->mtx);
     }
@@ -1276,25 +1146,51 @@ int32_t event_get_property(struct Event *event, uint32_t property)
     return prop->value;
 }
 
-uint32_t event_add_listener(struct Event *event, uint32_t property, void (*f)(void *), void *ctx)
+void on_trigger_event(int fd, short what, void *ctx)
+{
+    struct Listener *listener = ctx;
+    listener->listener(listener->ctx);
+}
+
+uint32_t event_add_listener(struct Event *event, void *base, uint32_t property, void (*f)(void *), void *ctx)
 {
     struct Property *prop = hash_set_u32_get(event->properties, property);
-    void *temp = realloc(prop->listeners, (prop->listenerCount + 1) * sizeof(struct Listener));
+    struct Listener *listener = malloc(sizeof(struct Listener));
+    if (listener == NULL)
+        ; // TODO
+
+    listener->listener = f;
+    listener->ctx = ctx;
+
+    struct event *new = event_new(base, -1, EV_PERSIST, on_trigger_event, listener);
+    event_add(new, NULL);
+
     mtx_lock(&prop->mtx);
-    prop->listeners = temp;
-    prop->listeners[prop->listenerCount].listener = f;
-    prop->listeners[prop->listenerCount].ctx = ctx;
-    prop->listenerCount++;
+    void *temp = realloc(prop->events, (prop->eventCount + 1) * sizeof(struct event *));
+    if (temp == NULL)
+        ; // TODO
+
+    prop->events = temp;
+    prop->events[prop->eventCount] = new;
+    prop->eventCount++;
     mtx_unlock(&prop->mtx);
-    return prop->listenerCount - 1;
+
+    return prop->eventCount - 1;
 }
 
 void event_remove_listener(struct Event *event, uint32_t property, uint32_t listener_id)
 {
     struct Property *prop = hash_set_u32_get(event->properties, property);
     mtx_lock(&prop->mtx);
-    prop->listeners[listener_id].listener = NULL;
+
+    void *listener;
+    event_get_assignment(prop->events[listener_id], NULL, NULL, NULL, NULL, &listener);
+    struct event *e = prop->events[listener_id];
+    prop->events[listener_id] = NULL;
     mtx_unlock(&prop->mtx);
+
+    free(listener);
+    event_free(e);
 }
 
 void event_schedule(struct Event *e, void f(struct Event *, void *), void *ctx, const struct timespec *tm)
@@ -1309,7 +1205,7 @@ void event_schedule(struct Event *e, void f(struct Event *, void *), void *ctx, 
     e->ctx = ctx;
 }
 
-struct TimerHandle *room_add_timer(struct Room *room, uint64_t msec, void (*f)(struct Room *, struct TimerHandle *), void *data, bool keep_alive)
+struct TimerHandle *room_add_timer(struct Room *room, uint64_t msec, void (*f)(struct Room *, struct TimerHandle *), void *data)
 {
     struct RoomManager *manager = room->manager;
     struct TimerHandle *handle = malloc(sizeof(struct TimerHandle));
@@ -1330,27 +1226,18 @@ struct TimerHandle *room_add_timer(struct Room *room, uint64_t msec, void (*f)(s
     handle->room = room;
     handle->index = room->timerCount;
     handle->data = data;
-    handle->keepAlive = keep_alive;
+    handle->f = f;
 
-    struct timespec tp;
-    clock_gettime(CLOCK_MONOTONIC, &tp);
-    tp.tv_nsec += (msec % 1000) * 1000000;
-    if (tp.tv_nsec >= 1000000000) {
-        tp.tv_nsec -= 1000000000;
-        tp.tv_sec++;
-    }
-    tp.tv_sec += msec / 1000;
-    if (event_heap_push(&manager->heap, tp, f, handle) == -1) {
-        free(handle);
-        return NULL;
+    struct timeval tv = {
+        .tv_usec = (msec % 1000) * 1000,
+        .tv_sec = msec / 1000
+    };
+
+    handle->event = evtimer_new(manager->worker.base, on_timer_expired, handle);
+    if (handle->event == NULL) {
     }
 
-    if (event_heap_top(&manager->heap) == handle->node) {
-        struct itimerspec time = {
-            .it_value = tp,
-            .it_interval = { 0 },
-        };
-        timerfd_settime(event_get_fd(manager->timer), TFD_TIMER_ABSTIME, &time, NULL); // timerfd_settime() can only fail due to user error which shouldn't be the case here
+    if (evtimer_add(handle->event, &tv) == -1) {
     }
 
     room->timers[room->timerCount] = handle;
@@ -1372,29 +1259,6 @@ void timer_set_data(struct TimerHandle *handle, void *data)
 void *timer_get_data(struct TimerHandle *handle)
 {
     return handle->data;
-}
-
-void room_stop_timer(struct TimerHandle *handle)
-{
-    struct Room *room = handle->room;
-    struct RoomManager *manager = room->manager;
-    room->timers[handle->index] = room->timers[room->timerCount - 1];
-    room->timers[handle->index]->index = handle->index;
-    room->timerCount--;
-
-    if (event_heap_remove(&manager->heap, handle->node)) {
-        struct TimerEvent *next = event_heap_top(&manager->heap);
-        if (next != NULL) {
-            struct itimerspec spec = { .it_value = next->time, .it_interval = { 0, 0 } };
-            timerfd_settime(event_get_fd(manager->timer), TFD_TIMER_ABSTIME, &spec, NULL);
-        } else {
-            // This was the last timer; Disarm the timer
-            struct itimerspec spec = { .it_value = { 0, 0 } };
-            timerfd_settime(event_get_fd(manager->timer), 0, &spec, NULL);
-        }
-    }
-
-    free(handle);
 }
 
 struct RoomContext {
@@ -1479,7 +1343,7 @@ static void on_login_server_connect(struct evconnlistener *listener, evutil_sock
     struct ChannelServer *server = ctx;
     // TODO: Check if addr is allowed
     *server->worker.login = bufferevent_socket_new(evconnlistener_get_base(listener), fd,
-            BEV_OPT_CLOSE_ON_FREE | BEV_OPT_THREADSAFE);
+            BEV_OPT_CLOSE_ON_FREE);
     if (*server->worker.login == NULL) {
         close(fd);
         return;
@@ -1512,13 +1376,12 @@ static void do_send_kick_command(void *data, void *ctx)
     mtx_unlock(server->worker.roomMapLock);
 
     if (thread != -1) {
-        struct WorkerCommand command = {
-            .type = WORKER_COMMAND_KICK,
-            .id = pair->id,
-        };
+        struct WorkerCommand *cmd = malloc(sizeof(struct WorkerCommand));
+        cmd->type = WORKER_COMMAND_KICK,
+            cmd->kick.id = pair->id,
 
         mtx_lock(&server->worker.transportMuteces[thread]);
-        write(server->worker.transportSinks[thread], &command, sizeof(struct WorkerCommand));
+        write(server->worker.transportSinks[thread], &cmd, sizeof(struct WorkerCommand *));
         mtx_unlock(&server->worker.transportMuteces[thread]);
     }
 }
@@ -1579,48 +1442,32 @@ static void on_login_server_event(struct bufferevent *bev, short what, void *ctx
     *server->worker.login = NULL;
 }
 
-static long timespec_cmp(struct timespec *tp1, struct timespec *tp2);
-
 static void on_timer_expired(int fd, short what, void *ctx)
 {
-    struct RoomManager *manager = ctx;
-    uint64_t count;
-    if (read(fd, &count, 8) == -1)
-        return; // EAGAIN can happen if the timer has expired and at the same time we removed the top event in the heap in some previous callback
-    struct TimerEvent *next;
-    struct timespec current_time;
-    do {
-        struct TimerEvent ev = event_heap_removetop(&manager->heap);
-        struct Room *room = ev.handle->room;
-        ev.f(room, ev.handle);
-        room->timers[ev.handle->index] = room->timers[room->timerCount - 1];
-        room->timers[ev.handle->index]->index = ev.handle->index;
-        room->timerCount--;
-        if (room->timerCount == 0 && hash_set_u32_size(room->sessions) == 0) {
-            manager->onRoomDestroy(ev.handle->room);
-            free(room->timers);
-            hash_set_u32_remove(manager->rooms, room->id);
+    struct TimerHandle *handle = ctx;
+    struct Room *room = handle->room;
+    struct RoomManager *manager = room->manager;
+    handle->f(room, handle);
+    room->timers[handle->index] = room->timers[room->timerCount - 1];
+    room->timers[handle->index]->index = handle->index;
+    room->timerCount--;
+    if (room->timerCount == 0 && hash_set_u32_size(room->sessions) == 0 && !room->keepAlive) {
+        destroy_room(room);
+        manager->onRoomDestroy(handle->room);
+        free(room->timers);
+        hash_set_u32_remove(manager->rooms, room->id);
 
-            hash_set_u32_destroy(room->sessions);
+        hash_set_u32_destroy(room->sessions);
 
-            mtx_lock(manager->worker.roomMapLock);
-            hash_set_u32_remove(manager->worker.roomMap, room->id);
-            mtx_unlock(manager->worker.roomMapLock);
+        mtx_lock(manager->worker.roomMapLock);
+        hash_set_u32_remove(manager->worker.roomMap, room->id);
+        mtx_unlock(manager->worker.roomMapLock);
 
-            free(room);
-        }
-        free(ev.handle);
-        next = event_heap_top(&manager->heap);
-        assert(clock_gettime(CLOCK_MONOTONIC, &current_time) != -1);
-    } while (next != NULL && timespec_cmp(&next->time, &current_time) <= 0);
-
-    if (next != NULL) {
-        struct itimerspec time = {
-            .it_value = next->time
-        };
-
-        assert(timerfd_settime(fd, TFD_TIMER_ABSTIME, &time, NULL) != -1);
+        free(room);
     }
+
+    event_free(handle->event);
+    free(handle);
 }
 
 static enum bufferevent_filter_result input_filter(struct evbuffer *src, struct evbuffer *dst, ev_ssize_t size, enum bufferevent_flush_mode mode, void *ctx);
@@ -1632,23 +1479,6 @@ static void on_session_timer_expired(int fd, short what, void *ctx);
 
 static void on_session_event(struct bufferevent *event, short what, void *ctx);
 static void on_pending_session_event(struct bufferevent *event, short what, void *ctx);
-
-static void do_kill_timers(void *data, void *ctx)
-{
-    struct Room *room = ((struct RoomId *)data)->room;
-    struct RoomManager *manager = ctx;
-    for (size_t i = 0; i < room->timerCount; i++) {
-        struct TimerHandle *timer = room->timers[i];
-        if (timer->keepAlive) {
-            event_heap_remove(&manager->heap, timer->node);
-            room->timers[i] = room->timers[room->timerCount - 1];
-            room->timers[i]->index = i;
-            free(timer);
-            room->timerCount--;
-            i--;
-        }
-    }
-}
 
 static void do_kick(void *data, void *ctx)
 {
@@ -1665,7 +1495,7 @@ static void do_kill_room(void *data, void *ctx)
         hash_set_u32_foreach(room->sessions, do_kick, room);
     } else {
         // ctx is the manager
-        destroy_room(ctx, room);
+        destroy_room(room);
     }
 }
 
@@ -1673,23 +1503,18 @@ static void on_session_join(int fd, short what, void *ctx_)
 {
     struct RoomManager *manager = ctx_;
     ssize_t status;
-    struct WorkerCommand cmd;
+    struct WorkerCommand *cmd;
 
-    if ((status = read(fd, &cmd, sizeof(struct WorkerCommand))) == 0) {
+    if ((status = read(fd, &cmd, sizeof(struct WorkerCommand *))) == 0) {
         // Shutdown request
         event_free(manager->worker.transportEvent);
         close(fd);
-        // Start by killing timers that are marked 'keepAlive'
-        hash_set_u32_foreach(manager->rooms, do_kill_timers, manager);
 
-        event_del(manager->timer);
-
-        // Timers that aren't keepAlive will be killed here as part of destroy_room()
         hash_set_u32_foreach(manager->rooms, do_kill_room, manager);
     } else if (status != -1) {
-        switch (cmd.type) {
+        switch (cmd->type) {
         case WORKER_COMMAND_NEW_CLIENT: {
-            struct Session *session = cmd.session;
+            struct Session *session = cmd->new.session;
             if (hash_set_u32_get(manager->rooms, session->targetRoom) == NULL) {
                 session->room = create_room(manager, session->targetRoom);
                 if (session->room == NULL) {
@@ -1720,7 +1545,7 @@ static void on_session_join(int fd, short what, void *ctx_)
                     ; // TODO
             }
 
-            session->event = bufferevent_socket_new(manager->worker.base, cmd.fd, 0);
+            session->event = bufferevent_socket_new(manager->worker.base, cmd->new.fd, 0);
             if (session->event == NULL)
                 ; // TODO
             session->event = bufferevent_filter_new(session->event, input_filter, output_filter, 0, NULL, session);
@@ -1728,8 +1553,9 @@ static void on_session_join(int fd, short what, void *ctx_)
                 ; // TODO
             bufferevent_setcb(session->event, on_session_read, NULL, on_session_event, session);
 
-            session->timer = event_new(manager->worker.base, cmd.tfd, EV_READ | EV_PERSIST, on_session_timer_expired, session);
+            session->timer = event_new(manager->worker.base, cmd->new.tfd, EV_READ | EV_PERSIST, on_session_timer_expired, session);
             event_add(session->timer, NULL);
+            free(cmd);
 
             session->supervisor = manager;
             session->writeEnable = false;
@@ -1743,7 +1569,7 @@ static void on_session_join(int fd, short what, void *ctx_)
             uint32_t room;
             mtx_lock(manager->worker.sessionsLock);
             // Note that after unlocking sessionsLock, session_room can't be derefenrenced, only NULL-checked
-            struct SessionRoom *session_room = hash_set_u32_get(manager->worker.sessions, cmd.id);
+            struct SessionRoom *session_room = hash_set_u32_get(manager->worker.sessions, cmd->kick.id);
             room = session_room->room;
             mtx_unlock(manager->worker.sessionsLock);
 
@@ -1752,9 +1578,10 @@ static void on_session_join(int fd, short what, void *ctx_)
                 struct RoomId *room_id = hash_set_u32_get(manager->rooms, room);
                 if (room_id != NULL) {
                     struct Room *room = room_id->room;
-                    id_session = hash_set_u32_get(room->sessions, cmd.id);
+                    id_session = hash_set_u32_get(room->sessions, cmd->kick.id);
                     if (id_session != NULL) {
-                        struct Session *session = ((struct IdSession *)hash_set_u32_get(room->sessions, cmd.id))->session;
+                        struct Session *session = ((struct IdSession *)hash_set_u32_get(room->sessions, cmd->kick.id))->session;
+                        free(cmd);
                         //session->id = 0; // Why was this here?
                         if (!setjmp(session->jmp))
                             session_kick(session);
@@ -1769,7 +1596,7 @@ static void on_session_join(int fd, short what, void *ctx_)
                         mtx_unlock(manager->worker.roomMapLock);
 
                         mtx_lock(&manager->worker.transportMuteces[thread]);
-                        write(manager->worker.transportSinks[thread], &cmd, sizeof(struct WorkerCommand));
+                        write(manager->worker.transportSinks[thread], &cmd, sizeof(struct WorkerCommand *));
                         mtx_unlock(&manager->worker.transportMuteces[thread]);
                     } else {
                         mtx_unlock(manager->worker.roomMapLock);
@@ -1782,7 +1609,7 @@ static void on_session_join(int fd, short what, void *ctx_)
         case WORKER_COMMAND_USER_COMMAND: {
             uint32_t room;
             mtx_lock(manager->worker.sessionsLock);
-            struct SessionRoom *session_room = hash_set_u32_get(manager->worker.sessions, cmd.target);
+            struct SessionRoom *session_room = hash_set_u32_get(manager->worker.sessions, cmd->user.target);
             room = session_room->room;
             mtx_unlock(manager->worker.sessionsLock);
 
@@ -1791,13 +1618,15 @@ static void on_session_join(int fd, short what, void *ctx_)
                 struct RoomId *room_id = hash_set_u32_get(manager->rooms, room);
                 if (room_id != NULL) {
                     struct Room *room = room_id->room;
-                    id_session = hash_set_u32_get(room->sessions, cmd.id);
+                    id_session = hash_set_u32_get(room->sessions, cmd->user.id);
                     if (id_session != NULL) {
-                        eventfd_write(cmd.finish, 1);
-                        struct Session *session = ((struct IdSession *)hash_set_u32_get(room->sessions, cmd.id))->session;
-                        //session->id = 0; // Why was this here?
+                        uint32_t id = cmd->user.id;
+                        void *ctx = cmd->user.ctx;
+                        cmd->user.res = 1;
+                        sem_post(&cmd->user.sem);
+                        struct Session *session = ((struct IdSession *)hash_set_u32_get(room->sessions, id))->session;
                         if (!setjmp(session->jmp))
-                            manager->onClientCommand(session, cmd.ctx);
+                            manager->onClientCommand(session, ctx);
                     }
                 }
 
@@ -1809,15 +1638,16 @@ static void on_session_join(int fd, short what, void *ctx_)
                         mtx_unlock(manager->worker.roomMapLock);
 
                         mtx_lock(&manager->worker.transportMuteces[thread]);
-                        write(manager->worker.transportSinks[thread], &cmd, sizeof(struct WorkerCommand));
+                        write(manager->worker.transportSinks[thread], &cmd, sizeof(struct WorkerCommand *));
                         mtx_unlock(&manager->worker.transportMuteces[thread]);
                     } else {
-                        mtx_unlock(manager->worker.roomMapLock);
-                        eventfd_write(cmd.finish, 2);
+                        cmd->user.res = 0;
+                        sem_post(&cmd->user.sem);
                     }
                 }
             } else {
-                eventfd_write(cmd.finish, 2);
+                cmd->user.res = 0;
+                sem_post(&cmd->user.sem);
             }
         }
         break;
@@ -2004,10 +1834,6 @@ static int start_worker(void *ctx_)
 
     event_base_dispatch(manager->worker.base);
 
-    event_heap_destroy(&manager->heap);
-    int fd = event_get_fd(manager->timer);
-    event_free(manager->timer);
-    close(fd);
     hash_set_u32_destroy(manager->rooms);
     manager->worker.destroyContext(manager->worker.userData);
     event_base_free(manager->worker.base);
@@ -2049,7 +1875,6 @@ static struct Session *create_session(struct ChannelServer *server, int fd, stru
     session->id = 0;
     session->room = NULL;
     session->userEvent = NULL;
-    session->commandEvent = NULL;
     session->writeEnable = false;
     session->targetRoom = -1;
     session->timer = NULL;
@@ -2090,17 +1915,9 @@ static struct Room *create_room(struct RoomManager *manager, uint32_t id)
     room->manager = manager;
     room->timerCapacity = 1;
     room->timerCount = 0;
-    room->userEvent = NULL;
     room->keepAlive = false;
 
     return room;
-}
-
-static void on_resume_room(evutil_socket_t fd, short status, void *ctx)
-{
-    struct Room *room = ctx;
-    if (room->onResume(room, fd, libevent_to_poll(status)) < 0) {
-    }
 }
 
 static void destroy_pending_session(struct Session *session)
@@ -2168,8 +1985,8 @@ static void destroy_session(struct Session *session)
     }
 
     hash_set_u32_remove(room->sessions, session->id);
-    if (hash_set_u32_size(room->sessions) == 0 && !room->keepAlive)
-        destroy_room(manager, room);
+    if (room->timerCount == 0 && hash_set_u32_size(room->sessions) == 0 && !room->keepAlive)
+        destroy_room(room);
 
     free(session);
 }
@@ -2187,182 +2004,28 @@ static void kick_common(struct Worker *worker, struct Session *session, void (*d
     }
 }
 
-static void destroy_room(struct RoomManager *manager, struct Room *room)
+static void destroy_room(struct Room *room)
 {
+    struct RoomManager *manager = room->manager;
+
     for (size_t i = 0; i < room->timerCount; i++) {
-        if (!room->timers[i]->keepAlive) {
-            if (event_heap_remove(&manager->heap, room->timers[i]->node)) {
-                struct TimerEvent *next = event_heap_top(&manager->heap);
-                if (next != NULL) {
-                    struct itimerspec spec = { .it_value = next->time, .it_interval = { 0, 0 } };
-                    timerfd_settime(event_get_fd(manager->timer), TFD_TIMER_ABSTIME, &spec, NULL);
-                } else {
-                    struct itimerspec spec = { .it_value = { 0, 0 } };
-                    timerfd_settime(event_get_fd(manager->timer), 0, &spec, NULL);
-                }
-            }
-            struct TimerHandle *timer = room->timers[i];
-            room->timers[i] = room->timers[room->timerCount - 1];
-            room->timers[i]->index = i;
-            free(timer);
-            room->timerCount--;
-            i--;
-        }
+        struct TimerHandle *timer = room->timers[i];
+        event_free(timer->event);
+        free(timer);
     }
 
-    if (room->timerCount == 0) {
-        manager->onRoomDestroy(room);
-        free(room->timers);
+    manager->onRoomDestroy(room);
+    free(room->timers);
 
-        hash_set_u32_remove(manager->rooms, room->id);
+    hash_set_u32_remove(manager->rooms, room->id);
 
-        hash_set_u32_destroy(room->sessions);
+    hash_set_u32_destroy(room->sessions);
 
-        mtx_lock(manager->worker.roomMapLock);
-        hash_set_u32_remove(manager->worker.roomMap, room->id);
-        mtx_unlock(manager->worker.roomMapLock);
+    mtx_lock(manager->worker.roomMapLock);
+    hash_set_u32_remove(manager->worker.roomMap, room->id);
+    mtx_unlock(manager->worker.roomMapLock);
 
-        free(room);
-    }
-}
-
-static void sift_up(struct TimerEventHeap *heap, size_t i);
-static void sift_down(struct TimerEventHeap *heap, size_t i);
-
-static int event_heap_init(struct TimerEventHeap *heap)
-{
-    heap->events = malloc(sizeof(struct TimerEvent));
-    if (heap->events == NULL)
-        return -1;
-
-    heap->capacity = 1;
-    heap->count = 0;
-
-    return 0;
-}
-
-static void event_heap_destroy(struct TimerEventHeap *heap)
-{
-    free(heap->events);
-}
-
-static int event_heap_push(struct TimerEventHeap *heap, struct timespec tp, void (*f)(struct Room *, struct TimerHandle *), struct TimerHandle *handle)
-{
-    if (heap->count == heap->capacity) {
-        void *temp = realloc(heap->events, (heap->capacity * 2) * sizeof(struct TimerEvent));
-        if (temp == NULL)
-            return -1;
-
-        heap->events = temp;
-        for (size_t i = 0; i < heap->count; i++)
-            heap->events[i].handle->node = &heap->events[i];
-
-        heap->capacity *= 2;
-    }
-
-    heap->events[heap->count].time = tp;
-    heap->events[heap->count].f = f;
-    heap->events[heap->count].handle = handle;
-
-    handle->node = &heap->events[heap->count];
-
-    heap->count++;
-
-    sift_up(heap, heap->count - 1);
-
-    return 0;
-}
-
-static struct TimerEvent *event_heap_top(struct TimerEventHeap *heap)
-{
-    if (heap->count == 0)
-        return NULL;
-
-    return &heap->events[0];
-}
-
-static struct TimerEvent event_heap_removetop(struct TimerEventHeap *heap)
-{
-    struct TimerEvent ret = heap->events[0];
-
-    heap->events[0] = heap->events[heap->count - 1];
-    heap->events[0].handle->node = &heap->events[0];
-    heap->count--;
-
-    sift_down(heap, 0);
-
-    return ret;
-}
-
-static bool event_heap_remove(struct TimerEventHeap *heap, struct TimerEvent *node)
-{
-    ptrdiff_t i = node - heap->events;
-
-    bool ret = i == 0;
-
-    heap->count--;
-    heap->events[i] = heap->events[heap->count];
-    heap->events[i].handle->node = &heap->events[i];
-    if (i == 0 || timespec_cmp(&heap->events[(i-1) / 2].time, &heap->events[i].time) < 0)
-        sift_down(heap, i);
-    else
-        sift_up(heap, i);
-
-    return ret;
-}
-
-static void swap(struct TimerEventHeap *heap, size_t i, size_t j);
-
-static void sift_up(struct TimerEventHeap *heap, size_t i)
-{
-    while (i > 0) {
-        if (timespec_cmp(&heap->events[(i-1) / 2].time, &heap->events[i].time) > 0) {
-            swap(heap, (i-1) / 2, i);
-            i = (i-1) / 2;
-        } else {
-            break;
-        }
-    }
-}
-
-static void sift_down(struct TimerEventHeap *heap, size_t i)
-{
-    while (i*2 + 1 < heap->count) {
-        if (i*2 + 2 == heap->count) {
-            if (timespec_cmp(&heap->events[i].time, &heap->events[i*2 + 1].time) > 0)
-                swap(heap, i, i*2 + 1);
-
-            break;
-        }
-
-        if (timespec_cmp(&heap->events[i].time, &heap->events[i*2 + 1].time) <= 0 && timespec_cmp(&heap->events[i].time, &heap->events[i*2 + 2].time) <= 0)
-            break;
-
-        if (timespec_cmp(&heap->events[i].time, &heap->events[i*2 + 1].time) > 0 && timespec_cmp(&heap->events[i].time, &heap->events[i*2 + 2].time) > 0) {
-            if (timespec_cmp(&heap->events[i*2 + 1].time, &heap->events[i*2 + 2].time) < 0) {
-                swap(heap, i, i*2 + 1);
-                i = i*2 + 1;
-            } else {
-                swap(heap, i, i*2 + 2);
-                i = i*2 + 2;
-            }
-        } else if (timespec_cmp(&heap->events[i].time, &heap->events[i*2 + 1].time) > 0) {
-            swap(heap, i, i*2 + 1);
-            i = i*2 + 1;
-        } else {
-            swap(heap, i, i*2 + 2);
-            i = i*2 + 2;
-        }
-    }
-}
-
-static void swap(struct TimerEventHeap *heap, size_t i, size_t j)
-{
-    struct TimerEvent tmp = heap->events[i];
-    heap->events[i] = heap->events[j];
-    heap->events[i].handle->node = &heap->events[i];
-    heap->events[j] = tmp;
-    heap->events[j].handle->node = &heap->events[j];
+    free(room);
 }
 
 static short poll_to_libevent(int mask)
@@ -2390,13 +2053,5 @@ static int libevent_to_poll(short mask)
         ret |= POLLOUT;
 
     return ret;
-}
-
-static long timespec_cmp(struct timespec *tp1, struct timespec *tp2)
-{
-    if (tp1->tv_sec == tp2->tv_sec)
-        return tp1->tv_nsec - tp2->tv_nsec;
-
-    return tp1->tv_sec - tp2->tv_sec;
 }
 

@@ -136,13 +136,11 @@ struct DropBatch {
 
 struct Map {
     struct Room *room;
-    int fd;
     uint32_t listener;
     struct ChannelServer *server;
     size_t playerCapacity;
     size_t playerCount;
     struct MapPlayer *players;
-    struct TimerHandle *respawnHandle;
     const struct FootholdRTree *footholdTree;
     struct ObjectList objectList;
     size_t npcCount;
@@ -170,24 +168,25 @@ struct Map {
     struct MapMonster boss;
 };
 
-static void on_boat_state_changed(void *ctx);
-static int dock_undock_boat(struct Room *room, int fd, int status);
-static int start_sailing(struct Room *room, int fd, int status);
-static int end_sailing(struct Room *room, int fd, int status);
+static void on_respawn(void *ctx);
 
-static int dock_undock_train(struct Room *room, int fd, int status);
-static int start_train(struct Room *room, int fd, int status);
-static int end_train(struct Room *room, int fd, int status);
+static void dock_undock_boat(void *ctx);
+static void start_sailing(void *ctx);
+static void end_sailing(void *ctx);
 
-static int dock_undock_genie(struct Room *room, int fd, int status);
-static int start_genie(struct Room *room, int fd, int status);
-static int end_genie(struct Room *room, int fd, int status);
+static void dock_undock_train(void *ctx);
+static void start_train(void *ctx);
+static void end_train(void *ctx);
 
-static int dock_undock_subway(struct Room *room, int fd, int status);
-static int start_subway(struct Room *room, int fd, int status);
-static int end_subway(struct Room *room, int fd, int status);
+static void dock_undock_genie(void *ctx);
+static void start_genie(void *ctx);
+static void end_genie(void *ctx);
 
-static int respawn_boss(struct Room *room, int fd, int status);
+static void dock_undock_subway(void *ctx);
+static void start_subway(void *ctx);
+static void end_subway(void *ctx);
+
+static void respawn_boss(void *ctx);
 
 static void map_kill_monster(struct Map *map, uint32_t oid);
 static bool map_calculate_drop_position(struct Map *map, struct Point *p);
@@ -198,7 +197,6 @@ static bool do_client_auto_pickup(struct Map *map, struct Client *client, struct
 static void on_next_drop(struct Room *room, struct TimerHandle *handle);
 static void on_exclusive_drop_time_expired(struct Room *room, struct TimerHandle *handle);
 static void on_drop_time_expired(struct Room *room, struct TimerHandle *handle);
-static void on_respawn(struct Room *room, struct TimerHandle *handle);
 static void on_respawn_reactor(struct Room *room, struct TimerHandle *handle);
 
 struct Map *map_create(struct ChannelServer *server, struct Room *room, struct ScriptManager *reactor_manager)
@@ -409,63 +407,39 @@ struct Map *map_create(struct ChannelServer *server, struct Room *room, struct S
 
     map->boss.monster.oid = -1;
 
+    event_add_listener(channel_server_get_event(server, EVENT_GLOBAL_RESPAWN), room_get_base(room), 0, on_respawn, map);
+
     uint32_t id = room_get_id(room);
     if (id == 101000300 || id == 200000111 ) {
-        map->fd = eventfd(0, 0);
-        room_set_event(room, map->fd, POLLIN, dock_undock_boat);
-        map->listener = event_add_listener(channel_server_get_event(server, EVENT_BOAT), EVENT_BOAT_PROPERTY_SAILING, on_boat_state_changed, map);
+        map->listener = event_add_listener(channel_server_get_event(server, EVENT_BOAT), room_get_base(room), EVENT_BOAT_PROPERTY_SAILING, dock_undock_boat, map);
     } else if (id == 101000301 || id == 200000112) {
-        map->fd = eventfd(0, 0);
-        room_set_event(room, map->fd, POLLIN, start_sailing);
-        map->listener = event_add_listener(channel_server_get_event(server, EVENT_BOAT), EVENT_BOAT_PROPERTY_SAILING, on_boat_state_changed, map);
+        map->listener = event_add_listener(channel_server_get_event(server, EVENT_BOAT), room_get_base(room), EVENT_BOAT_PROPERTY_SAILING, start_sailing, map);
     } else if (id / 10 == 20009001 || id / 10 == 20009000) {
-        map->fd = eventfd(0, 0);
-        room_set_event(room, map->fd, POLLIN, end_sailing);
-        map->listener = event_add_listener(channel_server_get_event(server, EVENT_BOAT), EVENT_BOAT_PROPERTY_SAILING, on_boat_state_changed, map);
+        map->listener = event_add_listener(channel_server_get_event(server, EVENT_BOAT), room_get_base(room), EVENT_BOAT_PROPERTY_SAILING, end_sailing, map);
     } else if (id == 200000121 || id == 220000110) {
-        map->fd = eventfd(0, 0);
-        room_set_event(room, map->fd, POLLIN, dock_undock_train);
-        map->listener = event_add_listener(channel_server_get_event(server, EVENT_TRAIN), EVENT_TRAIN_PROPERTY_SAILING, on_boat_state_changed, map);
+        map->listener = event_add_listener(channel_server_get_event(server, EVENT_TRAIN), room_get_base(room), EVENT_TRAIN_PROPERTY_SAILING, dock_undock_train, map);
     } else if (id == 200000122 || id == 220000111) {
-        map->fd = eventfd(0, 0);
-        room_set_event(room, map->fd, POLLIN, start_train);
-        map->listener = event_add_listener(channel_server_get_event(server, EVENT_TRAIN), EVENT_TRAIN_PROPERTY_SAILING, on_boat_state_changed, map);
+        map->listener = event_add_listener(channel_server_get_event(server, EVENT_TRAIN), room_get_base(room), EVENT_TRAIN_PROPERTY_SAILING, start_train, map);
     } else if (id == 200090100 || id == 200090110) {
-        map->fd = eventfd(0, 0);
-        room_set_event(room, map->fd, POLLIN, end_train);
-        map->listener = event_add_listener(channel_server_get_event(server, EVENT_TRAIN), EVENT_TRAIN_PROPERTY_SAILING, on_boat_state_changed, map);
+        map->listener = event_add_listener(channel_server_get_event(server, EVENT_TRAIN), room_get_base(room), EVENT_TRAIN_PROPERTY_SAILING, end_train, map);
     } else if (id == 200000151 || id == 260000100) {
-        map->fd = eventfd(0, 0);
-        room_set_event(room, map->fd, POLLIN, dock_undock_genie);
-        map->listener = event_add_listener(channel_server_get_event(server, EVENT_GENIE), EVENT_GENIE_PROPERTY_SAILING, on_boat_state_changed, map);
+        map->listener = event_add_listener(channel_server_get_event(server, EVENT_GENIE), room_get_base(room), EVENT_GENIE_PROPERTY_SAILING, dock_undock_genie, map);
     } else if (id == 200000152 || id == 260000110) {
-        map->fd = eventfd(0, 0);
-        room_set_event(room, map->fd, POLLIN, start_genie);
-        map->listener = event_add_listener(channel_server_get_event(server, EVENT_GENIE), EVENT_GENIE_PROPERTY_SAILING, on_boat_state_changed, map);
+        map->listener = event_add_listener(channel_server_get_event(server, EVENT_GENIE), room_get_base(room), EVENT_GENIE_PROPERTY_SAILING, start_genie, map);
     } else if (id == 200090400 || id == 200090410) {
-        map->fd = eventfd(0, 0);
-        room_set_event(room, map->fd, POLLIN, end_genie);
-        map->listener = event_add_listener(channel_server_get_event(server, EVENT_GENIE), EVENT_GENIE_PROPERTY_SAILING, on_boat_state_changed, map);
+        map->listener = event_add_listener(channel_server_get_event(server, EVENT_GENIE), room_get_base(room), EVENT_GENIE_PROPERTY_SAILING, end_genie, map);
     } else if (id == 103000100 || id == 600010001) {
-        map->fd = eventfd(0, 0);
-        room_set_event(room, map->fd, POLLIN, dock_undock_subway);
-        map->listener = event_add_listener(channel_server_get_event(server, EVENT_SUBWAY), EVENT_SUBWAY_PROPERTY_SAILING, on_boat_state_changed, map);
+        map->listener = event_add_listener(channel_server_get_event(server, EVENT_SUBWAY), room_get_base(room), EVENT_SUBWAY_PROPERTY_SAILING, dock_undock_subway, map);
     } else if (id == 600010004 || id == 600010002) {
-        map->fd = eventfd(0, 0);
-        room_set_event(room, map->fd, POLLIN, start_subway);
-        map->listener = event_add_listener(channel_server_get_event(server, EVENT_SUBWAY), EVENT_SUBWAY_PROPERTY_SAILING, on_boat_state_changed, map);
+        map->listener = event_add_listener(channel_server_get_event(server, EVENT_SUBWAY), room_get_base(room), EVENT_SUBWAY_PROPERTY_SAILING, start_subway, map);
     } else if (id == 600010005 || id == 600010003) {
-        map->fd = eventfd(0, 0);
-        room_set_event(room, map->fd, POLLIN, end_subway);
-        map->listener = event_add_listener(channel_server_get_event(server, EVENT_SUBWAY), EVENT_SUBWAY_PROPERTY_SAILING, on_boat_state_changed, map);
+        map->listener = event_add_listener(channel_server_get_event(server, EVENT_SUBWAY), room_get_base(room), EVENT_SUBWAY_PROPERTY_SAILING, end_subway, map);
     } else if (id == 100040105 || id == 100040106 || id == 101030404 || id == 104000400 || id == 105090310 ||
             id == 107000300 || id == 110040000 || id == 200010300 || id == 220050000 || id == 220050100 ||
             id == 220050200 || id == 221040301 || id == 222010310 || id == 230020100 || id == 240040401 ||
             id == 250010304 || id == 250010504 || id == 251010102 || id == 260010201 || id == 261030000 ||
             id == 677000001 || id == 677000003 || id == 677000005 || id == 677000007 || id == 677000009 || id == 677000012) {
-        map->fd = eventfd(0, 0);
-        room_set_event(room, map->fd, POLLIN, respawn_boss);
-        map->listener = event_add_listener(channel_server_get_event(server, EVENT_AREA_BOSS), EVENT_AREA_BOSS_PROPERTY_RESET, on_boat_state_changed, map);
+        map->listener = event_add_listener(channel_server_get_event(server, EVENT_AREA_BOSS), room_get_base(room), EVENT_AREA_BOSS_PROPERTY_RESET, respawn_boss, map);
 
         if (!event_area_boss_register(id)) {
             room_keep_alive(room);
@@ -675,28 +649,18 @@ void map_destroy(struct Map *map)
     uint32_t id = room_get_id(map->room);
     if (id == 101000300 || id == 101000301 || id / 10 == 20009001 || id == 200000111 || id == 200000112 || id / 10 == 20009000) {
         event_remove_listener(channel_server_get_event(map->server, EVENT_BOAT), EVENT_BOAT_PROPERTY_SAILING, map->listener);
-        room_close_event(map->room);
-        close(map->fd);
     } else if (id == 200000121 || id == 220000110 || id == 200000122 || id == 220000111 || id == 200090100 || id == 200090110) {
         event_remove_listener(channel_server_get_event(map->server, EVENT_TRAIN), EVENT_TRAIN_PROPERTY_SAILING, map->listener);
-        room_close_event(map->room);
-        close(map->fd);
     } else if (id == 200000151 || id == 260000100 || id == 200000152 || id == 260000110 || id == 200090400 || id == 200090410) {
         event_remove_listener(channel_server_get_event(map->server, EVENT_GENIE), EVENT_GENIE_PROPERTY_SAILING, map->listener);
-        room_close_event(map->room);
-        close(map->fd);
     } else if (id == 103000100 || id == 600010001 || id == 600010004 || id == 600010002 || id == 600010005 || id == 600010003) {
         event_remove_listener(channel_server_get_event(map->server, EVENT_SUBWAY), EVENT_SUBWAY_PROPERTY_SAILING, map->listener);
-        room_close_event(map->room);
-        close(map->fd);
     } else if (id == 100040105 || id == 100040106 || id == 101030404 || id == 104000400 || id == 105090310 ||
             id == 107000300 || id == 110040000 || id == 200010300 || id == 220050000 || id == 220050100 ||
             id == 220050200 || id == 221040301 || id == 222010310 || id == 230020100 || id == 240040401 ||
             id == 250010304 || id == 250010504 || id == 251010102 || id == 260010201 || id == 261030000 ||
             id == 677000001 || id == 677000003 || id == 677000005 || id == 677000007 || id == 677000009 || id == 677000012) {
         event_remove_listener(channel_server_get_event(map->server, EVENT_AREA_BOSS), EVENT_AREA_BOSS_PROPERTY_RESET, map->listener);
-        room_close_event(map->room);
-        close(map->fd);
     }
 
     free(map->occupiedSeats);
@@ -769,15 +733,9 @@ int map_join(struct Map *map, struct Client *client, struct MapHandleContainer *
     for (size_t i = 0; i < map->npcCount; i++)
         client_announce_add_npc(client, &map->npcs[i]);
 
-    if (map->heap.count == 0)
-        map->respawnHandle = room_add_timer(map->room, 10 * 1000, on_respawn, NULL, false);
-
     player->player->monsters = malloc(map->monsterCapacity * sizeof(struct MapMonster *));
-    if (player->player->monsters == NULL) {
-        if (map->heap.count == 0)
-            room_stop_timer(map->respawnHandle);
+    if (player->player->monsters == NULL)
         return -1;
-    }
 
     player->player->monsterCount = 0;
     if (map->heap.count == 0) {
@@ -794,8 +752,6 @@ int map_join(struct Map *map, struct Client *client, struct MapHandleContainer *
     player->player->node = heap_push(&map->heap, player->player->monsterCount, player->player);
     if (player->player->node == NULL) {
         free(player->player->monsters);
-        if (map->heap.count == 0)
-            room_stop_timer(map->respawnHandle);
         return -1;
     }
 
@@ -955,7 +911,6 @@ void map_leave(struct Map *map, struct MapPlayer *player)
                 player->droppings[i]->owner = NULL;
 
             free(player->droppings);
-            room_stop_timer(map->respawnHandle);
         }
 
         map->playerCount--;
@@ -1504,7 +1459,7 @@ static int map_drop_batch_from_map_object(struct Map *map, struct MapPlayer *pla
         if (batch == NULL)
             return -1;
 
-        batch->timer = room_add_timer(map->room, 200, on_next_drop, batch, true);
+        batch->timer = room_add_timer(map->room, 200, on_next_drop, batch);
 
         // Drop the first one immediatly
         // Also can't be player drop as they come in 1's
@@ -1564,7 +1519,7 @@ static int map_drop_batch_from_map_object(struct Map *map, struct MapPlayer *pla
         map->dropBatches[map->dropBatchEnd] = malloc(sizeof(struct DropBatch) + sizeof(struct Drop)); // Only 1 drop
         map->dropBatchEnd++;
         struct DropBatch *batch = map->dropBatches[map->dropBatchEnd - 1];
-        batch->timer = room_add_timer(map->room, 15 * 1000, on_exclusive_drop_time_expired, NULL, true);
+        batch->timer = room_add_timer(map->room, 15 * 1000, on_exclusive_drop_time_expired, NULL);
 
         batch->drops[0] = *drops;
         struct Drop *drop = &batch->drops[0];
@@ -1678,7 +1633,7 @@ void map_add_player_drop(struct Map *map, struct MapPlayer *player, struct Drop 
     map->dropBatches[map->dropBatchEnd] = malloc(sizeof(struct DropBatch) + sizeof(struct Drop));
     map->dropBatchEnd++;
     struct DropBatch *batch = map->dropBatches[map->dropBatchEnd - 1];
-    batch->timer = room_add_timer(map->room, 300 * 1000, on_drop_time_expired, NULL, true);
+    batch->timer = room_add_timer(map->room, 300 * 1000, on_drop_time_expired, NULL);
 
     batch->drops[0] = *drop;
     drop = &batch->drops[0];
@@ -1773,7 +1728,6 @@ void map_remove_drop(struct Map *map, uint32_t char_id, uint32_t oid)
                     batch->owner->dropCapacity /= 2;
                 }
             }
-            room_stop_timer(batch->timer);
             free(batch);
             map->dropBatches[batch_index] = NULL;
         }
@@ -1846,18 +1800,9 @@ void map_tire_seat(struct Map *map, uint16_t id)
     map->occupiedSeats[id] = false;
 }
 
-static void on_boat_state_changed(void *ctx)
+static void dock_undock_boat(void *ctx)
 {
     struct Map *map = ctx;
-    uint64_t one = 1;
-    write(map->fd, &one, sizeof(uint64_t));
-}
-
-static int dock_undock_boat(struct Room *room, int fd, int status)
-{
-    struct Map *map = room_get_context(room);
-    uint64_t one;
-    read(fd, &one, sizeof(uint64_t));
     int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_BOAT), EVENT_BOAT_PROPERTY_SAILING);
     if (state != 1) {
         uint8_t packet[BOAT_PACKET_LENGTH];
@@ -1866,54 +1811,41 @@ static int dock_undock_boat(struct Room *room, int fd, int status)
         } else if (state == 0) {
             boat_packet(true, packet);
         }
-        room_broadcast(room, BOAT_PACKET_LENGTH, packet);
+        room_broadcast(map->room, BOAT_PACKET_LENGTH, packet);
     }
-
-    return 0;
 }
 
-static int start_sailing(struct Room *room, int fd, int status)
+static void start_sailing(void *ctx)
 {
-    struct Map *map = room_get_context(room);
-    uint64_t one;
-    read(fd, &one, sizeof(uint64_t));
+    struct Map *map = ctx;
     int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_BOAT), EVENT_BOAT_PROPERTY_SAILING);
     if (state == 2) {
         // client_warp() calls map_leave() which in turn swaps the last player in the array
         // with the current one so we need to decrease i to check the same index again
         for (size_t i = 0; i < map->playerCount; i++) {
             client_close_script(map->players[i].client);
-            if (client_warp(map->players[i].client, room_get_id(room) == 101000301 ? 200090010 : 200090000, 0))
+            if (client_warp(map->players[i].client, room_get_id(map->room) == 101000301 ? 200090010 : 200090000, 0))
                 i--;
         }
     }
-
-    return 0;
 }
 
-static int end_sailing(struct Room *room, int fd, int status)
+static void end_sailing(void *ctx)
 {
-    struct Map *map = room_get_context(room);
-    uint64_t one;
-    read(fd, &one, sizeof(uint64_t));
+    struct Map *map = ctx;
     int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_BOAT), EVENT_BOAT_PROPERTY_SAILING);
     if (state == 0) {
         // There is no suspending script when on the sail map so client_close_script() is unnecessary
         for (size_t i = 0; i < map->playerCount; i++) {
-            if (client_warp(map->players[i].client, room_get_id(room) / 10 == 20009001 ? 200000100 : 101000300, 0))
+            if (client_warp(map->players[i].client, room_get_id(map->room) / 10 == 20009001 ? 200000100 : 101000300, 0))
                 i--;
         }
     }
-
-    return 0;
-
 }
 
-static int dock_undock_train(struct Room *room, int fd, int status)
+static void dock_undock_train(void *ctx)
 {
-    struct Map *map = room_get_context(room);
-    uint64_t one;
-    read(fd, &one, sizeof(uint64_t));
+    struct Map *map = ctx;
     int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_TRAIN), EVENT_TRAIN_PROPERTY_SAILING);
     if (state != 1) {
         uint8_t packet[BOAT_PACKET_LENGTH];
@@ -1922,50 +1854,38 @@ static int dock_undock_train(struct Room *room, int fd, int status)
         } else if (state == 0) {
             boat_packet(true, packet);
         }
-        room_broadcast(room, BOAT_PACKET_LENGTH, packet);
+        room_broadcast(map->room, BOAT_PACKET_LENGTH, packet);
     }
-
-    return 0;
 }
 
-static int start_train(struct Room *room, int fd, int status)
+static void start_train(void *ctx)
 {
-    struct Map *map = room_get_context(room);
-    uint64_t one;
-    read(fd, &one, sizeof(uint64_t));
+    struct Map *map = ctx;
     int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_TRAIN), EVENT_TRAIN_PROPERTY_SAILING);
     if (state == 2) {
         for (size_t i = 0; i < map->playerCount; i++) {
             client_close_script(map->players[i].client);
-            if (client_warp(map->players[i].client, room_get_id(room) == 200000122 ? 200090100 : 200090110, 0))
+            if (client_warp(map->players[i].client, room_get_id(map->room) == 200000122 ? 200090100 : 200090110, 0))
                 i--;
         }
     }
-
-    return 0;
 }
 
-static int end_train(struct Room *room, int fd, int status)
+static void end_train(void *ctx)
 {
-    struct Map *map = room_get_context(room);
-    uint64_t one;
-    read(fd, &one, sizeof(uint64_t));
+    struct Map *map = ctx;
     int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_TRAIN), EVENT_TRAIN_PROPERTY_SAILING);
     if (state == 0) {
         for (size_t i = 0; i < map->playerCount; i++) {
-            if (client_warp(map->players[i].client, room_get_id(room) == 200090100 ? 220000110 : 200000100, 0))
+            if (client_warp(map->players[i].client, room_get_id(map->room) == 200090100 ? 220000110 : 200000100, 0))
                 i--;
         }
     }
-
-    return 0;
 }
 
-static int dock_undock_genie(struct Room *room, int fd, int status)
+static void dock_undock_genie(void *ctx)
 {
-    struct Map *map = room_get_context(room);
-    uint64_t one;
-    read(fd, &one, sizeof(uint64_t));
+    struct Map *map = ctx;
     int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_GENIE), EVENT_GENIE_PROPERTY_SAILING);
     if (state != 1) {
         uint8_t packet[BOAT_PACKET_LENGTH];
@@ -1974,103 +1894,79 @@ static int dock_undock_genie(struct Room *room, int fd, int status)
         } else if (state == 0) {
             boat_packet(true, packet);
         }
-        room_broadcast(room, BOAT_PACKET_LENGTH, packet);
+        room_broadcast(map->room, BOAT_PACKET_LENGTH, packet);
     }
-
-    return 0;
 }
 
-static int start_genie(struct Room *room, int fd, int status)
+static void start_genie(void *ctx)
 {
-    struct Map *map = room_get_context(room);
-    uint64_t one;
-    read(fd, &one, sizeof(uint64_t));
+    struct Map *map = ctx;
     int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_GENIE), EVENT_GENIE_PROPERTY_SAILING);
     if (state == 2) {
         for (size_t i = 0; i < map->playerCount; i++) {
             client_close_script(map->players[i].client);
-            if (client_warp(map->players[i].client, room_get_id(room) == 200000152 ? 200090400 : 200090410, 0))
+            if (client_warp(map->players[i].client, room_get_id(map->room) == 200000152 ? 200090400 : 200090410, 0))
                 i--;
         }
     }
-
-    return 0;
 }
 
-static int end_genie(struct Room *room, int fd, int status)
+static void end_genie(void *ctx)
 {
-    struct Map *map = room_get_context(room);
-    uint64_t one;
-    read(fd, &one, sizeof(uint64_t));
+    struct Map *map = ctx;
     int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_GENIE), EVENT_GENIE_PROPERTY_SAILING);
     if (state == 0) {
         for (size_t i = 0; i < map->playerCount; i++) {
-            if (client_warp(map->players[i].client, room_get_id(room) == 200090400 ? 260000100 : 200000100, 0))
+            if (client_warp(map->players[i].client, room_get_id(map->room) == 200090400 ? 260000100 : 200000100, 0))
                 i--;
         }
     }
-
-    return 0;
 }
 
-static int dock_undock_subway(struct Room *room, int fd, int status)
+static void dock_undock_subway(void *ctx)
 {
-    struct Map *map = room_get_context(room);
-    uint64_t one;
-    read(fd, &one, sizeof(uint64_t));
+    struct Map *map = ctx;
     int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_SUBWAY), EVENT_SUBWAY_PROPERTY_SAILING);
     if (state != 1) {
         uint8_t packet[PLAY_SOUND_PACKET_MAX_LENGTH];
         const char *sound = "subway/whistle";
         size_t len = play_sound_packet(strlen(sound), sound, packet);
-        room_broadcast(room, len, packet);
+        room_broadcast(map->room, len, packet);
     }
-
-    return 0;
 }
 
-static int start_subway(struct Room *room, int fd, int status)
+static void start_subway(void *ctx)
 {
-    struct Map *map = room_get_context(room);
-    uint64_t one;
-    read(fd, &one, sizeof(uint64_t));
+    struct Map *map = ctx;
     int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_SUBWAY), EVENT_SUBWAY_PROPERTY_SAILING);
     if (state == 2) {
         for (size_t i = 0; i < map->playerCount; i++) {
             client_close_script(map->players[i].client);
-            if (client_warp(map->players[i].client, room_get_id(room) == 600010004 ? 600010005 : 600010003, 0))
+            if (client_warp(map->players[i].client, room_get_id(map->room) == 600010004 ? 600010005 : 600010003, 0))
                 i--;
         }
     }
-
-    return 0;
 }
 
-static int end_subway(struct Room *room, int fd, int status)
+static void end_subway(void *ctx)
 {
-    struct Map *map = room_get_context(room);
-    uint64_t one;
-    read(fd, &one, sizeof(uint64_t));
+    struct Map *map = ctx;
     int32_t state = event_get_property(channel_server_get_event(map->server, EVENT_SUBWAY), EVENT_SUBWAY_PROPERTY_SAILING);
     if (state == 0) {
         for (size_t i = 0; i < map->playerCount; i++) {
             client_close_script(map->players[i].client);
-            if (client_warp(map->players[i].client, room_get_id(room) == 600010005 ? 600010001 : 103000100, 0))
+            if (client_warp(map->players[i].client, room_get_id(map->room) == 600010005 ? 600010001 : 103000100, 0))
                 i--;
         }
     }
-
-    return 0;
 }
 
-static int respawn_boss(struct Room *room, int fd, int status)
+static void respawn_boss(void *ctx)
 {
-    struct Map *map = room_get_context(room);
-    uint64_t one;
-    read(fd, &one, sizeof(uint64_t));
-    event_area_boss_register(room_get_id(room));
+    struct Map *map = ctx;
+    event_area_boss_register(room_get_id(map->room));
     if (map->boss.monster.oid == -1) {
-        room_keep_alive(room);
+        room_keep_alive(map->room);
 
         struct MapObject *obj = object_list_allocate(&map->objectList);
         obj->type = MAP_OBJECT_BOSS;
@@ -2193,10 +2089,8 @@ static int respawn_boss(struct Room *room, int fd, int status)
         }
         uint8_t packet[SERVER_NOTICE_PACKET_MAX_LENGTH];
         size_t len = server_notice_packet(strlen(msg), msg, packet);
-        room_broadcast(room, len, packet);
+        room_broadcast(map->room, len, packet);
     }
-
-    return 0;
 }
 
 static void map_kill_monster(struct Map *map, uint32_t oid)
@@ -2235,7 +2129,7 @@ static void map_destroy_reactor(struct Map *map, uint32_t oid)
     destroy_reactor_packet(oid, reactor->state, wz_get_reactors_for_map(room_get_id(map->room), NULL)[object->index].pos.x, wz_get_reactors_for_map(room_get_id(map->room), NULL)[object->index].pos.y, packet);
     room_broadcast(map->room, DESTROY_REACTOR_PACKET_LENGTH, packet);
 
-    room_add_timer(map->room, 3000, on_respawn_reactor, reactor, true);
+    room_add_timer(map->room, 3000, on_respawn_reactor, reactor);
 }
 
 static bool map_calculate_drop_position(struct Map *map, struct Point *p)
@@ -2324,7 +2218,7 @@ static void on_next_drop(struct Room *room, struct TimerHandle *handle)
     if (batch->current < batch->count) {
         if (batch->owner != NULL && client_is_auto_pickup_enabled(batch->owner->client))
             do_client_auto_pickup(map, batch->owner->client, drop);
-        batch->timer = room_add_timer(map->room, 200, on_next_drop, batch, true);
+        batch->timer = room_add_timer(map->room, 200, on_next_drop, batch);
     } else {
         if (map->dropBatchEnd == map->dropBatchCapacity) {
             void *temp = realloc(map->dropBatches, (map->dropBatchCapacity * 2) * sizeof(struct DropBatch *));
@@ -2347,7 +2241,7 @@ static void on_next_drop(struct Room *room, struct TimerHandle *handle)
         map->dropBatches[map->dropBatchEnd] = malloc(sizeof(struct DropBatch) + batch->count * sizeof(struct Drop));
         map->dropBatchEnd++;
         struct DropBatch *new = map->dropBatches[map->dropBatchEnd - 1];
-        new->timer = room_add_timer(map->room, 15 * 1000, on_exclusive_drop_time_expired, NULL, true);
+        new->timer = room_add_timer(map->room, 15 * 1000, on_exclusive_drop_time_expired, NULL);
 
         if (batch->owner != NULL) {
             batch->owner->droppings[batch->indexInPlayer] = batch->owner->droppings[batch->owner->droppingCount - 1];
@@ -2415,7 +2309,7 @@ static void on_exclusive_drop_time_expired(struct Room *room, struct TimerHandle
 
     (*batch)->exclusive = false;
 
-    (*batch)->timer = room_add_timer(room, 285 * 1000, on_drop_time_expired, NULL, true);
+    (*batch)->timer = room_add_timer(room, 285 * 1000, on_drop_time_expired, NULL);
 }
 
 static void on_drop_time_expired(struct Room *room, struct TimerHandle *handle)
@@ -2483,16 +2377,15 @@ static void on_drop_time_expired(struct Room *room, struct TimerHandle *handle)
 
 #define MIN(x, y) ((x) < (y) ? (x) : (y))
 
-static void on_respawn(struct Room *room, struct TimerHandle *handle)
+static void on_respawn(void *ctx)
 {
-    struct Map *map = room_get_context(room);
+    struct Map *map = ctx;
 
     size_t maxSpawnCount = ceil((0.7 + (0.05 * MIN(6, map->playerCount))) * map->spawnerCount);
 
     struct ControllerHeapNode *next = heap_top(&map->heap);
     size_t count = 0;
     while (map->monsterCount < maxSpawnCount) {
-
         if (map->monsterCount == map->monsterCapacity) {
             struct MapMonster *temp = realloc(map->monsters, (map->monsterCapacity * 2) * sizeof(struct MapMonster));
             if (temp == NULL)
@@ -2553,8 +2446,6 @@ static void on_respawn(struct Room *room, struct TimerHandle *handle)
         spawn_monster_controller_packet(monster->oid, false, monster->id, monster->x, monster->y, monster->fh, true, packet);
         session_write(client_get_session(next->controller->client), SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH, packet);
     }
-
-    map->respawnHandle = room_add_timer(map->room, 10 * 1000, on_respawn, NULL, false);
 }
 
 static void on_respawn_reactor(struct Room *room, struct TimerHandle *handle)
