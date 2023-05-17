@@ -222,7 +222,6 @@ struct WorkerCommand {
     union {
         // NEW_CLIENT
         struct {
-            int fd;
             int tfd;
             struct Session *session;
         } new;
@@ -751,7 +750,6 @@ void do_transfer(struct Session *session)
         struct ChannelServer *server = session->supervisor;
         struct WorkerCommand *transfer = malloc(sizeof(struct WorkerCommand));
         transfer->type = WORKER_COMMAND_NEW_CLIENT;
-        transfer->new.fd = bufferevent_getfd(session->event);
         transfer->new.tfd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
         transfer->new.session = session;
 
@@ -759,9 +757,10 @@ void do_transfer(struct Session *session)
         struct itimerspec tm = { .it_value = { .tv_sec = 5 * 60 }, .it_interval = { .tv_sec = 5 * 60 } };
         timerfd_settime(transfer->new.tfd, 0, &tm, &tm);
 
-        struct bufferevent *event = session->event;
         struct sockaddr_storage addr = session->addr;
         uint32_t id = session->id;
+
+        bufferevent_disable(session->event, EV_READ | EV_WRITE);
 
         bool sent;
         {
@@ -798,7 +797,6 @@ void do_transfer(struct Session *session)
             hash_set_u32_insert(server->worker.sessions, &new);
             mtx_unlock(server->worker.sessionsLock);
 
-            bufferevent_free(event);
             hash_set_addr_remove(server->sessions, (void *)&addr);
         } else {
             close(transfer->new.tfd);
@@ -810,16 +808,16 @@ void do_transfer(struct Session *session)
 
         struct WorkerCommand *transfer = malloc(sizeof(struct WorkerCommand));
         transfer->type = WORKER_COMMAND_NEW_CLIENT;
-        transfer->new.fd = bufferevent_getfd(session->event);
         transfer->new.tfd = event_get_fd(session->timer);
         transfer->new.session = session;
 
         struct Room *room = session->room;
 
         struct event *timer = session->timer;
-        struct bufferevent *event = session->event;
         uint32_t id = session->id;
         uint32_t room_id = session->targetRoom;
+
+        bufferevent_disable(session->event, EV_READ | EV_WRITE);
 
         size_t thread;
         mtx_lock(manager->worker.roomMapLock);
@@ -855,7 +853,6 @@ void do_transfer(struct Session *session)
 
         if (sent) {
             event_free(timer);
-            bufferevent_free(event);
             hash_set_u32_remove(room->sessions, id);
             if (room->timerCount == 0 && hash_set_u32_size(room->sessions) == 0 && !room->keepAlive)
                 destroy_room(room);
@@ -1335,6 +1332,7 @@ static void on_session_connect(struct evconnlistener *listener, evutil_socket_t 
 }
 
 static void on_login_server_read(struct bufferevent *bev, void *ctx);
+static void on_login_server_write(struct bufferevent *bev, void *ctx);
 static void on_login_server_event(struct bufferevent *bev, short what, void *ctx);
 
 static void on_login_server_connect(struct evconnlistener *listener, evutil_socket_t fd,
@@ -1353,7 +1351,7 @@ static void on_login_server_connect(struct evconnlistener *listener, evutil_sock
     if (server->isUnix)
         unlink(((struct sockaddr_un *)&server->addr)->sun_path);
 
-    bufferevent_setcb(*server->worker.login, on_login_server_read, NULL, on_login_server_event, ctx);
+    bufferevent_setcb(*server->worker.login, on_login_server_read, on_login_server_write, on_login_server_event, ctx);
     bufferevent_enable(*server->worker.login, EV_READ | EV_WRITE);
 
     bufferevent_write(*server->worker.login, &server->first, 1);
@@ -1429,6 +1427,18 @@ static void on_login_server_read(struct bufferevent *bev, void *ctx)
             bufferevent_write(bev, data, 5);
         }
     }
+}
+
+static void on_login_server_write(struct bufferevent *bev, void *ctx)
+{
+    struct ChannelServer *server = ctx;
+    mtx_lock(server->worker.lock);
+    while (*server->worker.head != NULL) {
+        struct LoggedOutNode *next = (*server->worker.head)->next;
+        free(*server->worker.head);
+        *server->worker.head = next;
+    }
+    mtx_unlock(server->worker.lock);
 }
 
 static void on_login_server_event(struct bufferevent *bev, short what, void *ctx)
@@ -1545,9 +1555,8 @@ static void on_session_join(int fd, short what, void *ctx_)
                     ; // TODO
             }
 
-            session->event = bufferevent_socket_new(manager->worker.base, cmd->new.fd, 0);
-            if (session->event == NULL)
-                ; // TODO
+            bufferevent_base_set(manager->worker.base, session->event);
+            bufferevent_enable(session->event, EV_READ | EV_WRITE);
             session->event = bufferevent_filter_new(session->event, input_filter, output_filter, 0, NULL, session);
             if (session->event == NULL)
                 ; // TODO
@@ -1674,9 +1683,7 @@ static enum bufferevent_filter_result input_filter(struct evbuffer *src, struct 
 
     evbuffer_drain(src, 4);
 
-    uint8_t *data = malloc(packet_len);
-    if (data == NULL)
-        return BEV_ERROR;
+    uint8_t data[packet_len];
 
     evbuffer_remove(src, data, packet_len);
     decryption_context_decrypt(session->recieveContext, packet_len, data);
@@ -1686,9 +1693,11 @@ static enum bufferevent_filter_result input_filter(struct evbuffer *src, struct 
         printf("%02X ", data[i]);
     printf("\n\n");
 
-    evbuffer_add(dst, &packet_len, sizeof(uint16_t));
-    evbuffer_add(dst, data, packet_len);
-    free(data);
+    struct iovec vec[2] = {
+        { &packet_len, sizeof(uint16_t) },
+        { data, packet_len }
+    };
+    evbuffer_add_iovec(dst, vec, 2);
 
     return BEV_OK;
 }
@@ -1705,10 +1714,10 @@ static enum bufferevent_filter_result output_filter(struct evbuffer *src, struct
 
     evbuffer_drain(src, 2);
 
-    uint8_t data[65535];
-
     uint8_t header[4];
     encryption_context_header(session->sendContext, packet_len, header);
+
+    uint8_t data[packet_len];
 
     evbuffer_remove(src, data, packet_len);
 
@@ -1719,8 +1728,11 @@ static enum bufferevent_filter_result output_filter(struct evbuffer *src, struct
 
     encryption_context_encrypt(session->sendContext, packet_len, data);
 
-    evbuffer_add(dst, header, 4);
-    evbuffer_add(dst, data, packet_len);
+    struct iovec vec[2] = {
+        { header, 4 },
+        { data, packet_len }
+    };
+    evbuffer_add_iovec(dst, vec, 2);
 
     return BEV_OK;
 }
@@ -1935,14 +1947,17 @@ static void destroy_pending_session(struct Session *session)
         uint8_t data[5];
         data[0] = 1;
         memcpy(data + 1, &session->id, 4);
+        struct LoggedOutNode *new = malloc(sizeof(struct LoggedOutNode));
+        if (new == NULL)
+            ; // TODO
+
+        new->token = session->id;
+
         mtx_lock(server->worker.lock);
-        if (!*server->worker.connected || bufferevent_write(*server->worker.login, data, 5) == -1) {
-            struct LoggedOutNode *new = malloc(sizeof(struct LoggedOutNode));
-            if (new != NULL) {
-                new->next = *server->worker.head;
-                new->token = session->id;
-                *server->worker.head = new;
-            }
+        new->next = *server->worker.head;
+        *server->worker.head = new;
+        if (*server->worker.connected) {
+            bufferevent_write(*server->worker.login, data, 5);
         }
         mtx_unlock(server->worker.lock);
     }
