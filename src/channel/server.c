@@ -1243,6 +1243,19 @@ struct TimerHandle *room_add_timer(struct Room *room, uint64_t msec, void (*f)(s
     return handle;
 }
 
+void room_stop_timer(struct TimerHandle *timer)
+{
+    struct Room *room = timer->room;
+    room->timers[timer->index] = room->timers[room->timerCount - 1];
+    room->timers[timer->index]->index = timer->index;
+    room->timerCount--;
+    event_free(timer->event);
+    free(timer);
+
+    if (room->timerCount == 0 && hash_set_u32_size(room->sessions) == 0 && !room->keepAlive)
+        destroy_room(room);
+}
+
 struct Room *timer_get_room(struct TimerHandle *handle)
 {
     return handle->room;
@@ -1456,25 +1469,12 @@ static void on_timer_expired(int fd, short what, void *ctx)
 {
     struct TimerHandle *handle = ctx;
     struct Room *room = handle->room;
-    struct RoomManager *manager = room->manager;
     handle->f(room, handle);
     room->timers[handle->index] = room->timers[room->timerCount - 1];
     room->timers[handle->index]->index = handle->index;
     room->timerCount--;
-    if (room->timerCount == 0 && hash_set_u32_size(room->sessions) == 0 && !room->keepAlive) {
+    if (room->timerCount == 0 && hash_set_u32_size(room->sessions) == 0 && !room->keepAlive)
         destroy_room(room);
-        manager->onRoomDestroy(handle->room);
-        free(room->timers);
-        hash_set_u32_remove(manager->rooms, room->id);
-
-        hash_set_u32_destroy(room->sessions);
-
-        mtx_lock(manager->worker.roomMapLock);
-        hash_set_u32_remove(manager->worker.roomMap, room->id);
-        mtx_unlock(manager->worker.roomMapLock);
-
-        free(room);
-    }
 
     event_free(handle->event);
     free(handle);

@@ -2948,7 +2948,7 @@ static void on_quest_act_start(void *user_data, const XML_Char *name, const XML_
                 ctx->skip++;
                 if (!strcmp(key, "id")) {
                     act->skill.skills[act->skill.count].id = strtol(value, NULL, 10);
-                } else if (!strcmp(key, "level")) {
+                } else if (!strcmp(key, "skillLevel")) {
                     act->skill.skills[act->skill.count].level = strtol(value, NULL, 10);
                 } else if (!strcmp(key, "masterLevel")) {
                     act->skill.skills[act->skill.count].masterLevel = strtol(value, NULL, 10);

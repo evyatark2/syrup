@@ -844,6 +844,7 @@ static void on_client_packet(struct Session *session, size_t size, uint8_t *pack
 
             drop.x = chr->x;
             drop.y = chr->y;
+            drop.qid = 0;
             if (inventory != 1) {
                 drop.type = DROP_TYPE_ITEM;
                 bool success;

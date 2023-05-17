@@ -136,6 +136,7 @@ struct DropBatch {
 
 struct Map {
     struct Room *room;
+    uint32_t respawnListener;
     uint32_t listener;
     struct ChannelServer *server;
     size_t playerCapacity;
@@ -407,7 +408,7 @@ struct Map *map_create(struct ChannelServer *server, struct Room *room, struct S
 
     map->boss.monster.oid = -1;
 
-    event_add_listener(channel_server_get_event(server, EVENT_GLOBAL_RESPAWN), room_get_base(room), 0, on_respawn, map);
+    map->respawnListener = event_add_listener(channel_server_get_event(server, EVENT_GLOBAL_RESPAWN), room_get_base(room), 0, on_respawn, map);
 
     uint32_t id = room_get_id(room);
     if (id == 101000300 || id == 200000111 ) {
@@ -646,6 +647,7 @@ struct Map *map_create(struct ChannelServer *server, struct Room *room, struct S
 
 void map_destroy(struct Map *map)
 {
+    event_remove_listener(channel_server_get_event(map->server, EVENT_GLOBAL_RESPAWN), 0, map->respawnListener);
     uint32_t id = room_get_id(map->room);
     if (id == 101000300 || id == 101000301 || id / 10 == 20009001 || id == 200000111 || id == 200000112 || id / 10 == 20009000) {
         event_remove_listener(channel_server_get_event(map->server, EVENT_BOAT), EVENT_BOAT_PROPERTY_SAILING, map->listener);
@@ -1728,6 +1730,7 @@ void map_remove_drop(struct Map *map, uint32_t char_id, uint32_t oid)
                     batch->owner->dropCapacity /= 2;
                 }
             }
+            room_stop_timer(batch->timer);
             free(batch);
             map->dropBatches[batch_index] = NULL;
         }
@@ -2422,16 +2425,22 @@ static void on_respawn(void *ctx)
         map->monsters[map->monsterCount].monster.fh = map->spawners[i].fh;
         map->monsters[map->monsterCount].monster.hp = wz_get_monster_stats(map->spawners[i].id)->hp;
         map->monsters[map->monsterCount].spawnerIndex = i;
-        map->monsters[map->monsterCount].controller = next->controller;
-        map->monsters[map->monsterCount].indexInController = next->controller->monsterCount;
-        next->controller->monsters[next->controller->monsterCount] = &map->monsters[map->monsterCount];
-        next->controller->monsterCount++;
+        if (next != NULL) {
+            map->monsters[map->monsterCount].controller = next->controller;
+            map->monsters[map->monsterCount].indexInController = next->controller->monsterCount;
+            next->controller->monsters[next->controller->monsterCount] = &map->monsters[map->monsterCount];
+            next->controller->monsterCount++;
+        } else {
+            map->monsters[map->monsterCount].controller = NULL;
+        }
+
         map->monsterCount++;
         count++;
         map->deadCount--;
     }
 
-    heap_inc(&map->heap, count);
+    if (next != NULL)
+        heap_inc(&map->heap, count);
 
     for (size_t i = map->monsterCount - count; i < map->monsterCount; i++) {
         const struct Monster *monster = &map->monsters[i].monster;
@@ -2440,11 +2449,13 @@ static void on_respawn(void *ctx)
         room_broadcast(map->room, SPAWN_MONSTER_PACKET_LENGTH, packet);
     }
 
-    for (size_t i = map->monsterCount - count; i < map->monsterCount; i++) {
-        const struct Monster *monster = &map->monsters[i].monster;
-        uint8_t packet[SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH];
-        spawn_monster_controller_packet(monster->oid, false, monster->id, monster->x, monster->y, monster->fh, true, packet);
-        session_write(client_get_session(next->controller->client), SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH, packet);
+    if (next != NULL) {
+        for (size_t i = map->monsterCount - count; i < map->monsterCount; i++) {
+            const struct Monster *monster = &map->monsters[i].monster;
+            uint8_t packet[SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH];
+            spawn_monster_controller_packet(monster->oid, false, monster->id, monster->x, monster->y, monster->fh, true, packet);
+            session_write(client_get_session(next->controller->client), SPAWN_MONSTER_CONTROLLER_PACKET_LENGTH, packet);
+        }
     }
 }
 

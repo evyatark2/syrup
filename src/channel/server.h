@@ -94,6 +94,7 @@ void event_schedule(struct Event *e, void f(struct Event *, void *), void *ctx, 
 
 struct TimerHandle;
 struct TimerHandle *room_add_timer(struct Room *room, uint64_t msec, void (*f)(struct Room *, struct TimerHandle *), void *data);
+void room_stop_timer(struct TimerHandle *timer);
 struct Room *timer_get_room(struct TimerHandle *handle);
 void timer_set_data(struct TimerHandle *handle, void *data);
 void *timer_get_data(struct TimerHandle *handle);
