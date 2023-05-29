@@ -41,6 +41,7 @@ struct DatabaseItem {
     char giver[CHARACTER_MAX_NAME_LENGTH];
 };
 
+// Represents a row in `Equipment`
 struct DatabaseEquipment {
     uint64_t id;
     struct DatabaseItem item;
@@ -61,6 +62,12 @@ struct DatabaseEquipment {
     int16_t hands;
     int16_t speed;
     int16_t jump;
+};
+
+// Represents a row in `CharacterEquipment`
+struct DatabaseCharacterEquipment {
+    uint64_t id;
+    struct DatabaseEquipment equip;
 };
 
 struct DatabaseProgress {
@@ -180,15 +187,14 @@ struct RequestParams {
             uint8_t setupSlots;
             uint8_t etcSlots;
             size_t equippedCount;
-            struct DatabaseEquipment equippedEquipment[EQUIP_SLOT_COUNT];
+            struct DatabaseCharacterEquipment equippedEquipment[EQUIP_SLOT_COUNT];
             size_t equipCount;
             struct {
                 uint8_t slot;
-                struct DatabaseEquipment equip;
+                struct DatabaseCharacterEquipment equip;
             } equipmentInventory[252];
             size_t itemCount;
             struct {
-                uint64_t id;
                 uint8_t slot;
                 int16_t count;
                 struct DatabaseItem item;
@@ -369,15 +375,14 @@ union DatabaseResult {
         uint8_t setupSlots;
         uint8_t etcSlots;
         size_t equippedCount;
-        struct DatabaseEquipment equippedEquipment[EQUIP_SLOT_COUNT];
+        struct DatabaseCharacterEquipment equippedEquipment[EQUIP_SLOT_COUNT];
         size_t equipCount;
         struct {
             uint8_t slot;
-            struct DatabaseEquipment equip;
+            struct DatabaseCharacterEquipment equip;
         } equipmentInventory[252];
         size_t itemCount;
         struct {
-            uint64_t id;
             uint8_t slot;
             int16_t count;
             struct DatabaseItem item;

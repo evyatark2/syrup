@@ -25,10 +25,14 @@ struct Room;
 
 struct Event;
 
+struct UserEvent;
+
 typedef void OnLog(enum LogType type, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)));
 
 typedef void VoidFunc(void);
+
+typedef void OnResumeEvent(void *ctx, int fd, int status);
 
 typedef void OnResume(struct Session *session, int fd, int status);
 
@@ -68,6 +72,7 @@ void *session_get_context(struct Session *session);
 int session_get_event_disposition(struct Session *session);
 int session_get_event_fd(struct Session *session);
 int session_set_event(struct Session *session, int status, int fd, OnResume *on_resume);
+struct UserEvent *session_add_event(struct Session *session, int status, int fd, OnResumeEvent *on_resume, void *ctx);
 int session_close_event(struct Session *session);
 struct Room *session_get_room(struct Session *session);
 void session_broadcast_to_room(struct Session *session, size_t len, uint8_t *packet);
@@ -98,6 +103,8 @@ void room_stop_timer(struct TimerHandle *timer);
 struct Room *timer_get_room(struct TimerHandle *handle);
 void timer_set_data(struct TimerHandle *handle, void *data);
 void *timer_get_data(struct TimerHandle *handle);
+
+struct UserEvent *user_event_add_event(struct UserEvent *ev, int status, int fd, OnResumeEvent *on_resume, void *ctx);
 
 #endif
 

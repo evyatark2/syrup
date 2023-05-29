@@ -32,7 +32,6 @@ struct Session {
     void *supervisor;
     uint32_t id;
     struct Room *room;
-    bool disconnecting;
     struct bufferevent *event;
     struct event *timer;
     struct EncryptionContext *sendContext;
@@ -43,8 +42,10 @@ struct Session {
     uint32_t targetRoom;
     void *userData;
     jmp_buf jmp;
+    bool disconnecting;
 };
 
+static void shutdown_session(struct Session *session);
 static enum bufferevent_filter_result input_filter(struct evbuffer *src, struct evbuffer *dst, ev_ssize_t size, enum bufferevent_flush_mode mode, void *ctx);
 static enum bufferevent_filter_result output_filter(struct evbuffer *src, struct evbuffer *dst, ev_ssize_t size, enum bufferevent_flush_mode mode, void *ctx);
 static void on_session_read(struct bufferevent *event, void *ctx_);
@@ -80,9 +81,14 @@ struct Property {
 
 struct Event {
     struct HashSetU32 *properties;
-    int fd;
-    struct event *event;
+    struct event *timer;
     void (*f)(struct Event *, void *);
+    void *ctx;
+};
+
+struct UserEvent {
+    struct event *event;
+    OnResumeEvent *onResume;
     void *ctx;
 };
 
@@ -233,6 +239,7 @@ struct WorkerCommand {
         // NEW_CLIENT
         struct {
             struct Session *session;
+            struct timeval timeout;
         } new;
         // KICK
         struct {
@@ -251,9 +258,10 @@ struct WorkerCommand {
 
 static int start_worker(void *ctx_);
 
-static void on_session_join(int fd, short what, void *ctx_);
-static void on_greeter_user_fd_ready(int fd, short what, void *ctx);
-static void on_worker_user_fd_ready(int fd, short what, void *ctx);
+static void on_worker_command(int fd, short what, void *ctx_);
+static void on_user_fd_ready(int fd, short what, void *ctx);
+static void on_pending_session_user_fd_ready(int fd, short what, void *ctx);
+static void on_session_user_fd_ready(int fd, short what, void *ctx);
 
 static struct Session *create_session(struct ChannelServer *server, int fd, struct sockaddr *addr, int socklen);
 static void destroy_pending_session(struct Session *session);
@@ -352,7 +360,11 @@ struct ChannelServer *channel_server_create(uint16_t port, OnLog *on_log, const 
         goto free_sinks;
 
     server->commandSink = pipefds[1];
-    server->commandEvent = event_new(server->worker.base, pipefds[0], EV_READ | EV_PERSIST, on_command, server);
+    server->commandEvent = event_new(server->worker.base,
+                                     pipefds[0],
+                                     EV_READ | EV_PERSIST,
+                                     on_command,
+                                     server);
     if (server->commandEvent == NULL) {
         close(pipefds[0]);
         goto close_command;
@@ -371,7 +383,8 @@ struct ChannelServer *channel_server_create(uint16_t port, OnLog *on_log, const 
         if (socketpair(AF_UNIX, SOCK_STREAM, 0, pair) == -1)
             goto exit_threads;
 
-        if (mtx_init(&server->worker.transportMuteces[server->threadCount], mtx_plain) != thrd_success) {
+        if (mtx_init(&server->worker.transportMuteces[server->threadCount],
+                     mtx_plain) != thrd_success) {
             close(pair[0]);
             close(pair[1]);
             goto exit_threads;
@@ -406,7 +419,11 @@ struct ChannelServer *channel_server_create(uint16_t port, OnLog *on_log, const 
             goto exit_threads;
         }
 
-        manager->worker.transportEvent = event_new(manager->worker.base, pair[0], EV_READ | EV_PERSIST, on_session_join, manager);
+        manager->worker.transportEvent = event_new(manager->worker.base,
+                                                   pair[0],
+                                                   EV_READ | EV_PERSIST,
+                                                   on_worker_command,
+                                                   manager);
         if (manager->worker.transportEvent == NULL) {
             event_base_free(manager->worker.base);
             destroy_user_ctx(manager->worker.userData);
@@ -428,7 +445,8 @@ struct ChannelServer *channel_server_create(uint16_t port, OnLog *on_log, const 
             goto exit_threads;
         }
 
-        manager->rooms = hash_set_u32_create(sizeof(struct RoomId), offsetof(struct RoomId, id));
+        manager->rooms = hash_set_u32_create(sizeof(struct RoomId),
+                                            offsetof(struct RoomId, id));
         if (manager->rooms == NULL) {
             event_free(manager->worker.transportEvent);
             event_base_free(manager->worker.base);
@@ -477,18 +495,18 @@ struct ChannelServer *channel_server_create(uint16_t port, OnLog *on_log, const 
     if (server->events == NULL)
         goto exit_threads;
 
-    for (server->eventCount = 0; server->eventCount < event_count; server->eventCount++) {
-        server->events[server->eventCount].fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
-        if (server->events[server->eventCount].fd == -1)
+    for (server->eventCount = 0;
+         server->eventCount < event_count;
+         server->eventCount++) {
+        struct Event *event = &server->events[server->eventCount];
+        event->timer = evtimer_new(server->worker.base, on_event, event);
+        if (event->timer == NULL)
             goto free_events;
 
-        server->events[server->eventCount].event = event_new(server->worker.base, server->events[server->eventCount].fd, EV_READ | EV_PERSIST, on_event, &server->events[server->eventCount]);
-
-        event_add(server->events[server->eventCount].event, NULL);
-
-        server->events[server->eventCount].properties = hash_set_u32_create(sizeof(struct Property), offsetof(struct Property, id));
-        if (server->events[server->eventCount].properties == NULL) {
-            close(server->events[server->eventCount].fd);
+        event->properties = hash_set_u32_create(sizeof(struct Property),
+                                               offsetof(struct Property, id));
+        if (event->properties == NULL) {
+            event_free(event->timer);
             goto free_events;
         }
     }
@@ -499,9 +517,8 @@ struct ChannelServer *channel_server_create(uint16_t port, OnLog *on_log, const 
     return server;
 
 free_events:
-    for (size_t i = 0; i < server->eventCount; i++) {
-        close(server->events[i].fd);
-    }
+    for (size_t i = 0; i < server->eventCount; i++)
+        event_free(server->events[i].timer);
 
     free(server->events);
 
@@ -758,28 +775,27 @@ void do_transfer(struct Session *session)
         // This is the first time session_change_room() has been called on this session
         struct ChannelServer *server = session->supervisor;
         struct WorkerCommand *transfer = malloc(sizeof(struct WorkerCommand));
+        bool sent;
+        struct sockaddr_storage addr = session->addr;
+        uint32_t id = session->id;
+
         transfer->type = WORKER_COMMAND_NEW_CLIENT;
         transfer->new.session = session;
 
         session->timer = evtimer_new(server->worker.base, on_session_timer_expired, session);
-        //session->timer = event_new(NULL, int, short, event_callback_fn, void *);
 
-        struct timeval t = {
-            .tv_sec = 5 * 60, .tv_usec = 0
-        };
-        evtimer_add(session->timer, &t);
-        evtimer_del(session->timer);
-
-        struct sockaddr_storage addr = session->addr;
-        uint32_t id = session->id;
+        // This makes the evtimer_pending() time update
+        event_base_gettimeofday_cached(server->worker.base, &transfer->new.timeout);
+        transfer->new.timeout.tv_sec += 5 * 60;
 
         bufferevent_disable(session->event, EV_READ | EV_WRITE);
 
-        bool sent;
         {
-            mtx_lock(server->worker.roomMapLock);
-            struct RoomThread *room_thread = hash_set_u32_get(server->worker.roomMap, session->targetRoom);
+            struct RoomThread *room_thread;
             size_t thread;
+
+            mtx_lock(server->worker.roomMapLock);
+            room_thread = hash_set_u32_get(server->worker.roomMap, session->targetRoom);
             if (room_thread == NULL) {
                 // TODO: Pick the least busy thread
                 struct RoomThread new = {
@@ -812,28 +828,27 @@ void do_transfer(struct Session *session)
 
             hash_set_addr_remove(server->sessions, (void *)&addr);
         } else {
-            if (!setjmp(session->jmp))
-                session_kick(session);
+            shutdown_session(session);
         }
     } else {
         struct RoomManager *manager = session->supervisor;
-
+        struct Room *room = session->room;
+        uint32_t id = session->id;
+        uint32_t room_id = session->targetRoom;
+        size_t thread;
         struct WorkerCommand *transfer = malloc(sizeof(struct WorkerCommand));
+        bool sent;
         transfer->type = WORKER_COMMAND_NEW_CLIENT;
         transfer->new.session = session;
 
-        struct Room *room = session->room;
-
-        uint32_t id = session->id;
-        uint32_t room_id = session->targetRoom;
-
         bufferevent_disable(session->event, EV_READ | EV_WRITE);
-        if (session->userEvent != NULL)
+        if (session->userEvent != NULL) {
             event_del(session->userEvent);
+        } else {
+            evtimer_pending(session->timer, &transfer->new.timeout);
+            event_del(session->timer);
+        }
 
-        event_del(session->timer);
-
-        size_t thread;
         mtx_lock(manager->worker.roomMapLock);
         if (hash_set_u32_get(manager->worker.roomMap, session->targetRoom) == NULL) {
             // TODO: Pick the least busy thread
@@ -858,7 +873,6 @@ void do_transfer(struct Session *session)
         // While this is very unlikely and of course thread 1 eventualy will acquire the lock
         // under virtually every implementation out there,
         // it is better practice to not let the possibilty of it even happening in the first place
-        bool sent;
         mtx_lock(&manager->worker.transportMuteces[thread]);
         sent = write(manager->worker.transportSinks[thread], &transfer, sizeof(struct WorkerCommand *)) != -1;
         mtx_unlock(&manager->worker.transportMuteces[thread]);
@@ -878,15 +892,14 @@ void do_transfer(struct Session *session)
 
             mtx_unlock(manager->worker.sessionsLock);
         } else {
-            if (!setjmp(session->jmp))
-                session_kick(session);
+            shutdown_session(session);
         }
     }
 }
 
 void session_kick(struct Session *session)
 {
-    shutdown(bufferevent_getfd(session->event), SHUT_RD);
+    shutdown_session(session);
     longjmp(session->jmp, 1);
 }
 
@@ -928,7 +941,7 @@ int session_set_event(struct Session *session, int status, int fd, OnResume *on_
     if (session->userEvent != NULL)
         event_free(session->userEvent);
 
-    session->userEvent = event_new(worker->base, fd, poll_to_libevent(status) | EV_PERSIST, session->targetRoom != -1 ? on_worker_user_fd_ready : on_greeter_user_fd_ready, session);
+    session->userEvent = event_new(worker->base, fd, poll_to_libevent(status) | EV_PERSIST, session->targetRoom != -1 ? on_session_user_fd_ready : on_pending_session_user_fd_ready, session);
     if (session->userEvent == NULL)
         return -1;
 
@@ -945,8 +958,35 @@ int session_set_event(struct Session *session, int status, int fd, OnResume *on_
     return 0;
 }
 
+struct UserEvent *session_add_event(struct Session *session, int status, int fd, OnResumeEvent *on_resume, void *ctx)
+{
+    struct Worker *worker = session->supervisor;
+
+    struct UserEvent *event = malloc(sizeof(struct UserEvent));
+    if (event == NULL)
+        return NULL;
+
+    event->event = event_new(worker->base, fd, poll_to_libevent(status), on_user_fd_ready, ctx);
+    if (event->event == NULL) {
+        free(event);
+        return NULL;
+    }
+
+    if (event_add(event->event, NULL) == -1) {
+        event_free(event->event);
+        free(event);
+        return NULL;
+    }
+
+    event->onResume = on_resume;
+    event->ctx = ctx;
+
+    return event;
+}
+
 int session_close_event(struct Session *session)
 {
+    struct Worker *worker = session->supervisor;
     int fd = event_get_fd(session->userEvent);
     event_free(session->userEvent);
     session->userEvent = NULL;
@@ -955,7 +995,7 @@ int session_close_event(struct Session *session)
         struct timeval t;
         evtimer_pending(session->timer, &t);
         struct timeval now;
-        gettimeofday(&now, NULL);
+        event_base_gettimeofday_cached(worker->base, &now);
         t.tv_sec -= now.tv_sec;
         t.tv_usec -= now.tv_usec;
         if (t.tv_usec < 0) {
@@ -1003,6 +1043,11 @@ struct ForeachContext {
     void (*f)(struct Session *src, struct Session *dst, void *ctx);
     void *ctx;
 };
+
+static void shutdown_session(struct Session *session)
+{
+    shutdown(bufferevent_getfd(session->event), SHUT_RD);
+}
 
 static void do_foreach(void *data, void *ctx_)
 {
@@ -1215,11 +1260,11 @@ void event_remove_listener(struct Event *event, uint32_t property, uint32_t list
 
 void event_schedule(struct Event *e, void f(struct Event *, void *), void *ctx, const struct timespec *tm)
 {
-    struct itimerspec spec = {
-        .it_value = *tm,
-        .it_interval = { 0, 0 },
+    struct timeval spec = {
+        .tv_sec = tm->tv_sec,
+        .tv_usec = tm->tv_nsec * 1000
     };
-    timerfd_settime(e->fd, 0, &spec, NULL);
+    evtimer_add(e->timer, &spec);
 
     e->f = f;
     e->ctx = ctx;
@@ -1294,6 +1339,32 @@ void *timer_get_data(struct TimerHandle *handle)
     return handle->data;
 }
 
+struct UserEvent *user_event_add_event(struct UserEvent *ev, int status, int fd, OnResumeEvent *on_resume, void *ctx)
+{
+    struct event_base *base = event_get_base(ev->event);
+
+    struct UserEvent *event = malloc(sizeof(struct UserEvent));
+    if (event == NULL)
+        return NULL;
+
+    event->event = event_new(base, fd, poll_to_libevent(status), on_user_fd_ready, ctx);
+    if (event->event == NULL) {
+        free(event);
+        return NULL;
+    }
+
+    if (event_add(event->event, NULL) == -1) {
+        event_free(event->event);
+        free(event);
+        return NULL;
+    }
+
+    event->onResume = on_resume;
+    event->ctx = ctx;
+
+    return event;
+}
+
 struct RoomContext {
     struct RoomList *list;
     size_t index;
@@ -1310,8 +1381,7 @@ struct Command {
 static void do_pending_kick(void *data, void *ctx)
 {
     struct Session *session = ((struct AddrSession *)data)->session;
-    if (!setjmp(session->jmp))
-        session_kick(session);
+    shutdown_session(session);
 }
 
 static void on_event(int fd, short status, void *ctx)
@@ -1331,8 +1401,7 @@ static void on_command(int fd, short what, void *ctx)
         mtx_unlock(server->worker.lock);
 
         for (size_t i = 0; i < server->eventCount; i++) {
-            event_free(server->events[i].event);
-            close(server->events[i].fd);
+            event_free(server->events[i].timer);
         }
 
         if (*server->worker.login != NULL) {
@@ -1506,8 +1575,7 @@ static void on_timer_expired(int fd, short what, void *ctx)
 static void do_kick(void *data, void *ctx)
 {
     struct Session *session = ((struct IdSession *)data)->session;
-    if (!setjmp(session->jmp))
-        session_kick(session);
+    shutdown_session(session);
 }
 
 static void do_kill_room(void *data, void *ctx)
@@ -1522,7 +1590,7 @@ static void do_kill_room(void *data, void *ctx)
     }
 }
 
-static void on_session_join(int fd, short what, void *ctx_)
+static void on_worker_command(int fd, short what, void *ctx_)
 {
     struct RoomManager *manager = ctx_;
     ssize_t status;
@@ -1538,12 +1606,12 @@ static void on_session_join(int fd, short what, void *ctx_)
         switch (cmd->type) {
         case WORKER_COMMAND_NEW_CLIENT: {
             struct Session *session = cmd->new.session;
+            struct timeval t = cmd->new.timeout;
             free(cmd);
             if (hash_set_u32_get(manager->rooms, session->targetRoom) == NULL) {
                 session->room = create_room(manager, session->targetRoom);
                 if (session->room == NULL) {
-                    if (!setjmp(session->jmp))
-                        session_kick(session);
+                    shutdown_session(session);
                     return;
                 }
 
@@ -1576,21 +1644,29 @@ static void on_session_join(int fd, short what, void *ctx_)
                 ; // TODO
             bufferevent_setcb(session->event, on_session_read, NULL, on_session_event, session);
 
-            event_base_set(manager->worker.base, session->timer);
-            struct timeval t;
-            evtimer_pending(session->timer, &t);
-            struct timeval now;
-            gettimeofday(&now, NULL);
-            t.tv_sec -= now.tv_sec;
-            t.tv_usec -= now.tv_usec;
-            if (t.tv_usec < 0) {
-                t.tv_usec += 1000000;
-                t.tv_sec--;
+            if (session->userEvent != NULL) {
+                event_base_set(manager->worker.base, session->userEvent);
+                event_add(session->userEvent, NULL);
+            } else {
+                struct timeval now;
+                event_base_gettimeofday_cached(manager->worker.base, &now);
+                t.tv_sec -= now.tv_sec;
+                t.tv_usec -= now.tv_usec;
+                if (t.tv_usec < 0) {
+                    t.tv_usec += 1000000;
+                    t.tv_sec--;
+                }
+
+                event_base_set(manager->worker.base, session->timer);
+                evtimer_add(session->timer, &t);
             }
 
-            evtimer_add(session->timer, &t);
-
             session->supervisor = manager;
+            // At this point the client hasn't necessaraly loaded the destination map
+            // and as such sending map-related packets will cause them to crash
+            // so we make sure that room_broadcast() won't send those packets
+            // until we are sure that the client has loaded the map at which point,
+            // session_enable_write() is called
             session->writeEnable = false;
 
             manager->onClientJoin(session, manager->worker.userData);
@@ -1616,8 +1692,7 @@ static void on_session_join(int fd, short what, void *ctx_)
                         struct Session *session = ((struct IdSession *)hash_set_u32_get(room->sessions, cmd->kick.id))->session;
                         free(cmd);
                         //session->id = 0; // Why was this here?
-                        if (!setjmp(session->jmp))
-                            session_kick(session);
+                        shutdown_session(session);
                     }
                 }
 
@@ -1726,7 +1801,11 @@ static enum bufferevent_filter_result input_filter(struct evbuffer *src, struct 
     return BEV_OK;
 }
 
-static enum bufferevent_filter_result output_filter(struct evbuffer *src, struct evbuffer *dst, ev_ssize_t size, enum bufferevent_flush_mode mode, void *ctx)
+static enum bufferevent_filter_result output_filter(struct evbuffer *src,
+                                                    struct evbuffer *dst,
+                                                    ev_ssize_t size,
+                                                    enum bufferevent_flush_mode mode,
+                                                    void *ctx)
 {
     struct Session *session = ctx;
     size_t len = evbuffer_get_length(src);
@@ -1745,7 +1824,9 @@ static enum bufferevent_filter_result output_filter(struct evbuffer *src, struct
 
     evbuffer_remove(src, data, packet_len);
 
-    printf("Sending packet with opcode 0x%04hX to %hu\n", ((uint16_t *)data)[0], ((struct sockaddr_in *)&session->addr)->sin_port);
+    printf("Sending packet with opcode 0x%04hX to %hu\n",
+           ((uint16_t *)data)[0],
+           ((struct sockaddr_in *)&session->addr)->sin_port);
     for (uint16_t i = 0; i < packet_len; i++)
         printf("%02X ", data[i]);
     printf("\n\n");
@@ -1761,7 +1842,7 @@ static enum bufferevent_filter_result output_filter(struct evbuffer *src, struct
     return BEV_OK;
 }
 
-static void on_greeter_user_fd_ready(int fd, short what, void *ctx)
+static void on_pending_session_user_fd_ready(int fd, short what, void *ctx)
 {
     struct Session *session = ctx;
     if (!setjmp(session->jmp)) {
@@ -1771,14 +1852,46 @@ static void on_greeter_user_fd_ready(int fd, short what, void *ctx)
     }
 }
 
-static void on_worker_user_fd_ready(int fd, short what, void *ctx)
+static void on_session_user_fd_ready(int fd, short what, void *ctx)
 {
     struct Session *session = ctx;
+    struct RoomManager *manager = session->supervisor;
     if (!setjmp(session->jmp)) {
         session->onResume(session, fd, libevent_to_poll(what));
-        if (session->userEvent == NULL && session->timer == NULL)
+        if (session->userEvent == NULL && session->timer != NULL) {
+            struct timeval t;
+            struct timeval now;
+            evtimer_pending(session->timer, &t);
+            event_base_gettimeofday_cached(manager->worker.base, &now);
+            t.tv_sec -= now.tv_sec;
+            t.tv_usec -= now.tv_usec;
+            if (t.tv_usec < 0) {
+                t.tv_usec += 1000000;
+                t.tv_sec--;
+            }
+
+            evtimer_add(session->timer, &t);
+        }
+    } else if (session->timer == NULL) {
+        // We got a session_kick() and timer is NULL. meaning one of two things:
+        // 1. While processsing the user event a disconnect request was issued
+        //  either user-initiated or server-initiated (via another session_kick()).
+        //  In this case we need to call the disconnect handler
+        // 2. The disconnect handler posted a user event
+        //  In this case we need to destroy the session
+        if (!session->disconnecting)
             kick_common(session->supervisor, session, destroy_session);
+        else
+            destroy_session(session);
     }
+}
+
+static void on_user_fd_ready(int fd, short what, void *ctx)
+{
+    struct UserEvent *event = ctx;
+    event->onResume(event->ctx, fd, libevent_to_poll(what));
+    event_free(event->event);
+    free(event);
 }
 
 static void on_session_read(struct bufferevent *event, void *ctx)
@@ -1793,6 +1906,8 @@ static void on_session_read(struct bufferevent *event, void *ctx)
         evbuffer_remove(input, data, len);
         if (!setjmp(session->jmp))
             manager->worker.onClientPacket(session, len, data);
+        else
+            break;
     }
 }
 
@@ -1801,8 +1916,6 @@ static void on_pending_session_read(struct bufferevent *event, void *ctx)
     struct Session *session = ctx;
     struct ChannelServer *server = session->supervisor;
     struct evbuffer *input = bufferevent_get_input(event);
-    // TODO: Maybe there is no one-to-one correspondence between on_session_read and input_filter
-    // meaning the input buffer can contain multiple packets
     uint16_t len;
     evbuffer_remove(input, &len, sizeof(uint16_t));
     uint8_t data[len];
@@ -1834,10 +1947,6 @@ static void on_session_timer_expired(int fd, short what, void *ctx)
     struct Session *session = ctx;
     struct RoomManager *manager = session->supervisor;
 
-    uint64_t out;
-    if (read(fd, &out, sizeof(uint64_t)) == -1)
-        return;
-
     if (!setjmp(session->jmp))
         manager->onClientTimer(session);
 }
@@ -1845,25 +1954,27 @@ static void on_session_timer_expired(int fd, short what, void *ctx)
 static void on_pending_session_event(struct bufferevent *event, short what, void *ctx)
 {
     struct Session *session = ctx;
+    struct Worker *worker =
+        &((struct ChannelServer *)session->supervisor)->worker;
 
-    if (what & BEV_EVENT_EOF || what & BEV_EVENT_ERROR) {
-        kick_common(&((struct ChannelServer *)session->supervisor)->worker, session, destroy_pending_session);
-    }
+    if (what & BEV_EVENT_EOF || what & BEV_EVENT_ERROR)
+        kick_common(worker, session, destroy_pending_session);
 }
 
 static void on_session_event(struct bufferevent *event, short what, void *ctx)
 {
     struct Session *session = ctx;
+    struct Worker *worker =
+        &((struct RoomManager *)session->supervisor)->worker;
 
     if (what & BEV_EVENT_READING) {
-        printf("Client %hu disconnected\n", ((struct sockaddr_in *)&session->addr)->sin_port);
+        printf("Client %hu disconnected\n",
+               ((struct sockaddr_in *)&session->addr)->sin_port);
         event_free(session->timer);
         session->timer = NULL;
-        if (session->userEvent != NULL)
-            kick_common(&((struct RoomManager *)session->supervisor)->worker, session, destroy_session);
+        kick_common(worker, session, destroy_session);
     } else if (what & BEV_EVENT_WRITING) {
-        if (!setjmp(session->jmp))
-            session_kick(session);
+        shutdown_session(session);
     }
 }
 
@@ -1881,7 +1992,10 @@ static int start_worker(void *ctx_)
     return 0;
 }
 
-static struct Session *create_session(struct ChannelServer *server, int fd, struct sockaddr *addr, int socklen)
+static struct Session *create_session(struct ChannelServer *server,
+                                      int fd,
+                                      struct sockaddr *addr,
+                                      int socklen)
 {
     struct Session *session = malloc(sizeof(struct Session));
     if (session == NULL)
@@ -1910,13 +2024,13 @@ static struct Session *create_session(struct ChannelServer *server, int fd, stru
     if (hash_set_addr_insert(server->sessions, &new) == -1)
         goto destroy_event;
 
-    session->disconnecting = false;
     session->id = 0;
     session->room = NULL;
     session->userEvent = NULL;
     session->writeEnable = false;
     session->targetRoom = -1;
     session->timer = NULL;
+    session->disconnecting = false;
 
     return session;
 
@@ -1943,7 +2057,8 @@ static struct Room *create_room(struct RoomManager *manager, uint32_t id)
         return NULL;
     }
 
-    room->sessions = hash_set_u32_create(sizeof(struct IdSession), offsetof(struct IdSession, id));
+    room->sessions = hash_set_u32_create(sizeof(struct IdSession),
+                                         offsetof(struct IdSession, id));
     if (room->sessions == NULL) {
         free(room->sessions);
         free(room);
@@ -2036,12 +2151,12 @@ static void destroy_session(struct Session *session)
 static void kick_common(struct Worker *worker, struct Session *session, void (*destroy)(struct Session *session))
 {
     if (session->userEvent == NULL) {
-        worker->onClientDisconnect(session);
-        if (session->userEvent == NULL) {
-            destroy(session);
-        } else {
-            bufferevent_disable(session->event, EV_READ);
+        if (!setjmp(session->jmp)) {
+            worker->onClientDisconnect(session);
             session->disconnecting = true;
+            bufferevent_disable(session->event, EV_READ);
+        } else {
+            destroy(session);
         }
     }
 }

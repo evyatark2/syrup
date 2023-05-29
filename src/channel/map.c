@@ -1103,7 +1103,6 @@ uint32_t map_damage_monster_by(struct Map *map, struct MapPlayer *player, uint32
                             for (size_t j = 0; j < drops_copy[i].chance / 1000000; j++) {
                                 drops[drop_count].type = DROP_TYPE_ITEM;
                                 drops[drop_count].qid = drops_copy[i].isQuest ? drops_copy[i].questId : 0;
-                                drops[drop_count].item.id = 0;
                                 drops[drop_count].item.item.id = 0;
                                 drops[drop_count].item.item.itemId = drops_copy[i].itemId;
                                 drops[drop_count].item.item.ownerLength = 0;
@@ -1139,7 +1138,6 @@ uint32_t map_damage_monster_by(struct Map *map, struct MapPlayer *player, uint32
 
                         case DROP_TYPE_ITEM:
                             drops[drop_count].qid = drops_copy[i].isQuest ? drops_copy[i].questId : 0;
-                            drops[drop_count].item.id = 0;
                             drops[drop_count].item.item.id = 0;
                             drops[drop_count].item.item.itemId = drops_copy[i].itemId;
                             drops[drop_count].item.item.ownerLength = 0;
@@ -1347,7 +1345,6 @@ int map_drop_batch_from_reactor(struct Map *map, struct MapPlayer *player, uint3
                 for (size_t j = 0; j < drops_copy[i].chance / 1000000; j++) {
                     drops[drop_count].type = DROP_TYPE_ITEM;
                     drops[drop_count].qid = drops_copy[i].isQuest ? drops_copy[i].questId : 0;
-                    drops[drop_count].item.id = 0;
                     drops[drop_count].item.item.id = 0;
                     drops[drop_count].item.item.itemId = drops_copy[i].itemId;
                     drops[drop_count].item.item.ownerLength = 0;
@@ -1383,7 +1380,6 @@ int map_drop_batch_from_reactor(struct Map *map, struct MapPlayer *player, uint3
 
             case DROP_TYPE_ITEM:
                 drops[drop_count].qid = drops_copy[i].isQuest ? drops_copy[i].questId : 0;
-                drops[drop_count].item.id = 0;
                 drops[drop_count].item.item.id = 0;
                 drops[drop_count].item.item.itemId = drops_copy[i].itemId;
                 drops[drop_count].item.item.ownerLength = 0;

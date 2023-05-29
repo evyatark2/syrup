@@ -50,7 +50,6 @@ static int on_room_create(struct Room *room, void *thread_ctx);
 static void on_room_destroy(struct Room *room);
 static void on_client_command(struct Session *session, void *cmd);
 static void on_client_timer(struct Session *session);
-static void on_client_resume_timer(struct Session *session, int fd, int status);
 
 static void on_sigint(int sig);
 
@@ -1561,32 +1560,10 @@ static void on_client_timer(struct Session *session)
 {
     struct Client *client = session_get_context(session);
 
-    client_save_start(client);
-    struct ClientContResult res = client_resume(client, 0);
-
-    if (res.status > 0) {
-        session_set_event(session, res.status, res.fd, on_client_resume_timer);
-    } else if (res.status == 0) {
-        printf("SAVED TO DB!!!\n");
-    } else if (res.status < 0) {
+    if (client_save_start(client) == -1)
+        // Kick immediatly, as to not let the player lose any further progress
+        // hopefuly the database flush will succeed when kicking the player
         session_kick(session);
-    }
-}
-
-static void on_client_resume_timer(struct Session *session, int fd, int status)
-{
-    struct Client *client = session_get_context(session);
-
-    struct ClientContResult res = client_resume(client, status);
-    if (res.status > 0 && (res.fd != session_get_event_fd(session) || res.status != session_get_event_disposition(session))) {
-        session_set_event(session, res.status, res.fd, on_client_resume_timer);
-    } else if (res.status == 0) {
-        printf("SAVED TO DB!!!\n");
-        session_close_event(session);
-    } else if (res.status < 0) {
-        session_kick(session);
-    }
-
 }
 
 static void on_unassigned_client_packet(struct Session *session, size_t size, uint8_t *packet)
@@ -1645,6 +1622,7 @@ static void on_client_resume_disconnect(struct Session *session, int fd, int sta
         session_set_event(session, res.status, res.fd, on_client_resume_disconnect);
     } else if (res.status <= 0) {
         session_close_event(session);
+        session_kick(session);
     }
 }
 
@@ -1662,6 +1640,8 @@ static void on_client_disconnect(struct Session *session)
     struct ClientContResult res = client_resume(client, 0);
     if (res.status > 0) {
         session_set_event(session, res.status, res.fd, on_client_resume_disconnect);
+    } else {
+        session_kick(session);
     }
 }
 

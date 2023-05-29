@@ -20,8 +20,8 @@
 struct Client {
     struct Session *session;
     struct MapHandleContainer map;
-    //struct Map *map;
     struct DatabaseConnection *conn;
+    struct ClientSave *save;
     struct {
         struct ScriptManager *quest;
         struct ScriptManager *npc;
@@ -49,6 +49,16 @@ struct Client {
     enum Stat stats;
     struct Party *party;
     bool autoPickup;
+};
+
+struct ClientSave {
+    int state;
+    struct DatabaseConnection *conn;
+    union {
+        struct DatabaseRequest *request;
+        struct RequestParams *params;
+    };
+    struct UserEvent *event;
 };
 
 size_t CLIENTS_LENGTH;
@@ -201,10 +211,373 @@ void client_login_start(struct Client *client, uint32_t id)
     client->character.id = id;
 }
 
-void client_save_start(struct Client *client)
+static void on_resume_database_operation(struct Session *session, int fd, int status)
 {
-    client->handlerType = PACKET_TYPE_SAVE;
-    client->databaseState = 0;
+    struct Client *client = session_get_context(session);
+    struct ClientSave *save = client->save;
+
+    status = database_request_execute(save->request, status);
+    if (status <= 0) {
+        const struct RequestParams *params = database_request_get_params(save->request);
+        database_request_destroy(save->request);
+        database_connection_unlock(save->conn);
+        free(params->updateCharacter.keyMap);
+        free(params->updateCharacter.monsterBook);
+        free(params->updateCharacter.skills);
+        free(params->updateCharacter.completedQuests);
+        free(params->updateCharacter.questInfos);
+        free(params->updateCharacter.progresses);
+        free(params->updateCharacter.quests);
+        free(save);
+        session_close_event(session);
+        if (status != 0)
+            session_kick(session);
+        return;
+    }
+
+    session_set_event(session, status, fd, on_resume_database_operation);
+}
+
+static void on_database_unlocked(struct Session *session, int fd, int status)
+{
+    struct Client *client = session_get_context(session);
+    struct ClientSave *save = client->save;
+    struct RequestParams *params = save->params;
+    assert(status == POLLIN);
+    close(fd);
+
+    save->request = database_request_create(save->conn, params);
+    status = database_request_execute(save->request, 0);
+    if (status <= 0) {
+        database_request_destroy(save->request);
+        database_connection_unlock(save->conn);
+        free(params->updateCharacter.keyMap);
+        free(params->updateCharacter.monsterBook);
+        free(params->updateCharacter.skills);
+        free(params->updateCharacter.completedQuests);
+        free(params->updateCharacter.questInfos);
+        free(params->updateCharacter.progresses);
+        free(params->updateCharacter.quests);
+        free(params);
+        free(save);
+        session_close_event(session);
+        if (status != 0)
+            session_kick(session);
+        return;
+    }
+
+    session_set_event(session, status, database_connection_get_fd(save->conn), on_resume_database_operation);
+}
+
+int client_save_start(struct Client *client)
+{
+    struct Character *chr = &client->character;
+    struct ClientSave *save = malloc(sizeof(struct ClientSave));
+    if (save == NULL)
+        return -1;
+
+    client->save = save;
+
+    save->conn = client->conn;
+    save->state = 0;
+    save->params = malloc(sizeof(struct RequestParams));
+    if (save->params == NULL) {
+        free(save);
+        return -1;
+    }
+
+    save->params->type = DATABASE_REQUEST_TYPE_UPDATE_CHARACTER;
+    save->params->updateCharacter.id = chr->id;
+    save->params->updateCharacter.map = wz_get_map_forced_return(chr->map);
+    save->params->updateCharacter.spawnPoint = chr->spawnPoint;
+    save->params->updateCharacter.job = chr->job;
+    save->params->updateCharacter.level = chr->level;
+    save->params->updateCharacter.exp = chr->exp;
+    save->params->updateCharacter.maxHp = chr->maxHp;
+    save->params->updateCharacter.hp = chr->hp;
+    save->params->updateCharacter.maxMp = chr->maxMp;
+    save->params->updateCharacter.mp = chr->mp;
+    save->params->updateCharacter.str = chr->str;
+    save->params->updateCharacter.dex = chr->dex;
+    save->params->updateCharacter.int_ = chr->int_;
+    save->params->updateCharacter.luk = chr->luk;
+    save->params->updateCharacter.ap = chr->ap;
+    save->params->updateCharacter.sp = chr->sp;
+    save->params->updateCharacter.fame = chr->fame;
+    save->params->updateCharacter.skin = chr->skin;
+    save->params->updateCharacter.face = chr->face;
+    save->params->updateCharacter.hair = chr->hair;
+    save->params->updateCharacter.mesos = chr->mesos;
+    save->params->updateCharacter.equipSlots =
+        chr->equipmentInventory.slotCount;
+    save->params->updateCharacter.useSlots = chr->inventory[0].slotCount;
+    save->params->updateCharacter.setupSlots = chr->inventory[1].slotCount;
+    save->params->updateCharacter.etcSlots = chr->inventory[2].slotCount;
+    save->params->updateCharacter.equippedCount = 0;
+    save->params->updateCharacter.equipCount = 0;
+    save->params->updateCharacter.itemCount = 0;
+
+    for (size_t i = 0; i < EQUIP_SLOT_COUNT; i++) {
+        if (!chr->equippedEquipment[i].isEmpty) {
+            struct Equipment *src = &chr->equippedEquipment[i].equip;
+            struct DatabaseCharacterEquipment *dst =
+                &save->params->updateCharacter
+                .equippedEquipment[save->params->updateCharacter.equippedCount];
+
+            dst->id = src->id;
+            dst->equip.id = src->equip_id;
+            dst->equip.item.id = src->item.id;
+            dst->equip.item.itemId = src->item.itemId;
+            dst->equip.item.flags = src->item.flags;
+            dst->equip.item.ownerLength = src->item.ownerLength;
+            memcpy(dst->equip.item.owner, src->item.owner,
+                   src->item.ownerLength);
+            dst->equip.item.giverLength = src->item.giftFromLength;
+            memcpy(dst->equip.item.giver, src->item.giftFrom,
+                   src->item.giftFromLength);
+
+
+            dst->equip.level = src->level;
+            dst->equip.slots = src->slots;
+            dst->equip.str = src->str;
+            dst->equip.dex = src->dex;
+            dst->equip.int_ = src->int_;
+            dst->equip.luk = src->luk;
+            dst->equip.hp = src->hp;
+            dst->equip.mp = src->mp;
+            dst->equip.atk = src->atk;
+            dst->equip.matk = src->matk;
+            dst->equip.def = src->def;
+            dst->equip.mdef = src->mdef;
+            dst->equip.acc = src->acc;
+            dst->equip.avoid = src->avoid;
+            dst->equip.speed = src->speed;
+            dst->equip.jump = src->jump;
+
+            save->params->updateCharacter.equippedCount++;
+        }
+    }
+
+    for (uint8_t i = 0; i < chr->equipmentInventory.slotCount; i++) {
+        if (!chr->equipmentInventory.items[i].isEmpty) {
+            struct Equipment *src = &chr->equipmentInventory.items[i].equip;
+            struct DatabaseCharacterEquipment *dst =
+                &save->params->updateCharacter
+                .equipmentInventory[save->params->updateCharacter.equipCount]
+                .equip;
+
+            dst->id = src->id;
+            dst->equip.id = src->equip_id;
+            save->params->updateCharacter
+                .equipmentInventory[save->params->updateCharacter.equipCount]
+                .slot = i;
+            dst->equip.item.id = src->item.id;
+            dst->equip.item.itemId = src->item.itemId;
+            dst->equip.item.flags = src->item.flags;
+            dst->equip.item.ownerLength = src->item.ownerLength;
+            memcpy(dst->equip.item.owner, src->item.owner,
+                   src->item.ownerLength);
+            dst->equip.item.giverLength = src->item.giftFromLength;
+            memcpy(dst->equip.item.giver, src->item.giftFrom,
+                   src->item.giftFromLength);
+
+
+            dst->equip.level = src->level;
+            dst->equip.slots = src->slots;
+            dst->equip.str = src->str;
+            dst->equip.dex = src->dex;
+            dst->equip.int_ = src->int_;
+            dst->equip.luk = src->luk;
+            dst->equip.hp = src->hp;
+            dst->equip.mp = src->mp;
+            dst->equip.atk = src->atk;
+            dst->equip.matk = src->matk;
+            dst->equip.def = src->def;
+            dst->equip.mdef = src->mdef;
+            dst->equip.acc = src->acc;
+            dst->equip.avoid = src->avoid;
+            dst->equip.speed = src->speed;
+            dst->equip.jump = src->jump;
+
+            save->params->updateCharacter.equipCount++;
+        }
+    }
+
+    for (uint8_t inv = 0; inv < 4; inv++) {
+        for (uint8_t i = 0; i < chr->inventory[inv].slotCount; i++) {
+            if (!chr->inventory[inv].items[i].isEmpty) {
+                struct Item *src = &chr->inventory[inv].items[i].item.item;
+                struct DatabaseItem *dst = &save->params->updateCharacter.inventoryItems[save->params->updateCharacter.itemCount].item;
+                save->params->updateCharacter.inventoryItems[save->params->updateCharacter.itemCount].slot = i;
+                save->params->updateCharacter.inventoryItems[save->params->updateCharacter.itemCount].count = chr->inventory[inv].items[i].item.quantity;
+
+                dst->id = src->id;
+                dst->itemId = src->itemId;
+                dst->flags = src->flags;
+                dst->ownerLength = src->ownerLength;
+                memcpy(dst->owner, src->owner, src->ownerLength);
+                dst->giverLength = src->giftFromLength;
+                memcpy(dst->giver, src->giftFrom, src->giftFromLength);
+
+                save->params->updateCharacter.itemCount++;
+            }
+        }
+    }
+
+    save->params->updateCharacter.quests = malloc(hash_set_u16_size(chr->quests) * sizeof(uint16_t));
+    if (save->params->updateCharacter.quests == NULL) {
+        free(save->params);
+        free(save);
+        return -1;
+    }
+
+    struct AddQuestContext ctx = {
+        .quests = save->params->updateCharacter.quests,
+        .currentQuest = 0,
+        .progressCount = 0
+    };
+    hash_set_u16_foreach(chr->quests, add_quest, &ctx);
+
+    save->params->updateCharacter.questCount = ctx.currentQuest;
+
+    save->params->updateCharacter.progresses = malloc(ctx.progressCount * sizeof(struct DatabaseProgress));
+    if (save->params->updateCharacter.progresses == NULL) {
+        free(save->params->updateCharacter.quests);
+        free(save->params);
+        free(save);
+        return -1;
+    }
+
+    struct AddProgressContext ctx2 = {
+        .progresses = save->params->updateCharacter.progresses,
+        .currentProgress = 0
+    };
+    hash_set_u16_foreach(chr->quests, add_progress, &ctx2);
+
+    save->params->updateCharacter.progressCount = ctx2.currentProgress;
+
+    save->params->updateCharacter.questInfos = malloc(hash_set_u16_size(chr->questInfos) * sizeof(struct DatabaseInfoProgress));
+    if (save->params->updateCharacter.questInfos == NULL) {
+        free(save->params->updateCharacter.progresses);
+        free(save->params->updateCharacter.quests);
+        free(save->params);
+        free(save);
+        return -1;
+    }
+
+    struct AddQuestInfoContext ctx3 = {
+        .infos = save->params->updateCharacter.questInfos,
+        .currentInfo = 0,
+    };
+    hash_set_u16_foreach(chr->questInfos, add_quest_info, &ctx3);
+
+    save->params->updateCharacter.questInfoCount = ctx3.currentInfo;
+
+    save->params->updateCharacter.completedQuests = malloc(hash_set_u16_size(chr->completedQuests) * sizeof(struct DatabaseCompletedQuest));
+    if (save->params->updateCharacter.completedQuests == NULL) {
+        free(save->params->updateCharacter.questInfos);
+        free(save->params->updateCharacter.progresses);
+        free(save->params->updateCharacter.quests);
+        free(save->params);
+        free(save);
+        return -1;
+    }
+
+    struct AddCompletedQuestContext ctx4 = {
+        .quests = save->params->updateCharacter.completedQuests,
+        .currentQuest = 0,
+    };
+    hash_set_u16_foreach(chr->completedQuests, add_completed_quest, &ctx4);
+
+    save->params->updateCharacter.completedQuestCount = ctx4.currentQuest;
+
+    save->params->updateCharacter.skills = malloc(hash_set_u32_size(chr->skills) * sizeof(struct DatabaseSkill));
+    if (save->params->updateCharacter.completedQuests == NULL) {
+        free(save->params->updateCharacter.completedQuests);
+        free(save->params->updateCharacter.questInfos);
+        free(save->params->updateCharacter.progresses);
+        free(save->params->updateCharacter.quests);
+        free(save->params);
+        free(save);
+        return -1;
+    }
+
+    struct AddSkillContext ctx5 = {
+        .skills = save->params->updateCharacter.skills,
+        .currentSkill = 0,
+    };
+    hash_set_u32_foreach(chr->skills, add_skill, &ctx5);
+
+    save->params->updateCharacter.skillCount = ctx5.currentSkill;
+
+    save->params->updateCharacter.monsterBook = malloc(hash_set_u32_size(chr->monsterBook) * sizeof(struct DatabaseMonsterBookEntry));
+    if (save->params->updateCharacter.monsterBook == NULL) {
+        free(save->params->updateCharacter.skills);
+        free(save->params->updateCharacter.completedQuests);
+        free(save->params->updateCharacter.questInfos);
+        free(save->params->updateCharacter.progresses);
+        free(save->params->updateCharacter.quests);
+        free(save->params);
+        free(save);
+        return -1;
+    }
+
+    struct AddMonsterBookContext ctx6 = {
+        .monsterBook = save->params->updateCharacter.monsterBook,
+        .currentEntry = 0,
+    };
+    hash_set_u32_foreach(chr->monsterBook, add_monster_book_entry, &ctx6);
+
+    save->params->updateCharacter.monsterBookEntryCount = ctx6.currentEntry;
+
+    uint8_t key_count = 0;
+    for (uint8_t i = 0; i < KEYMAP_MAX_KEYS; i++) {
+        if (chr->keyMap[i].type != 0)
+            key_count++;
+    }
+
+    save->params->updateCharacter.keyMap = malloc(key_count * sizeof(struct DatabaseKeyMapEntry));
+    if (save->params->updateCharacter.keyMap == NULL) {
+        free(save->params->updateCharacter.monsterBook);
+        free(save->params->updateCharacter.skills);
+        free(save->params->updateCharacter.completedQuests);
+        free(save->params->updateCharacter.questInfos);
+        free(save->params->updateCharacter.progresses);
+        free(save->params->updateCharacter.quests);
+        free(save->params);
+        free(save);
+        return -1;
+    }
+
+    save->params->updateCharacter.keyMapEntryCount = 0;
+    for (uint8_t i = 0; i < KEYMAP_MAX_KEYS; i++) {
+        if (chr->keyMap[i].type != 0) {
+            save->params->updateCharacter.keyMap[save->params->updateCharacter.keyMapEntryCount].key = i;
+            save->params->updateCharacter.keyMap[save->params->updateCharacter.keyMapEntryCount].type = chr->keyMap[i].type;
+            save->params->updateCharacter.keyMap[save->params->updateCharacter.keyMapEntryCount].action = chr->keyMap[i].action;
+            save->params->updateCharacter.keyMapEntryCount++;
+        }
+    }
+
+    int fd = database_connection_lock(client->conn);
+    if (fd == -2) {
+        on_database_unlocked(client->session, fd, POLLIN);
+    } else if (fd == -1) {
+        free(save->params->updateCharacter.keyMap);
+        free(save->params->updateCharacter.monsterBook);
+        free(save->params->updateCharacter.skills);
+        free(save->params->updateCharacter.completedQuests);
+        free(save->params->updateCharacter.questInfos);
+        free(save->params->updateCharacter.progresses);
+        free(save->params->updateCharacter.quests);
+        free(save->params);
+        free(save);
+        return -1;
+    } else {
+        session_set_event(client->session, POLLIN, fd, on_database_unlocked);
+    }
+
+    return 0;
 }
 
 void client_logout_start(struct Client *client)
@@ -319,82 +692,88 @@ struct ClientContResult client_resume(struct Client *client, int status)
                 chr->equippedEquipment[i].isEmpty = true;
 
             for (uint8_t i = 0; i < res->getCharacter.equippedCount; i++) {
-                chr->equippedEquipment[equip_slot_to_compact(equip_slot_from_id(res->getCharacter.equippedEquipment[i].item.itemId))].isEmpty = false;
-                struct Equipment *equip = &chr->equippedEquipment[equip_slot_to_compact(equip_slot_from_id(res->getCharacter.equippedEquipment[i].item.itemId))].equip;
-                equip->id = res->getCharacter.equippedEquipment[i].id;
-                equip->item.id = res->getCharacter.equippedEquipment[i].item.id;
-                equip->item.itemId = res->getCharacter.equippedEquipment[i].item.itemId;
+                const struct DatabaseCharacterEquipment *src = &res->getCharacter.equippedEquipment[i];
+                struct Equipment *dst = &chr->equippedEquipment[equip_slot_to_compact(equip_slot_from_id(res->getCharacter.equippedEquipment[i].equip.item.itemId))].equip;
+                chr->equippedEquipment[equip_slot_to_compact(equip_slot_from_id(res->getCharacter.equippedEquipment[i].equip.item.itemId))].isEmpty = false;
+                dst->id = src->id;
+                dst->equip_id = src->equip.id;
+                dst->item.id = src->equip.item.id;
+                dst->item.itemId = src->equip.item.itemId;
                 //equip->item.cashId;
                 //equip->item.sn; // What is this?
 
-                equip->item.ownerLength = 0; // equip->item.ownerLength = res->getCharacter.equippedEquipment[i].ownerLength;
+                dst->item.ownerLength = 0; // equip->item.ownerLength = res->getCharacter.equippedEquipment[i].ownerLength;
                                              //memcpy(equip->item.owner, res->getCharacter.equippedEquipment[i].owner, res->getCharacter.equippedEquipment[i].ownerLength);
-                equip->item.flags = res->getCharacter.equippedEquipment[i].item.flags;
-                equip->item.expiration = -1; //equip->item.expiration = res->getCharacter.equippedEquipment[i].expiration;
-                equip->item.giftFromLength = 0; //equip->item.giftFromLength = res->getCharacter.equippedEquipment[i].giverLength;
+                dst->item.flags = src->equip.item.flags;
+                //dst->item.expiration = src->expiration;
+                dst->item.expiration = -1;
+                dst->item.giftFromLength = 0; //equip->item.giftFromLength = res->getCharacter.equippedEquipment[i].giverLength;
                                                 //equip->item.giftFrom[CHARACTER_MAX_NAME_LENGTH];
-                equip->level = res->getCharacter.equippedEquipment[i].level;
-                equip->slots = res->getCharacter.equippedEquipment[i].slots;
-                equip->str = res->getCharacter.equippedEquipment[i].str;
-                chr->estr += equip->str;
-                equip->dex = res->getCharacter.equippedEquipment[i].dex;
-                chr->edex += equip->dex;
-                equip->int_ = res->getCharacter.equippedEquipment[i].int_;
-                chr->eint += equip->int_;
-                equip->luk = res->getCharacter.equippedEquipment[i].luk;
-                chr->eluk += equip->luk;
-                equip->hp = res->getCharacter.equippedEquipment[i].hp;
-                chr->eMaxHp += equip->hp;
-                equip->mp = res->getCharacter.equippedEquipment[i].mp;
-                chr->eMaxMp += equip->mp;
-                equip->atk = res->getCharacter.equippedEquipment[i].atk;
-                equip->matk = res->getCharacter.equippedEquipment[i].matk;
-                equip->def = res->getCharacter.equippedEquipment[i].def;
-                equip->mdef = res->getCharacter.equippedEquipment[i].mdef;
-                equip->acc = res->getCharacter.equippedEquipment[i].acc;
-                equip->avoid = res->getCharacter.equippedEquipment[i].avoid;
-                equip->hands = 0; //equip->hands = res->getCharacter.equippedEquipment[i].hands;
-                equip->speed = res->getCharacter.equippedEquipment[i].speed;
-                equip->jump = res->getCharacter.equippedEquipment[i].jump;
-                equip->cash = wz_get_equip_info(equip->item.itemId)->cash;
+                dst->level = src->equip.level;
+                dst->slots = src->equip.slots;
+                dst->str = src->equip.str;
+                chr->estr += dst->str;
+                dst->dex = src->equip.dex;
+                chr->edex += dst->dex;
+                dst->int_ = src->equip.int_;
+                chr->eint += dst->int_;
+                dst->luk = src->equip.luk;
+                chr->eluk += dst->luk;
+                dst->hp = src->equip.hp;
+                chr->eMaxHp += dst->hp;
+                dst->mp = src->equip.mp;
+                chr->eMaxMp += dst->mp;
+                dst->atk = src->equip.atk;
+                dst->matk = src->equip.matk;
+                dst->def = src->equip.def;
+                dst->mdef = src->equip.mdef;
+                dst->acc = src->equip.acc;
+                dst->avoid = src->equip.avoid;
+                dst->hands = 0; //equip->hands = res->getCharacter.equippedEquipment[i].hands;
+                dst->speed = src->equip.speed;
+                dst->jump = src->equip.jump;
+                dst->cash = wz_get_equip_info(dst->item.itemId)->cash;
             }
 
             for (uint8_t j = 0; j < chr->equipmentInventory.slotCount; j++)
                 chr->equipmentInventory.items[j].isEmpty = true;
 
             for (uint8_t i = 0; i < res->getCharacter.equipCount; i++) {
+                const struct DatabaseCharacterEquipment *src = &res->getCharacter.equipmentInventory[i].equip;
+                struct Equipment *dst = &chr->equipmentInventory.items[res->getCharacter.equipmentInventory[i].slot].equip;
                 chr->equipmentInventory.items[res->getCharacter.equipmentInventory[i].slot].isEmpty = false;
-                struct Equipment *equip = &chr->equipmentInventory.items[res->getCharacter.equipmentInventory[i].slot].equip;
-                equip->id = res->getCharacter.equipmentInventory[i].equip.id;
-                equip->item.id = res->getCharacter.equipmentInventory[i].equip.item.id;
-                equip->item.itemId = res->getCharacter.equipmentInventory[i].equip.item.itemId;
+                dst->id = src->id;
+                dst->equip_id = src->equip.id;
+                dst->item.id = src->equip.item.id;
+                dst->item.itemId = src->equip.item.itemId;
                 //equip->item.cashId;
                 //equip->item.sn; // What is this?
 
-                equip->item.ownerLength = 0; // equip->item.ownerLength = res->getCharacter.equippedEquipment[i].ownerLength;
+                dst->item.ownerLength = 0; // equip->item.ownerLength = res->getCharacter.equippedEquipment[i].ownerLength;
                                              //memcpy(equip->item.owner, res->getCharacter.equippedEquipment[i].owner, res->getCharacter.equippedEquipment[i].ownerLength);
-                equip->item.flags = res->getCharacter.equipmentInventory[i].equip.item.flags;
-                equip->item.expiration = -1; //equip->item.expiration = res->getCharacter.equippedEquipment[i].expiration;
-                equip->item.giftFromLength = 0; //equip->item.giftFromLength = res->getCharacter.equippedEquipment[i].giverLength;
+                dst->item.flags = src->equip.item.flags;
+                dst->item.expiration = -1; //equip->item.expiration = res->getCharacter.equippedEquipment[i].expiration;
+                dst->item.giftFromLength = 0; //equip->item.giftFromLength = res->getCharacter.equippedEquipment[i].giverLength;
                                                 //equip->item.giftFrom[CHARACTER_MAX_NAME_LENGTH];
-                equip->level = res->getCharacter.equipmentInventory[i].equip.level;
-                equip->slots = res->getCharacter.equipmentInventory[i].equip.slots;
-                equip->str = res->getCharacter.equipmentInventory[i].equip.str;
-                equip->dex = res->getCharacter.equipmentInventory[i].equip.dex;
-                equip->int_ = res->getCharacter.equipmentInventory[i].equip.int_;
-                equip->luk = res->getCharacter.equipmentInventory[i].equip.luk;
-                equip->hp = res->getCharacter.equipmentInventory[i].equip.hp;
-                equip->mp = res->getCharacter.equipmentInventory[i].equip.mp;
-                equip->atk = res->getCharacter.equipmentInventory[i].equip.atk;
-                equip->matk = res->getCharacter.equipmentInventory[i].equip.matk;
-                equip->def = res->getCharacter.equipmentInventory[i].equip.def;
-                equip->mdef = res->getCharacter.equipmentInventory[i].equip.mdef;
-                equip->acc = res->getCharacter.equipmentInventory[i].equip.acc;
-                equip->avoid = res->getCharacter.equipmentInventory[i].equip.avoid;
-                equip->hands = 0; //equip->hands = res->getCharacter.equippedEquipment[i].hands;
-                equip->speed = res->getCharacter.equipmentInventory[i].equip.speed;
-                equip->jump = res->getCharacter.equipmentInventory[i].equip.jump;
-                equip->cash = wz_get_equip_info(equip->item.itemId)->cash;
+                dst->level = src->equip.level;
+                dst->slots = src->equip.slots;
+                dst->str = src->equip.str;
+                dst->dex = src->equip.dex;
+                dst->int_ = src->equip.int_;
+                dst->luk = src->equip.luk;
+                dst->hp = src->equip.hp;
+                dst->mp = src->equip.mp;
+                dst->atk = src->equip.atk;
+                dst->matk = src->equip.matk;
+                dst->def = src->equip.def;
+                dst->mdef = src->equip.mdef;
+                dst->acc = src->equip.acc;
+                dst->avoid = src->equip.avoid;
+                //dst->hands = src->equip.hands;
+                dst->hands = 0;
+                dst->speed = src->equip.speed;
+                dst->jump = src->equip.jump;
+                dst->cash = wz_get_equip_info(dst->item.itemId)->cash;
             }
 
             for (uint8_t i = 0; i < 4; i++) {
@@ -406,7 +785,6 @@ struct ClientContResult client_resume(struct Client *client, int status)
                 uint8_t inv = res->getCharacter.inventoryItems[i].item.itemId / 1000000 - 2;
                 chr->inventory[inv].items[res->getCharacter.inventoryItems[i].slot].isEmpty = false;
                 struct InventoryItem *item = &chr->inventory[inv].items[res->getCharacter.inventoryItems[i].slot].item;
-                item->id = res->getCharacter.inventoryItems[i].id;
                 item->item.id = res->getCharacter.inventoryItems[i].item.id;
                 item->item.itemId = res->getCharacter.inventoryItems[i].item.itemId;
                 item->item.flags = res->getCharacter.inventoryItems[i].item.flags;
@@ -503,7 +881,7 @@ struct ClientContResult client_resume(struct Client *client, int status)
                                 for (uint8_t j = 0; j < chr->equipmentInventory.slotCount; j++) {
                                     if (!chr->equipmentInventory.items[j].isEmpty &&
                                             chr->equipmentInventory.items[j].equip.item.itemId == quest_info->endRequirements[i].item.id) {
-                                        total += 1;
+                                        total++;
                                     }
                                 }
                             } else {
@@ -713,7 +1091,6 @@ struct ClientContResult client_resume(struct Client *client, int status)
         }
     break;
 
-    case PACKET_TYPE_SAVE:
     case PACKET_TYPE_LOGOUT:
         if (client->databaseState == 0) {
             // If the client doesn't have a room - meaning it didn't load a character,
@@ -776,32 +1153,35 @@ struct ClientContResult client_resume(struct Client *client, int status)
 
             for (size_t i = 0; i < EQUIP_SLOT_COUNT; i++) {
                 if (!chr->equippedEquipment[i].isEmpty) {
-                    params.updateCharacter.equippedEquipment[params.updateCharacter.equippedCount].id = chr->equippedEquipment[i].equip.id;
-                    params.updateCharacter.equippedEquipment[params.updateCharacter.equippedCount].item.id = chr->equippedEquipment[i].equip.item.id;
-                    params.updateCharacter.equippedEquipment[params.updateCharacter.equippedCount].item.itemId = chr->equippedEquipment[i].equip.item.itemId;
-                    params.updateCharacter.equippedEquipment[params.updateCharacter.equippedCount].item.flags = chr->equippedEquipment[i].equip.item.flags;
-                    params.updateCharacter.equippedEquipment[params.updateCharacter.equippedCount].item.ownerLength = chr->equippedEquipment[i].equip.item.ownerLength;
-                    memcpy(params.updateCharacter.equippedEquipment[params.updateCharacter.equippedCount].item.owner, chr->equippedEquipment[i].equip.item.owner, chr->equippedEquipment[i].equip.item.ownerLength);
-                    params.updateCharacter.equippedEquipment[params.updateCharacter.equippedCount].item.giverLength = chr->equippedEquipment[i].equip.item.giftFromLength;
-                    memcpy(params.updateCharacter.equippedEquipment[params.updateCharacter.equippedCount].item.giver, chr->equippedEquipment[i].equip.item.giftFrom, chr->equippedEquipment[i].equip.item.giftFromLength);
+                    struct Equipment *src = &chr->equippedEquipment[i].equip;
+                    struct DatabaseCharacterEquipment *dst = &params.updateCharacter.equippedEquipment[params.updateCharacter.equippedCount];
+                    dst->id = src->id;
+                    dst->equip.id = src->equip_id;
+                    dst->equip.item.id = src->item.id;
+                    dst->equip.item.itemId = src->item.itemId;
+                    dst->equip.item.flags = src->item.flags;
+                    dst->equip.item.ownerLength = src->item.ownerLength;
+                    memcpy(dst->equip.item.owner, src->item.owner, src->item.ownerLength);
+                    dst->equip.item.giverLength = src->item.giftFromLength;
+                    memcpy(dst->equip.item.giver, src->item.giftFrom, src->item.giftFromLength);
 
 
-                    params.updateCharacter.equippedEquipment[params.updateCharacter.equippedCount].level = chr->equippedEquipment[i].equip.level;
-                    params.updateCharacter.equippedEquipment[params.updateCharacter.equippedCount].slots = chr->equippedEquipment[i].equip.slots;
-                    params.updateCharacter.equippedEquipment[params.updateCharacter.equippedCount].str = chr->equippedEquipment[i].equip.str;
-                    params.updateCharacter.equippedEquipment[params.updateCharacter.equippedCount].dex = chr->equippedEquipment[i].equip.dex;
-                    params.updateCharacter.equippedEquipment[params.updateCharacter.equippedCount].int_ = chr->equippedEquipment[i].equip.int_;
-                    params.updateCharacter.equippedEquipment[params.updateCharacter.equippedCount].luk = chr->equippedEquipment[i].equip.luk;
-                    params.updateCharacter.equippedEquipment[params.updateCharacter.equippedCount].hp = chr->equippedEquipment[i].equip.hp;
-                    params.updateCharacter.equippedEquipment[params.updateCharacter.equippedCount].mp = chr->equippedEquipment[i].equip.mp;
-                    params.updateCharacter.equippedEquipment[params.updateCharacter.equippedCount].atk = chr->equippedEquipment[i].equip.atk;
-                    params.updateCharacter.equippedEquipment[params.updateCharacter.equippedCount].matk = chr->equippedEquipment[i].equip.matk;
-                    params.updateCharacter.equippedEquipment[params.updateCharacter.equippedCount].def = chr->equippedEquipment[i].equip.def;
-                    params.updateCharacter.equippedEquipment[params.updateCharacter.equippedCount].mdef = chr->equippedEquipment[i].equip.mdef;
-                    params.updateCharacter.equippedEquipment[params.updateCharacter.equippedCount].acc = chr->equippedEquipment[i].equip.acc;
-                    params.updateCharacter.equippedEquipment[params.updateCharacter.equippedCount].avoid = chr->equippedEquipment[i].equip.avoid;
-                    params.updateCharacter.equippedEquipment[params.updateCharacter.equippedCount].speed = chr->equippedEquipment[i].equip.speed;
-                    params.updateCharacter.equippedEquipment[params.updateCharacter.equippedCount].jump = chr->equippedEquipment[i].equip.jump;
+                    dst->equip.level = src->level;
+                    dst->equip.slots = src->slots;
+                    dst->equip.str = src->str;
+                    dst->equip.dex = src->dex;
+                    dst->equip.int_ = src->int_;
+                    dst->equip.luk = src->luk;
+                    dst->equip.hp = src->hp;
+                    dst->equip.mp = src->mp;
+                    dst->equip.atk = src->atk;
+                    dst->equip.matk = src->matk;
+                    dst->equip.def = src->def;
+                    dst->equip.mdef = src->mdef;
+                    dst->equip.acc = src->acc;
+                    dst->equip.avoid = src->avoid;
+                    dst->equip.speed = src->speed;
+                    dst->equip.jump = src->jump;
 
                     params.updateCharacter.equippedCount++;
                 }
@@ -809,33 +1189,36 @@ struct ClientContResult client_resume(struct Client *client, int status)
 
             for (uint8_t i = 0; i < chr->equipmentInventory.slotCount; i++) {
                 if (!chr->equipmentInventory.items[i].isEmpty) {
-                    params.updateCharacter.equipmentInventory[params.updateCharacter.equipCount].equip.id = chr->equipmentInventory.items[i].equip.id;
+                    struct Equipment *src = &chr->equipmentInventory.items[i].equip;
+                    struct DatabaseCharacterEquipment *dst = &params.updateCharacter.equipmentInventory[params.updateCharacter.equipCount].equip;
+                    dst->id = src->id;
+                    dst->equip.id = src->equip_id;
                     params.updateCharacter.equipmentInventory[params.updateCharacter.equipCount].slot = i;
-                    params.updateCharacter.equipmentInventory[params.updateCharacter.equipCount].equip.item.id = chr->equipmentInventory.items[i].equip.item.id;
-                    params.updateCharacter.equipmentInventory[params.updateCharacter.equipCount].equip.item.itemId = chr->equipmentInventory.items[i].equip.item.itemId;
-                    params.updateCharacter.equipmentInventory[params.updateCharacter.equipCount].equip.item.flags = chr->equipmentInventory.items[i].equip.item.flags;
-                    params.updateCharacter.equipmentInventory[params.updateCharacter.equipCount].equip.item.ownerLength = chr->equipmentInventory.items[i].equip.item.ownerLength;
-                    memcpy(params.updateCharacter.equipmentInventory[params.updateCharacter.equipCount].equip.item.owner, chr->equipmentInventory.items[i].equip.item.owner, chr->equipmentInventory.items[i].equip.item.ownerLength);
-                    params.updateCharacter.equipmentInventory[params.updateCharacter.equipCount].equip.item.giverLength = chr->equipmentInventory.items[i].equip.item.giftFromLength;
-                    memcpy(params.updateCharacter.equipmentInventory[params.updateCharacter.equipCount].equip.item.giver, chr->equipmentInventory.items[i].equip.item.giftFrom, chr->equipmentInventory.items[i].equip.item.giftFromLength);
+                    dst->equip.item.id = src->item.id;
+                    dst->equip.item.itemId = src->item.itemId;
+                    dst->equip.item.flags = src->item.flags;
+                    dst->equip.item.ownerLength = src->item.ownerLength;
+                    memcpy(dst->equip.item.owner, src->item.owner, src->item.ownerLength);
+                    dst->equip.item.giverLength = src->item.giftFromLength;
+                    memcpy(dst->equip.item.giver, src->item.giftFrom, src->item.giftFromLength);
 
 
-                    params.updateCharacter.equipmentInventory[params.updateCharacter.equipCount].equip.level = chr->equipmentInventory.items[i].equip.level;
-                    params.updateCharacter.equipmentInventory[params.updateCharacter.equipCount].equip.slots = chr->equipmentInventory.items[i].equip.slots;
-                    params.updateCharacter.equipmentInventory[params.updateCharacter.equipCount].equip.str = chr->equipmentInventory.items[i].equip.str;
-                    params.updateCharacter.equipmentInventory[params.updateCharacter.equipCount].equip.dex = chr->equipmentInventory.items[i].equip.dex;
-                    params.updateCharacter.equipmentInventory[params.updateCharacter.equipCount].equip.int_ = chr->equipmentInventory.items[i].equip.int_;
-                    params.updateCharacter.equipmentInventory[params.updateCharacter.equipCount].equip.luk = chr->equipmentInventory.items[i].equip.luk;
-                    params.updateCharacter.equipmentInventory[params.updateCharacter.equipCount].equip.hp = chr->equipmentInventory.items[i].equip.hp;
-                    params.updateCharacter.equipmentInventory[params.updateCharacter.equipCount].equip.mp = chr->equipmentInventory.items[i].equip.mp;
-                    params.updateCharacter.equipmentInventory[params.updateCharacter.equipCount].equip.atk = chr->equipmentInventory.items[i].equip.atk;
-                    params.updateCharacter.equipmentInventory[params.updateCharacter.equipCount].equip.matk = chr->equipmentInventory.items[i].equip.matk;
-                    params.updateCharacter.equipmentInventory[params.updateCharacter.equipCount].equip.def = chr->equipmentInventory.items[i].equip.def;
-                    params.updateCharacter.equipmentInventory[params.updateCharacter.equipCount].equip.mdef = chr->equipmentInventory.items[i].equip.mdef;
-                    params.updateCharacter.equipmentInventory[params.updateCharacter.equipCount].equip.acc = chr->equipmentInventory.items[i].equip.acc;
-                    params.updateCharacter.equipmentInventory[params.updateCharacter.equipCount].equip.avoid = chr->equipmentInventory.items[i].equip.avoid;
-                    params.updateCharacter.equipmentInventory[params.updateCharacter.equipCount].equip.speed = chr->equipmentInventory.items[i].equip.speed;
-                    params.updateCharacter.equipmentInventory[params.updateCharacter.equipCount].equip.jump = chr->equipmentInventory.items[i].equip.jump;
+                    dst->equip.level = src->level;
+                    dst->equip.slots = src->slots;
+                    dst->equip.str = src->str;
+                    dst->equip.dex = src->dex;
+                    dst->equip.int_ = src->int_;
+                    dst->equip.luk = src->luk;
+                    dst->equip.hp = src->hp;
+                    dst->equip.mp = src->mp;
+                    dst->equip.atk = src->atk;
+                    dst->equip.matk = src->matk;
+                    dst->equip.def = src->def;
+                    dst->equip.mdef = src->mdef;
+                    dst->equip.acc = src->acc;
+                    dst->equip.avoid = src->avoid;
+                    dst->equip.speed = src->speed;
+                    dst->equip.jump = src->jump;
 
                     params.updateCharacter.equipCount++;
                 }
@@ -844,18 +1227,18 @@ struct ClientContResult client_resume(struct Client *client, int status)
             for (uint8_t inv = 0; inv < 4; inv++) {
                 for (uint8_t i = 0; i < chr->inventory[inv].slotCount; i++) {
                     if (!chr->inventory[inv].items[i].isEmpty) {
-                        params.updateCharacter.inventoryItems[params.updateCharacter.itemCount].id = chr->inventory[inv].items[i].item.id;
+                        struct Item *src = &chr->inventory[inv].items[i].item.item;
+                        struct DatabaseItem *dst = &params.updateCharacter.inventoryItems[params.updateCharacter.itemCount].item;
                         params.updateCharacter.inventoryItems[params.updateCharacter.itemCount].slot = i;
                         params.updateCharacter.inventoryItems[params.updateCharacter.itemCount].count = chr->inventory[inv].items[i].item.quantity;
 
-                        struct Item *item = &chr->inventory[inv].items[i].item.item;
-                        params.updateCharacter.inventoryItems[params.updateCharacter.itemCount].item.id = item->id;
-                        params.updateCharacter.inventoryItems[params.updateCharacter.itemCount].item.itemId = item->itemId;
-                        params.updateCharacter.inventoryItems[params.updateCharacter.itemCount].item.flags = item->flags;
-                        params.updateCharacter.inventoryItems[params.updateCharacter.itemCount].item.ownerLength = item->ownerLength;
-                        memcpy(params.updateCharacter.inventoryItems[params.updateCharacter.itemCount].item.owner, item->owner, item->ownerLength);
-                        params.updateCharacter.inventoryItems[params.updateCharacter.itemCount].item.giverLength = item->giftFromLength;
-                        memcpy(params.updateCharacter.inventoryItems[params.updateCharacter.itemCount].item.giver, item->giftFrom, item->giftFromLength);
+                        dst->id = src->id;
+                        dst->itemId = src->itemId;
+                        dst->flags = src->flags;
+                        dst->ownerLength = src->ownerLength;
+                        memcpy(dst->owner, src->owner, src->ownerLength);
+                        dst->giverLength = src->giftFromLength;
+                        memcpy(dst->giver, src->giftFrom, src->giftFromLength);
 
                         params.updateCharacter.itemCount++;
                     }
@@ -1888,7 +2271,6 @@ bool client_gain_items(struct Client *client, size_t len, const uint32_t *ids, c
                     for (size_t j = 0; j < invs[inv].slotCount; j++) {
                         if (invs[inv].items[j].isEmpty) {
                             invs[inv].items[j].isEmpty = false;
-                            invs[inv].items[j].item.id = 0;
                             invs[inv].items[j].item.item.id = 0;
                             invs[inv].items[j].item.item.itemId = ids[i];
                             invs[inv].items[j].item.item.flags = 0;
@@ -2071,7 +2453,6 @@ bool client_gain_inventory_item(struct Client *client, const struct InventoryIte
                 } else {
                     if (inv.items[i].item.item.id == 0) {
                         inv.items[i].item.item.id = item->item.id;
-                        inv.items[i].item.id = item->id;
                     }
                     inv.items[i].item.quantity += quantity;
                     quantity = 0;
@@ -2112,7 +2493,6 @@ bool client_gain_inventory_item(struct Client *client, const struct InventoryIte
                         hash_set_u32_remove(chr->itemQuests, item->item.itemId);
 
                     inv.items[j].isEmpty = false;
-                    inv.items[j].item.id = 0;
                     inv.items[j].item.item = item->item;
                     inv.items[j].item.quantity = quantity;
 
@@ -3917,14 +4297,6 @@ void client_message(struct Client *client, const char *msg)
 
 bool client_warp(struct Client *client, uint32_t map, uint8_t portal)
 {
-    // If we are in the middle of an event then defer the
-    // map change after the event has finished
-    if (client->handlerType == PACKET_TYPE_SAVE) {
-        client->character.map = map;
-        client->character.spawnPoint = portal;
-        return false;
-    }
-
     struct Character *chr = &client->character;
     client->scriptState = SCRIPT_STATE_WARP;
     {

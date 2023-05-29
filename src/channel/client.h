@@ -16,7 +16,6 @@ struct Client;
 enum PacketType {
     PACKET_TYPE_NONE,
     PACKET_TYPE_LOGIN,
-    PACKET_TYPE_SAVE,
     PACKET_TYPE_LOGOUT,
 };
 
@@ -53,6 +52,8 @@ struct ClientContResult {
 
 struct ClientCommand;
 
+struct ClientSave;
+
 int clients_init(void);
 void clients_terminate(void);
 
@@ -60,7 +61,7 @@ struct Client *client_create(struct Session *session, struct DatabaseConnection 
 void client_destroy(struct Client *client);
 struct Session *client_get_session(struct Client *client);
 void client_login_start(struct Client *client, uint32_t id);
-void client_save_start(struct Client *client);
+int client_save_start(struct Client *client);
 void client_logout_start(struct Client *client);
 struct ClientContResult client_resume(struct Client *client, int status);
 void client_update_conn(struct Client *client, struct DatabaseConnection *conn);

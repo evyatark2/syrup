@@ -103,28 +103,18 @@ CREATE TABLE IF NOT EXISTS Items (
     FOREIGN KEY (giver) REFERENCES Characters (id) ON DELETE SET NULL
 );
 
-CREATE TABLE IF NOT EXISTS CharacterItems (
-	id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
-    item BIGINT UNSIGNED UNIQUE NOT NULL,
+CREATE TABLE IF NOT EXISTS InventoryItems (
+    item BIGINT UNSIGNED PRIMARY KEY, -- Inventory is determined by the item_id
     character_id INT UNSIGNED NOT NULL,
-    INDEX (character_id),
+    slot TINYINT UNSIGNED NOT NULL,
+    count INT NOT NULL DEFAULT 1,
     FOREIGN KEY (item) REFERENCES Items (id) ON DELETE CASCADE,
     FOREIGN KEY (character_id) REFERENCES Characters (id) ON DELETE CASCADE
 );
 
-CREATE TRIGGER delete_item_before_delete_character_item BEFORE DELETE ON CharacterItems
-	FOR EACH ROW
-    	DELETE FROM Items WHERE id = OLD.item;
-
-CREATE TABLE IF NOT EXISTS InventoryItems (
-    item BIGINT UNSIGNED PRIMARY KEY, -- Inventory is determined by the item_id
-    slot TINYINT UNSIGNED NOT NULL,
-    count INT NOT NULL DEFAULT 1,
-    FOREIGN KEY (item) REFERENCES CharacterItems (id) ON DELETE CASCADE
-);
-
 CREATE TABLE IF NOT EXISTS Equipment (
-    item BIGINT UNSIGNED PRIMARY KEY,
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+    item BIGINT UNSIGNED,
     level TINYINT NOT NULL DEFAULT 0, -- The number of successfully applied scrolls
     slots TINYINT NOT NULL,
     str SMALLINT NOT NULL DEFAULT 0,
@@ -144,16 +134,23 @@ CREATE TABLE IF NOT EXISTS Equipment (
     FOREIGN KEY (item) REFERENCES Items (id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS CharacterEquipment (
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+    equip BIGINT UNSIGNED,
+    character_id INT UNSIGNED NOT NULL,
+    FOREIGN KEY (equip) REFERENCES Equipment (id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS InventoryEquipment (
     equip BIGINT UNSIGNED PRIMARY KEY,
     slot TINYINT UNSIGNED NOT NULL,
-    FOREIGN KEY (equip) REFERENCES CharacterItems (id) ON DELETE CASCADE
+    FOREIGN KEY (equip) REFERENCES CharacterEquipment (id) ON DELETE CASCADE
 );
 
 -- The slot of the equipment is determined by its ID
 CREATE TABLE IF NOT EXISTS EquippedEquipment (
     equip BIGINT UNSIGNED PRIMARY KEY,
-    FOREIGN KEY (equip) REFERENCES CharacterItems (id) ON DELETE CASCADE
+    FOREIGN KEY (equip) REFERENCES CharacterEquipment (id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS Storages (
@@ -168,27 +165,19 @@ CREATE TABLE IF NOT EXISTS Storages (
 
 CREATE TABLE IF NOT EXISTS StorageItems (
     item BIGINT UNSIGNED PRIMARY KEY,
-    account_id INT UNSIGNED NOT NULL,
+    storage BIGINT UNSIGNED NOT NULL,
     slot TINYINT UNSIGNED NOT NULL,
     FOREIGN KEY (item) REFERENCES Items (id) ON DELETE CASCADE,
-    FOREIGN KEY (account_id) REFERENCES Accounts (id) ON DELETE CASCADE
+    FOREIGN KEY (storage) REFERENCES Storages (id) ON DELETE CASCADE
 );
-
-CREATE TRIGGER delete_item_before_delete_storage_item BEFORE DELETE ON StorageItems
-	FOR EACH ROW
-    	DELETE FROM Items WHERE id = OLD.item;
 
 CREATE TABLE IF NOT EXISTS StorageEquipment (
-    item BIGINT UNSIGNED PRIMARY KEY,
-    account_id INT UNSIGNED NOT NULL,
+    equip BIGINT UNSIGNED PRIMARY KEY,
+    storage BIGINT UNSIGNED NOT NULL,
     slot TINYINT UNSIGNED NOT NULL,
-    FOREIGN KEY (item) REFERENCES Items (id) ON DELETE CASCADE,
-    FOREIGN KEY (account_id) REFERENCES Accounts (id) ON DELETE CASCADE
+    FOREIGN KEY (equip) REFERENCES Equipment (id) ON DELETE CASCADE,
+    FOREIGN KEY (storage) REFERENCES Storages (id) ON DELETE CASCADE
 );
-
-CREATE TRIGGER delete_item_before_delete_storage_equipment BEFORE DELETE ON StorageEquipment
-	FOR EACH ROW
-    	DELETE FROM Items WHERE id = OLD.item;
 
 CREATE TABLE IF NOT EXISTS InProgressQuests (
     character_id INT UNSIGNED,
