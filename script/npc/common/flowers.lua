@@ -7,7 +7,7 @@ if c:isQuestStarted(quest) then
     end
 else
     local prize = prizes[math.random(#prizes)]
-    if not c:gainItems({ {  id = prize[0], amount = count } }) then
+    if not c:gainItems({ id = prize, amount = count }) then
         c:sendNext("Check for an available slot in your ETC inventory.");
         return
     end
