@@ -66,7 +66,6 @@ struct CharacterStats {
     int32_t exp;
 };
 
-// TODO: Check if this is max 124 or 252
 #define MAX_ITEM_COUNT 252
 
 struct Inventory {
@@ -116,6 +115,7 @@ struct KeyMapEntry {
 };
 
 struct Storage {
+    uint64_t id;
     uint8_t slots;
     uint8_t count;
     int32_t mesos;
@@ -135,6 +135,7 @@ size_t quest_get_progress_string(struct Quest *quest, char *out);
 
 struct Character {
     uint32_t id;
+    uint32_t accountId;
     uint8_t nameLength;
     char name[CHARACTER_MAX_NAME_LENGTH];
     uint32_t map;
