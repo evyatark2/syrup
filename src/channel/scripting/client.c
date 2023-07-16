@@ -36,6 +36,7 @@ static int l_client_send_prev_next(lua_State *L);
 static int l_client_send_yes_no(lua_State *L);
 static int l_client_send_get_number(lua_State *L);
 static int l_client_message(lua_State *L);
+static int l_client_map(lua_State *L);
 static int l_client_set_hp(lua_State *L);
 static int l_client_set_mp(lua_State *L);
 static int l_client_get_quest_info(lua_State *L);
@@ -80,6 +81,7 @@ static const struct luaL_Reg clientlib[] = {
     { "sendPrevNext", l_client_send_prev_next },
     { "sendYesNo", l_client_send_yes_no },
     { "sendGetNumber", l_client_send_get_number },
+    { "map", l_client_map },
     { "message", l_client_message },
     { "setHp", l_client_set_hp },
     { "setMp", l_client_set_mp },
@@ -431,6 +433,13 @@ static int l_client_send_get_number(lua_State *L)
     uint8_t speaker = lua_isinteger(L, 6) ? lua_tointeger(L, 6) : 0;
     client_send_get_number(client, len, str, speaker, def, min, max);
     return lua_yield(L, 0);
+}
+
+static int l_client_map(lua_State *L)
+{
+    struct Client *client = *(void **)luaL_checkudata(L, 1, SCRIPT_CLIENT_TYPE);
+    lua_pushinteger(L, client_get_character(client)->map);
+    return 1;
 }
 
 static int l_client_message(lua_State *L)
