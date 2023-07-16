@@ -54,10 +54,8 @@ struct Client {
 struct ClientSave {
     int state;
     struct DatabaseConnection *conn;
-    union {
-        struct DatabaseRequest *request;
-        struct RequestParams *params;
-    };
+    struct DatabaseRequest *request;
+    struct RequestParams *params;
     struct UserEvent *event;
 };
 
@@ -211,16 +209,13 @@ void client_login_start(struct Client *client, uint32_t id)
     client->character.id = id;
 }
 
-static void on_resume_database_operation(struct Session *session, int fd, int status)
+static void on_resume_database_operation(void *data, int fd, int status)
 {
-    struct Client *client = session_get_context(session);
-    struct ClientSave *save = client->save;
+    struct ClientSave *save = data;
 
     status = database_request_execute(save->request, status);
     if (status <= 0) {
         const struct RequestParams *params = database_request_get_params(save->request);
-        database_request_destroy(save->request);
-        database_connection_unlock(save->conn);
         free(params->updateCharacter.keyMap);
         free(params->updateCharacter.monsterBook);
         free(params->updateCharacter.skills);
@@ -228,53 +223,60 @@ static void on_resume_database_operation(struct Session *session, int fd, int st
         free(params->updateCharacter.questInfos);
         free(params->updateCharacter.progresses);
         free(params->updateCharacter.quests);
-        free(save);
-        session_close_event(session);
-        if (status != 0)
-            session_kick(session);
-        return;
-    }
-
-    session_set_event(session, status, fd, on_resume_database_operation);
-}
-
-static void on_database_unlocked(struct Session *session, int fd, int status)
-{
-    struct Client *client = session_get_context(session);
-    struct ClientSave *save = client->save;
-    struct RequestParams *params = save->params;
-    assert(status == POLLIN);
-    close(fd);
-
-    save->request = database_request_create(save->conn, params);
-    status = database_request_execute(save->request, 0);
-    if (status <= 0) {
         database_request_destroy(save->request);
         database_connection_unlock(save->conn);
-        free(params->updateCharacter.keyMap);
-        free(params->updateCharacter.monsterBook);
-        free(params->updateCharacter.skills);
-        free(params->updateCharacter.completedQuests);
-        free(params->updateCharacter.questInfos);
-        free(params->updateCharacter.progresses);
-        free(params->updateCharacter.quests);
-        free(params);
+        free(save->params);
         free(save);
-        session_close_event(session);
-        if (status != 0)
-            session_kick(session);
         return;
     }
 
-    session_set_event(session, status, database_connection_get_fd(save->conn), on_resume_database_operation);
+    save->event = user_event_add_event(save->event, status, fd, on_resume_database_operation, save);
 }
 
-int client_save_start(struct Client *client)
+static void start_save(struct Client *client)
 {
     struct Character *chr = &client->character;
+    const struct RequestParams *params = database_request_get_params(client->request);
+    const union DatabaseResult *res = database_request_result(client->request);
+    size_t count = 0;
+
+    for (size_t i = 0; i < 4; i++) {
+        for (size_t j = 0; j < chr->inventory[i].slotCount; j++) {
+            if (!chr->inventory[i].items[j].isEmpty && chr->inventory[i].items[j].item.item.id == 0) {
+                chr->inventory[i].items[j].item.item.id = res->allocateIds.items[count];
+                count++;
+            }
+        }
+    }
+
+    count = 0;
+    for (size_t i = 0; i < EQUIP_SLOT_COUNT; i++) {
+        if (!chr->equippedEquipment[i].isEmpty && chr->equippedEquipment[i].equip.id == 0) {
+            chr->equippedEquipment[i].equip.item.id = params->allocateIds.equippedEquipment[count].id;
+            chr->equippedEquipment[i].equip.equipId = params->allocateIds.equippedEquipment[count].equipId;
+            chr->equippedEquipment[i].equip.id = res->allocateIds.equippedEquipment[count];
+            count++;
+        }
+    }
+
+    count = 0;
+    for (size_t i = 0; i < chr->equipmentInventory.slotCount; i++) {
+        if (!chr->equipmentInventory.items[i].isEmpty && chr->equipmentInventory.items[i].equip.id == 0) {
+            chr->equipmentInventory.items[i].equip.item.id = params->allocateIds.equipmentInventory[count].id;
+            chr->equipmentInventory.items[i].equip.equipId = params->allocateIds.equipmentInventory[count].equipId;
+            chr->equipmentInventory.items[i].equip.id = res->allocateIds.equipmentInventory[count];
+            count++;
+        }
+    }
+
+    database_request_destroy(client->request);
+
     struct ClientSave *save = malloc(sizeof(struct ClientSave));
-    if (save == NULL)
-        return -1;
+    if (save == NULL) {
+        database_connection_unlock(client->conn);
+        session_kick(client->session);
+        return;
+    }
 
     client->save = save;
 
@@ -282,12 +284,15 @@ int client_save_start(struct Client *client)
     save->state = 0;
     save->params = malloc(sizeof(struct RequestParams));
     if (save->params == NULL) {
+        database_connection_unlock(client->conn);
         free(save);
-        return -1;
+        session_kick(client->session);
+        return;
     }
 
     save->params->type = DATABASE_REQUEST_TYPE_UPDATE_CHARACTER;
     save->params->updateCharacter.id = chr->id;
+    save->params->updateCharacter.accountId = chr->accountId;
     save->params->updateCharacter.map = wz_get_map_forced_return(chr->map);
     save->params->updateCharacter.spawnPoint = chr->spawnPoint;
     save->params->updateCharacter.job = chr->job;
@@ -308,8 +313,7 @@ int client_save_start(struct Client *client)
     save->params->updateCharacter.face = chr->face;
     save->params->updateCharacter.hair = chr->hair;
     save->params->updateCharacter.mesos = chr->mesos;
-    save->params->updateCharacter.equipSlots =
-        chr->equipmentInventory.slotCount;
+    save->params->updateCharacter.equipSlots = chr->equipmentInventory.slotCount;
     save->params->updateCharacter.useSlots = chr->inventory[0].slotCount;
     save->params->updateCharacter.setupSlots = chr->inventory[1].slotCount;
     save->params->updateCharacter.etcSlots = chr->inventory[2].slotCount;
@@ -321,20 +325,19 @@ int client_save_start(struct Client *client)
         if (!chr->equippedEquipment[i].isEmpty) {
             struct Equipment *src = &chr->equippedEquipment[i].equip;
             struct DatabaseCharacterEquipment *dst =
-                &save->params->updateCharacter
-                .equippedEquipment[save->params->updateCharacter.equippedCount];
+                &save->params->updateCharacter.equippedEquipment[save->params->updateCharacter.equippedCount];
 
             dst->id = src->id;
-            dst->equip.id = src->equip_id;
+            dst->equip.id = src->equipId;
             dst->equip.item.id = src->item.id;
             dst->equip.item.itemId = src->item.itemId;
             dst->equip.item.flags = src->item.flags;
             dst->equip.item.ownerLength = src->item.ownerLength;
             memcpy(dst->equip.item.owner, src->item.owner,
-                   src->item.ownerLength);
+                    src->item.ownerLength);
             dst->equip.item.giverLength = src->item.giftFromLength;
             memcpy(dst->equip.item.giver, src->item.giftFrom,
-                   src->item.giftFromLength);
+                    src->item.giftFromLength);
 
 
             dst->equip.level = src->level;
@@ -362,25 +365,18 @@ int client_save_start(struct Client *client)
         if (!chr->equipmentInventory.items[i].isEmpty) {
             struct Equipment *src = &chr->equipmentInventory.items[i].equip;
             struct DatabaseCharacterEquipment *dst =
-                &save->params->updateCharacter
-                .equipmentInventory[save->params->updateCharacter.equipCount]
-                .equip;
+                &save->params->updateCharacter.equipmentInventory[save->params->updateCharacter.equipCount].equip;
 
             dst->id = src->id;
-            dst->equip.id = src->equip_id;
-            save->params->updateCharacter
-                .equipmentInventory[save->params->updateCharacter.equipCount]
-                .slot = i;
+            dst->equip.id = src->equipId;
+            save->params->updateCharacter.equipmentInventory[save->params->updateCharacter.equipCount].slot = i;
             dst->equip.item.id = src->item.id;
             dst->equip.item.itemId = src->item.itemId;
             dst->equip.item.flags = src->item.flags;
             dst->equip.item.ownerLength = src->item.ownerLength;
-            memcpy(dst->equip.item.owner, src->item.owner,
-                   src->item.ownerLength);
+            memcpy(dst->equip.item.owner, src->item.owner, src->item.ownerLength);
             dst->equip.item.giverLength = src->item.giftFromLength;
-            memcpy(dst->equip.item.giver, src->item.giftFrom,
-                   src->item.giftFromLength);
-
+            memcpy(dst->equip.item.giver, src->item.giftFrom, src->item.giftFromLength);
 
             dst->equip.level = src->level;
             dst->equip.slots = src->slots;
@@ -407,9 +403,11 @@ int client_save_start(struct Client *client)
         for (uint8_t i = 0; i < chr->inventory[inv].slotCount; i++) {
             if (!chr->inventory[inv].items[i].isEmpty) {
                 struct Item *src = &chr->inventory[inv].items[i].item.item;
-                struct DatabaseItem *dst = &save->params->updateCharacter.inventoryItems[save->params->updateCharacter.itemCount].item;
+                struct DatabaseItem *dst =
+                    &save->params->updateCharacter.inventoryItems[save->params->updateCharacter.itemCount].item;
                 save->params->updateCharacter.inventoryItems[save->params->updateCharacter.itemCount].slot = i;
-                save->params->updateCharacter.inventoryItems[save->params->updateCharacter.itemCount].count = chr->inventory[inv].items[i].item.quantity;
+                save->params->updateCharacter.inventoryItems[save->params->updateCharacter.itemCount].count =
+                    chr->inventory[inv].items[i].item.quantity;
 
                 dst->id = src->id;
                 dst->itemId = src->itemId;
@@ -426,9 +424,11 @@ int client_save_start(struct Client *client)
 
     save->params->updateCharacter.quests = malloc(hash_set_u16_size(chr->quests) * sizeof(uint16_t));
     if (save->params->updateCharacter.quests == NULL) {
+        database_connection_unlock(client->conn);
         free(save->params);
         free(save);
-        return -1;
+        session_kick(client->session);
+        return;
     }
 
     struct AddQuestContext ctx = {
@@ -442,10 +442,11 @@ int client_save_start(struct Client *client)
 
     save->params->updateCharacter.progresses = malloc(ctx.progressCount * sizeof(struct DatabaseProgress));
     if (save->params->updateCharacter.progresses == NULL) {
+        database_connection_unlock(client->conn);
         free(save->params->updateCharacter.quests);
         free(save->params);
         free(save);
-        return -1;
+        session_kick(client->session);
     }
 
     struct AddProgressContext ctx2 = {
@@ -458,11 +459,12 @@ int client_save_start(struct Client *client)
 
     save->params->updateCharacter.questInfos = malloc(hash_set_u16_size(chr->questInfos) * sizeof(struct DatabaseInfoProgress));
     if (save->params->updateCharacter.questInfos == NULL) {
+        database_connection_unlock(client->conn);
         free(save->params->updateCharacter.progresses);
         free(save->params->updateCharacter.quests);
         free(save->params);
         free(save);
-        return -1;
+        session_kick(client->session);
     }
 
     struct AddQuestInfoContext ctx3 = {
@@ -475,12 +477,13 @@ int client_save_start(struct Client *client)
 
     save->params->updateCharacter.completedQuests = malloc(hash_set_u16_size(chr->completedQuests) * sizeof(struct DatabaseCompletedQuest));
     if (save->params->updateCharacter.completedQuests == NULL) {
+        database_connection_unlock(client->conn);
         free(save->params->updateCharacter.questInfos);
         free(save->params->updateCharacter.progresses);
         free(save->params->updateCharacter.quests);
         free(save->params);
         free(save);
-        return -1;
+        session_kick(client->session);
     }
 
     struct AddCompletedQuestContext ctx4 = {
@@ -493,13 +496,14 @@ int client_save_start(struct Client *client)
 
     save->params->updateCharacter.skills = malloc(hash_set_u32_size(chr->skills) * sizeof(struct DatabaseSkill));
     if (save->params->updateCharacter.completedQuests == NULL) {
+        database_connection_unlock(client->conn);
         free(save->params->updateCharacter.completedQuests);
         free(save->params->updateCharacter.questInfos);
         free(save->params->updateCharacter.progresses);
         free(save->params->updateCharacter.quests);
         free(save->params);
         free(save);
-        return -1;
+        session_kick(client->session);
     }
 
     struct AddSkillContext ctx5 = {
@@ -512,6 +516,7 @@ int client_save_start(struct Client *client)
 
     save->params->updateCharacter.monsterBook = malloc(hash_set_u32_size(chr->monsterBook) * sizeof(struct DatabaseMonsterBookEntry));
     if (save->params->updateCharacter.monsterBook == NULL) {
+        database_connection_unlock(client->conn);
         free(save->params->updateCharacter.skills);
         free(save->params->updateCharacter.completedQuests);
         free(save->params->updateCharacter.questInfos);
@@ -519,7 +524,7 @@ int client_save_start(struct Client *client)
         free(save->params->updateCharacter.quests);
         free(save->params);
         free(save);
-        return -1;
+        session_kick(client->session);
     }
 
     struct AddMonsterBookContext ctx6 = {
@@ -538,6 +543,7 @@ int client_save_start(struct Client *client)
 
     save->params->updateCharacter.keyMap = malloc(key_count * sizeof(struct DatabaseKeyMapEntry));
     if (save->params->updateCharacter.keyMap == NULL) {
+        database_connection_unlock(client->conn);
         free(save->params->updateCharacter.monsterBook);
         free(save->params->updateCharacter.skills);
         free(save->params->updateCharacter.completedQuests);
@@ -546,7 +552,7 @@ int client_save_start(struct Client *client)
         free(save->params->updateCharacter.quests);
         free(save->params);
         free(save);
-        return -1;
+        session_kick(client->session);
     }
 
     save->params->updateCharacter.keyMapEntryCount = 0;
@@ -559,10 +565,9 @@ int client_save_start(struct Client *client)
         }
     }
 
-    int fd = database_connection_lock(client->conn);
-    if (fd == -2) {
-        on_database_unlocked(client->session, fd, POLLIN);
-    } else if (fd == -1) {
+    save->request = database_request_create(save->conn, save->params);
+    if (save->request == NULL) {
+        database_connection_unlock(client->conn);
         free(save->params->updateCharacter.keyMap);
         free(save->params->updateCharacter.monsterBook);
         free(save->params->updateCharacter.skills);
@@ -572,9 +577,138 @@ int client_save_start(struct Client *client)
         free(save->params->updateCharacter.quests);
         free(save->params);
         free(save);
+        session_kick(client->session);
+    }
+
+    int status = database_request_execute(save->request, 0);
+    if (status <= 0) {
+        database_request_destroy(save->request);
+        database_connection_unlock(save->conn);
+        free(save->params->updateCharacter.keyMap);
+        free(save->params->updateCharacter.monsterBook);
+        free(save->params->updateCharacter.skills);
+        free(save->params->updateCharacter.completedQuests);
+        free(save->params->updateCharacter.questInfos);
+        free(save->params->updateCharacter.progresses);
+        free(save->params->updateCharacter.quests);
+        free(save->params);
+        free(save);
+        if (status < 0)
+            session_kick(client->session);
+        return;
+    }
+
+    save->event = session_add_event(client->session, status, database_connection_get_fd(save->conn), on_resume_database_operation, save);
+}
+
+static void on_resume_id_allocate_database_operation(struct Session *session, int fd, int status)
+{
+    struct Client *client = session_get_context(session);
+
+    status = database_request_execute(client->request, status);
+    if (status != 0) {
+        if (status > 0) {
+            session_set_event(session, status, fd, on_resume_id_allocate_database_operation);
+        } else if (status < 0) {
+            database_request_destroy(client->request);
+            database_connection_unlock(client->conn);
+            session_close_event(session);
+            session_kick(session);
+        }
+        return;
+    } else {
+        session_close_event(session);
+    }
+
+    start_save(client);
+}
+
+static void on_id_allocate_database_unlocked(struct Session *session, int fd, int status)
+{
+    struct Client *client = session_get_context(session);
+    struct Character *chr = &client->character;
+    assert(status == POLLIN);
+    close(fd);
+
+    struct RequestParams params = {
+        .type = DATABASE_REQUEST_TYPE_ALLOCATE_IDS,
+        .allocateIds = {
+            .id = chr->id,
+            .accountId = chr->accountId,
+            .itemCount = 0,
+            .equippedCount = 0,
+            .equipCount = 0,
+            .storageItemCount = 0,
+            .storageEquipCount = 0
+        },
+    };
+
+    for (size_t i = 0; i < 4; i++) {
+        for (size_t j = 0; j < chr->inventory[i].slotCount; j++) {
+            if (!chr->inventory[i].items[j].isEmpty && chr->inventory[i].items[j].item.item.id == 0) {
+                params.allocateIds.items[params.allocateIds.itemCount] = chr->inventory[i].items[j].item.item.itemId;
+                params.allocateIds.itemCount++;
+            }
+        }
+    }
+
+    for (size_t i = 0; i < EQUIP_SLOT_COUNT; i++) {
+        if (!chr->equippedEquipment[i].isEmpty && chr->equippedEquipment[i].equip.id == 0) {
+            params.allocateIds.equippedEquipment[params.allocateIds.equippedCount].id =
+                chr->equippedEquipment[i].equip.item.id;
+            params.allocateIds.equippedEquipment[params.allocateIds.equippedCount].equipId =
+                chr->equippedEquipment[i].equip.equipId;
+            params.allocateIds.equippedEquipment[params.allocateIds.equippedCount].itemId =
+                chr->equippedEquipment[i].equip.item.itemId;
+            params.allocateIds.equippedCount++;
+        }
+    }
+
+    for (size_t i = 0; i < chr->equipmentInventory.slotCount; i++) {
+        if (!chr->equipmentInventory.items[i].isEmpty && chr->equipmentInventory.items[i].equip.id == 0) {
+            params.allocateIds.equipmentInventory[params.allocateIds.equipCount].id =
+                chr->equipmentInventory.items[i].equip.item.id;
+            params.allocateIds.equipmentInventory[params.allocateIds.equipCount].equipId =
+                chr->equipmentInventory.items[i].equip.equipId;
+            params.allocateIds.equipmentInventory[params.allocateIds.equipCount].itemId =
+                chr->equipmentInventory.items[i].equip.item.itemId;
+            params.allocateIds.equipCount++;
+        }
+    }
+
+    client->request = database_request_create(client->conn, &params);
+    if (client->request == NULL) {
+        database_connection_unlock(client->conn);
+        return;
+    }
+
+    status = database_request_execute(client->request, 0);
+    if (status != 0) {
+        if (status > 0) {
+            session_set_event(session, status, database_connection_get_fd(client->conn), on_resume_id_allocate_database_operation);
+        } else if (status < 0) {
+            database_request_destroy(client->request);
+            database_connection_unlock(client->conn);
+            session_close_event(session);
+            session_kick(session);
+        }
+        return;
+    } else {
+        session_close_event(session);
+    }
+
+    start_save(client);
+}
+
+int client_save_start(struct Client *client)
+{
+    int fd = database_connection_lock(client->conn);
+    if (fd == -2) {
+        on_id_allocate_database_unlocked(client->session, fd, POLLIN);
+    } else if (fd == -1) {
         return -1;
     } else {
-        session_set_event(client->session, POLLIN, fd, on_database_unlocked);
+        return session_set_event(client->session, POLLIN, fd, on_id_allocate_database_unlocked);
     }
 
     return 0;
@@ -696,7 +830,7 @@ struct ClientContResult client_resume(struct Client *client, int status)
                 struct Equipment *dst = &chr->equippedEquipment[equip_slot_to_compact(equip_slot_from_id(res->getCharacter.equippedEquipment[i].equip.item.itemId))].equip;
                 chr->equippedEquipment[equip_slot_to_compact(equip_slot_from_id(res->getCharacter.equippedEquipment[i].equip.item.itemId))].isEmpty = false;
                 dst->id = src->id;
-                dst->equip_id = src->equip.id;
+                dst->equipId = src->equip.id;
                 dst->item.id = src->equip.item.id;
                 dst->item.itemId = src->equip.item.itemId;
                 //equip->item.cashId;
@@ -743,7 +877,7 @@ struct ClientContResult client_resume(struct Client *client, int status)
                 struct Equipment *dst = &chr->equipmentInventory.items[res->getCharacter.equipmentInventory[i].slot].equip;
                 chr->equipmentInventory.items[res->getCharacter.equipmentInventory[i].slot].isEmpty = false;
                 dst->id = src->id;
-                dst->equip_id = src->equip.id;
+                dst->equipId = src->equip.id;
                 dst->item.id = src->equip.item.id;
                 dst->item.itemId = src->equip.item.itemId;
                 //equip->item.cashId;
@@ -793,9 +927,62 @@ struct ClientContResult client_resume(struct Client *client, int status)
                 item->quantity = res->getCharacter.inventoryItems[i].count;
             }
 
-            chr->storage.slots = 4;
-            chr->storage.count = 0;
-            chr->storage.mesos = 258;
+            chr->storage.id = res->getCharacter.storage.id;
+            chr->storage.slots = res->getCharacter.storage.slots;
+            chr->storage.count = res->getCharacter.storageItemCount + res->getCharacter.storageEquipCount;
+            chr->storage.mesos = res->getCharacter.storage.mesos;
+
+            for (size_t i = 0; i < res->getCharacter.storageEquipCount; i++) {
+                chr->storage.storage[res->getCharacter.storageEquipment[i].slot].isEquip = true;
+                const struct DatabaseEquipment *src = &res->getCharacter.storageEquipment[i].equip;
+                struct Equipment *dst = &chr->storage.storage[res->getCharacter.storageEquipment[i].slot].equip;
+                dst->id = src->id;
+                dst->equipId = 0;
+                dst->item.id = src->item.id;
+                dst->item.itemId = src->item.itemId;
+                //equip->item.cashId;
+                //equip->item.sn; // What is this?
+
+                dst->item.ownerLength = 0; // equip->item.ownerLength = res->getCharacter.equippedEquipment[i].ownerLength;
+                                             //memcpy(equip->item.owner, res->getCharacter.equippedEquipment[i].owner, res->getCharacter.equippedEquipment[i].ownerLength);
+                dst->item.flags = src->item.flags;
+                dst->item.expiration = -1; //equip->item.expiration = res->getCharacter.equippedEquipment[i].expiration;
+                dst->item.giftFromLength = 0; //equip->item.giftFromLength = res->getCharacter.equippedEquipment[i].giverLength;
+                                                //equip->item.giftFrom[CHARACTER_MAX_NAME_LENGTH];
+                dst->level = src->level;
+                dst->slots = src->slots;
+                dst->str = src->str;
+                dst->dex = src->dex;
+                dst->int_ = src->int_;
+                dst->luk = src->luk;
+                dst->hp = src->hp;
+                dst->mp = src->mp;
+                dst->atk = src->atk;
+                dst->matk = src->matk;
+                dst->def = src->def;
+                dst->mdef = src->mdef;
+                dst->acc = src->acc;
+                dst->avoid = src->avoid;
+                //dst->hands = src->equip.hands;
+                dst->hands = 0;
+                dst->speed = src->speed;
+                dst->jump = src->jump;
+                dst->cash = wz_get_equip_info(dst->item.itemId)->cash;
+            }
+
+            for (size_t i = 0; i < res->getCharacter.storageItemCount; i++) {
+                chr->storage.storage[res->getCharacter.storageItems[i].slot].isEquip = false;
+                const struct DatabaseItem *src = &res->getCharacter.storageItems[i].item;
+                struct InventoryItem *dst = &chr->storage.storage[res->getCharacter.storageItems[i].slot].item;
+                dst->quantity = res->getCharacter.storageItems[i].count;
+                dst->item.id = src->id;
+                dst->item.itemId = src->itemId;
+                dst->item.ownerLength = src->ownerLength;
+                memcpy(dst->item.owner, src->owner, src->ownerLength);
+                dst->item.flags = src->flags;
+                dst->item.expiration = -1;
+                dst->item.giftFromLength = 0;
+            }
 
             chr->activeProjectile = -1;
 
@@ -1094,7 +1281,7 @@ struct ClientContResult client_resume(struct Client *client, int status)
     case PACKET_TYPE_LOGOUT:
         if (client->databaseState == 0) {
             // If the client doesn't have a room - meaning it didn't load a character,
-            // there is no need to flush the character, only applicable to PACKET_TYPE_LOGOUT
+            // there is no need to flush the character.
             if (session_get_room(client->session) == NULL) {
                 client_destroy(client);
                 return (struct ClientContResult) { .status = 0 };
@@ -1104,8 +1291,7 @@ struct ClientContResult client_resume(struct Client *client, int status)
             if (fd == -2) {
                 client->databaseState++;
             } else if (fd == -1) {
-                if (client->handlerType == PACKET_TYPE_LOGOUT)
-                    client_destroy(client);
+                client_destroy(client);
                 return (struct ClientContResult) { .status = -1 };
             } else {
                 client->databaseState++;
@@ -1114,8 +1300,124 @@ struct ClientContResult client_resume(struct Client *client, int status)
         }
 
         if (client->databaseState == 1) {
-            if (status != 0)
-                close(session_close_event(client->session));
+            struct RequestParams params = {
+                .type = DATABASE_REQUEST_TYPE_ALLOCATE_IDS,
+                .allocateIds = {
+                    .id = chr->id,
+                    .accountId = chr->accountId,
+                    .itemCount = 0,
+                    .equippedCount = 0,
+                    .equipCount = 0,
+                    .storageItemCount = 0,
+                    .storageEquipCount = 0
+                },
+            };
+
+            for (size_t i = 0; i < 4; i++) {
+                for (size_t j = 0; j < chr->inventory[i].slotCount; j++) {
+                    if (!chr->inventory[i].items[j].isEmpty && chr->inventory[i].items[j].item.item.id == 0) {
+                        params.allocateIds.items[params.allocateIds.itemCount] = chr->inventory[i].items[j].item.item.itemId;
+                        params.allocateIds.itemCount++;
+                    }
+                }
+            }
+
+            for (size_t i = 0; i < EQUIP_SLOT_COUNT; i++) {
+                if (!chr->equippedEquipment[i].isEmpty && chr->equippedEquipment[i].equip.id == 0) {
+                    params.allocateIds.equippedEquipment[params.allocateIds.equippedCount].id =
+                        chr->equippedEquipment[i].equip.item.id;
+                    params.allocateIds.equippedEquipment[params.allocateIds.equippedCount].equipId =
+                        chr->equippedEquipment[i].equip.equipId;
+                    params.allocateIds.equippedEquipment[params.allocateIds.equippedCount].itemId =
+                        chr->equippedEquipment[i].equip.item.itemId;
+                    params.allocateIds.equippedCount++;
+                }
+            }
+
+            for (size_t i = 0; i < chr->equipmentInventory.slotCount; i++) {
+                if (!chr->equipmentInventory.items[i].isEmpty && chr->equipmentInventory.items[i].equip.id == 0) {
+                    params.allocateIds.equippedEquipment[params.allocateIds.equipCount].id =
+                        chr->equipmentInventory.items[i].equip.item.id;
+                    params.allocateIds.equippedEquipment[params.allocateIds.equipCount].equipId =
+                        chr->equipmentInventory.items[i].equip.equipId;
+                    params.allocateIds.equippedEquipment[params.allocateIds.equipCount].itemId =
+                        chr->equipmentInventory.items[i].equip.item.itemId;
+                    params.allocateIds.equipCount++;
+                }
+            }
+
+            client->request = database_request_create(client->conn, &params);
+            if (client->request == NULL) {
+                database_connection_unlock(client->conn);
+                return (struct ClientContResult) { .status = -1 };
+            }
+
+            status = database_request_execute(client->request, 0);
+            client->databaseState++;
+            if (status > 0) {
+                return (struct ClientContResult) { .status = status, .fd = database_connection_get_fd(client->conn) };
+            } else if (status < 0) {
+                database_request_destroy(client->request);
+                database_connection_unlock(client->conn);
+                session_close_event(client->session);
+                client_destroy(client);
+                return (struct ClientContResult) { .status = -1 };
+            } else {
+                database_request_destroy(client->request);
+                database_connection_unlock(client->conn);
+                client->databaseState++;
+            }
+        }
+
+        if (client->databaseState == 2) {
+            status = database_request_execute(client->request, status);
+            if (status > 0) {
+                return (struct ClientContResult) { .status = status, .fd = database_connection_get_fd(client->conn) };
+            } else if (status < 0) {
+                database_request_destroy(client->request);
+                database_connection_unlock(client->conn);
+                session_close_event(client->session);
+                client_destroy(client);
+                return (struct ClientContResult) { .status = -1 };
+            } else {
+                client->databaseState++;
+            }
+        }
+
+        if (client->databaseState == 3) {
+            const struct RequestParams *out_params = database_request_get_params(client->request);
+            const union DatabaseResult *res = database_request_result(client->request);
+            size_t count = 0;
+            for (size_t i = 0; i < 4; i++) {
+                for (size_t j = 0; j < chr->inventory[i].slotCount; j++) {
+                    if (!chr->inventory[i].items[j].isEmpty && chr->inventory[i].items[j].item.item.id == 0) {
+                        chr->inventory[i].items[j].item.item.id = res->allocateIds.items[count];
+                        count++;
+                    }
+                }
+            }
+
+            count = 0;
+            for (size_t i = 0; i < EQUIP_SLOT_COUNT; i++) {
+                if (!chr->equippedEquipment[i].isEmpty && chr->equippedEquipment[i].equip.id == 0) {
+                    chr->equippedEquipment[i].equip.item.id = out_params->allocateIds.equippedEquipment[count].id;
+                    chr->equippedEquipment[i].equip.equipId = out_params->allocateIds.equippedEquipment[count].equipId;
+                    chr->equippedEquipment[i].equip.id = res->allocateIds.equippedEquipment[count];
+                    count++;
+                }
+            }
+
+            count = 0;
+            for (size_t i = 0; i < chr->equipmentInventory.slotCount; i++) {
+                if (!chr->equipmentInventory.items[i].isEmpty && chr->equipmentInventory.items[i].equip.id == 0) {
+                    chr->equipmentInventory.items[i].equip.item.id = out_params->allocateIds.equipmentInventory[count].id;
+                    chr->equipmentInventory.items[i].equip.equipId = out_params->allocateIds.equipmentInventory[count].equipId;
+                    chr->equipmentInventory.items[i].equip.id = res->allocateIds.equipmentInventory[count];
+                    count++;
+                }
+            }
+
+            database_request_destroy(client->request);
 
             struct RequestParams params = {
                 .type = DATABASE_REQUEST_TYPE_UPDATE_CHARACTER,
@@ -1156,7 +1458,7 @@ struct ClientContResult client_resume(struct Client *client, int status)
                     struct Equipment *src = &chr->equippedEquipment[i].equip;
                     struct DatabaseCharacterEquipment *dst = &params.updateCharacter.equippedEquipment[params.updateCharacter.equippedCount];
                     dst->id = src->id;
-                    dst->equip.id = src->equip_id;
+                    dst->equip.id = src->equipId;
                     dst->equip.item.id = src->item.id;
                     dst->equip.item.itemId = src->item.itemId;
                     dst->equip.item.flags = src->item.flags;
@@ -1192,7 +1494,7 @@ struct ClientContResult client_resume(struct Client *client, int status)
                     struct Equipment *src = &chr->equipmentInventory.items[i].equip;
                     struct DatabaseCharacterEquipment *dst = &params.updateCharacter.equipmentInventory[params.updateCharacter.equipCount].equip;
                     dst->id = src->id;
-                    dst->equip.id = src->equip_id;
+                    dst->equip.id = src->equipId;
                     params.updateCharacter.equipmentInventory[params.updateCharacter.equipCount].slot = i;
                     dst->equip.item.id = src->item.id;
                     dst->equip.item.itemId = src->item.itemId;
@@ -1247,8 +1549,7 @@ struct ClientContResult client_resume(struct Client *client, int status)
 
             params.updateCharacter.quests = malloc(hash_set_u16_size(chr->quests) * sizeof(uint16_t));
             if (params.updateCharacter.quests == NULL) {
-                if (client->handlerType == PACKET_TYPE_LOGOUT)
-                    client_destroy(client);
+                client_destroy(client);
                 return (struct ClientContResult) { .status = -1 };
             }
 
@@ -1264,8 +1565,7 @@ struct ClientContResult client_resume(struct Client *client, int status)
             params.updateCharacter.progresses = malloc(ctx.progressCount * sizeof(struct DatabaseProgress));
             if (params.updateCharacter.progresses == NULL) {
                 free(params.updateCharacter.quests);
-                if (client->handlerType == PACKET_TYPE_LOGOUT)
-                    client_destroy(client);
+                client_destroy(client);
                 return (struct ClientContResult) { .status = -1 };
             }
 
@@ -1281,8 +1581,7 @@ struct ClientContResult client_resume(struct Client *client, int status)
             if (params.updateCharacter.questInfos == NULL) {
                 free(params.updateCharacter.progresses);
                 free(params.updateCharacter.quests);
-                if (client->handlerType == PACKET_TYPE_LOGOUT)
-                    client_destroy(client);
+                client_destroy(client);
                 return (struct ClientContResult) { .status = -1 };
             }
 
@@ -1299,8 +1598,7 @@ struct ClientContResult client_resume(struct Client *client, int status)
                 free(params.updateCharacter.questInfos);
                 free(params.updateCharacter.progresses);
                 free(params.updateCharacter.quests);
-                if (client->handlerType == PACKET_TYPE_LOGOUT)
-                    client_destroy(client);
+                client_destroy(client);
                 return (struct ClientContResult) { .status = -1 };
             }
 
@@ -1318,8 +1616,7 @@ struct ClientContResult client_resume(struct Client *client, int status)
                 free(params.updateCharacter.questInfos);
                 free(params.updateCharacter.progresses);
                 free(params.updateCharacter.quests);
-                if (client->handlerType == PACKET_TYPE_LOGOUT)
-                    client_destroy(client);
+                client_destroy(client);
                 return (struct ClientContResult) { .status = -1 };
             }
 
@@ -1338,8 +1635,7 @@ struct ClientContResult client_resume(struct Client *client, int status)
                 free(params.updateCharacter.questInfos);
                 free(params.updateCharacter.progresses);
                 free(params.updateCharacter.quests);
-                if (client->handlerType == PACKET_TYPE_LOGOUT)
-                    client_destroy(client);
+                client_destroy(client);
                 return (struct ClientContResult) { .status = -1 };
             }
 
@@ -1365,8 +1661,7 @@ struct ClientContResult client_resume(struct Client *client, int status)
                 free(params.updateCharacter.questInfos);
                 free(params.updateCharacter.progresses);
                 free(params.updateCharacter.quests);
-                if (client->handlerType == PACKET_TYPE_LOGOUT)
-                    client_destroy(client);
+                client_destroy(client);
                 return (struct ClientContResult) { .status = -1 };
             }
 
@@ -1389,13 +1684,12 @@ struct ClientContResult client_resume(struct Client *client, int status)
                 free(params.updateCharacter.questInfos);
                 free(params.updateCharacter.progresses);
                 free(params.updateCharacter.quests);
-                if (client->handlerType == PACKET_TYPE_LOGOUT)
-                    client_destroy(client);
-                return (struct ClientContResult) { .status = -1 };
+                client_destroy(client);
+                return (struct ClientContResult) { -1 };
             }
 
-            client->databaseState++;
             status = database_request_execute(client->request, 0);
+            client->databaseState++;
             if (status <= 0) {
                 free(params.updateCharacter.keyMap);
                 free(params.updateCharacter.monsterBook);
@@ -1406,16 +1700,14 @@ struct ClientContResult client_resume(struct Client *client, int status)
                 free(params.updateCharacter.quests);
                 database_request_destroy(client->request);
                 database_connection_unlock(client->conn);
-                if (client->handlerType == PACKET_TYPE_LOGOUT)
-                    client_destroy(client);
-                return (struct ClientContResult) { .status = status };
+                client_destroy(client);
+                return (struct ClientContResult) { status };
             }
 
-            return (struct ClientContResult) { .status = status, .fd = database_connection_get_fd(client->conn) };
-            client->databaseState++;
+            return (struct ClientContResult) { status, database_connection_get_fd(client->conn) };
         }
 
-        if (client->databaseState == 2) {
+        if (client->databaseState == 4) {
             status = database_request_execute(client->request, status);
             if (status <= 0) {
                 const struct RequestParams *params = database_request_get_params(client->request);
@@ -1429,17 +1721,12 @@ struct ClientContResult client_resume(struct Client *client, int status)
                 database_request_destroy(client->request);
                 database_connection_unlock(client->conn);
                 client->handlerType = PACKET_TYPE_NONE;
-                if (client->handlerType == PACKET_TYPE_LOGOUT)
-                    client_destroy(client);
-                else if (client->character.map != room_get_id(session_get_room(client->session)))
-                    client_warp(client, client->character.map, client->character.spawnPoint);
+                client_destroy(client);
 
-
-
-                return (struct ClientContResult) { .status = status };
+                return (struct ClientContResult) { status };
             }
 
-            return (struct ClientContResult) { .status = status, .fd = database_connection_get_fd(client->conn) };
+            return (struct ClientContResult) { status, database_connection_get_fd(client->conn) };
         }
     break;
     default:

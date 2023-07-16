@@ -27,6 +27,7 @@ enum DatabaseRequestType {
     DATABASE_REQUEST_TYPE_GET_MONSTER_DROPS,
     DATABASE_REQUEST_TYPE_GET_REACTOR_DROPS,
     DATABASE_REQUEST_TYPE_GET_SHOPS,
+    DATABASE_REQUEST_TYPE_ALLOCATE_IDS,
     DATABASE_REQUEST_TYPE_UPDATE_CHARACTER
 };
 
@@ -162,6 +163,38 @@ struct RequestParams {
         } getCharacter;
         struct {
             uint32_t id;
+            uint32_t accountId;
+            size_t equippedCount;
+            struct {
+                uint64_t id;
+                uint64_t equipId;
+                uint32_t itemId;
+            } equippedEquipment[252];
+            size_t equipCount;
+            struct {
+                uint64_t id;
+                uint64_t equipId;
+                uint32_t itemId;
+            } equipmentInventory[252];
+            size_t itemCount;
+            uint32_t items[4 * 252];
+            uint64_t storage;
+            size_t storageEquipCount;
+            struct {
+                uint64_t id;
+                uint32_t itemId;
+                uint64_t slot;
+            } storageEquipment[252];
+            size_t storageItemCount;
+            struct {
+                uint64_t id;
+                uint32_t itemId;
+                uint64_t slot;
+            } storageItems[252];
+        } allocateIds;
+        struct {
+            uint32_t id;
+            uint32_t accountId;
             uint32_t map;
             uint8_t spawnPoint;
             uint16_t job;
@@ -199,6 +232,24 @@ struct RequestParams {
                 int16_t count;
                 struct DatabaseItem item;
             } inventoryItems[4 * 252];
+            struct {
+                uint64_t id;
+                uint8_t slots;
+                int32_t mesos;
+            } storage;
+            size_t storageEquipCount;
+            struct {
+                uint64_t slotId;
+                uint8_t slot;
+                struct DatabaseEquipment equip;
+            } storageEquipment[252];
+            size_t storageItemCount;
+            struct {
+                uint64_t slotId;
+                uint8_t slot;
+                int16_t count;
+                struct DatabaseItem item;
+            } storageItems[252];
             size_t questCount;
             uint16_t *quests;
             size_t progressCount;
@@ -346,6 +397,8 @@ union DatabaseResult {
         } characters[ACCOUNT_MAX_CHARACTERS_PER_WORLD];
     } getCharactersForAccountForWorld;
     struct {
+        uint32_t accountId;
+        uint8_t world;
         size_t nameLength;
         char name[CHARACTER_MAX_NAME_LENGTH];
         uint32_t map;
@@ -387,6 +440,24 @@ union DatabaseResult {
             int16_t count;
             struct DatabaseItem item;
         } inventoryItems[4 * 252];
+        struct {
+            uint64_t id;
+            uint8_t slots;
+            int32_t mesos;
+        } storage;
+        size_t storageItemCount;
+        struct {
+            uint64_t slotId;
+            uint8_t slot;
+            int16_t count;
+            struct DatabaseItem item;
+        } storageItems[252];
+        size_t storageEquipCount;
+        struct {
+            uint64_t slotId;
+            uint8_t slot;
+            struct DatabaseEquipment equip;
+        } storageEquipment[252];
         size_t questCount;
         uint16_t *quests;
         size_t progressCount;
@@ -414,6 +485,11 @@ union DatabaseResult {
         size_t count;
         struct Shop *shops;
     } getShops;
+    struct {
+        uint64_t items[4 * 252];
+        uint64_t equippedEquipment[252];
+        uint64_t equipmentInventory[252];
+    } allocateIds;
 };
 
 void database_connection_set_credentials(char *host, char *user, char *password, char *db, uint16_t port, char *socket);

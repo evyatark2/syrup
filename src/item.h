@@ -231,7 +231,7 @@ struct Item {
 
 struct Equipment {
     uint64_t id;
-    uint64_t equip_id;
+    uint64_t equipId;
     struct Item item;
     int8_t level;
     int8_t slots;
@@ -257,7 +257,7 @@ static inline struct Equipment equipment_from_info(const struct EquipInfo *info)
 {
     return (struct Equipment) {
         .id = 0,
-        .equip_id = 0,
+        .equipId = 0,
         .item = {
             .id = 0,
             .itemId = info->id,
