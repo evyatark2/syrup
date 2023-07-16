@@ -1805,6 +1805,11 @@ uint32_t client_get_active_npc(struct Client *client)
     return client->npc;
 }
 
+uint16_t client_get_active_quest(struct Client *client)
+{
+    return client->qid;
+}
+
 struct MapHandleContainer *client_get_map(struct Client *client)
 {
     return &client->map;

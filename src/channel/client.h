@@ -69,6 +69,7 @@ void client_handle_command(struct Client *client, struct ClientCommand *cmd);
 void client_notify_command_received(struct Client *client, struct ClientCommand *cmd, bool sent);
 const struct Character *client_get_character(struct Client *client);
 uint32_t client_get_active_npc(struct Client *client);
+uint16_t client_get_active_quest(struct Client *client);
 struct MapHandleContainer *client_get_map(struct Client *client);
 void client_announce_self_to_map(struct Client *client);
 void client_announce_add_player(struct Client *client, const struct Character *chr);
