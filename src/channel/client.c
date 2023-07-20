@@ -1,3 +1,4 @@
+#define _XOPEN_SOURCE 500 // random()
 #include "client.h"
 
 #include <assert.h>
@@ -11,44 +12,54 @@
 
 #include "../constants.h"
 #include "../hash-map.h"
-#include "../packet.h"
 #include "../party.h"
-#include "map.h"
-#include "scripting/client.h"
 #include "shop.h"
 
 struct Client {
     struct Session *session;
-    struct MapHandleContainer map;
     struct DatabaseConnection *conn;
     struct ClientSave *save;
-    struct {
-        struct ScriptManager *quest;
-        struct ScriptManager *npc;
-        struct ScriptManager *portal;
-        struct ScriptManager *map;
-    } managers;
-    enum PacketType handlerType;
     struct Character character;
     struct ScriptInstance *script;
 
-    // Values related to the current script state
+    // Values related to NPC dialogue state
     struct {
-        enum ScriptState scriptState;
+        enum ClientDialogueState state;
         uint32_t min;
         uint32_t max;
     };
 
+    uint8_t activeProjectile;
+
     uint16_t qid;
     uint32_t npc;
     uint32_t shop;
-    struct HashSetU32 *visibleMapObjects;
+
+    // For each monster ID in this set, there is a reference count of the number of quests that have this monster as a requirement.
+    // This is used in client_kill_monster() to quickly check if the monster has a quest before starting to iterate over the elements of Character::quests
+    struct HashSetU32 *monsterQuests;
+    struct HashSetU32 *itemsForQuests; // Generic items that are needed for quests; uses ItemRefCount
+    struct HashSetU32 *questItems; // Quest-exclusive items; uses QuestItem
 
     struct DatabaseRequest *request;
     int databaseState;
-    enum Stat stats;
     struct Party *party;
     bool autoPickup;
+};
+
+struct MonsterRefCount {
+    uint32_t id;
+    int8_t refs;
+};
+
+struct ItemRefCount {
+    uint32_t id;
+    int8_t refs;
+};
+
+struct QuestItem {
+    uint32_t id;
+    int16_t quantity;
 };
 
 struct ClientSave {
@@ -72,51 +83,6 @@ static void insert_client(uint8_t len, const char *name, uint32_t id);
 static uint32_t find_id_by_name(uint8_t len, const char *name);
 
 static bool check_quest_requirements(struct Character *chr, size_t req_count, const struct QuestRequirement *reqs, uint32_t npc);
-static bool start_quest(struct Client *client, uint16_t qid, uint32_t npc, bool *success);
-static bool end_quest(struct Client *client, uint16_t qid, uint32_t npc, bool *success);
-
-struct AddQuestContext {
-    uint16_t *quests;
-    size_t currentQuest;
-    size_t progressCount;
-};
-
-static void add_quest(void *data, void *ctx);
-
-struct AddProgressContext {
-    struct DatabaseProgress *progresses;
-    size_t currentProgress;
-};
-
-static void add_progress(void *data, void *ctx);
-
-struct AddQuestInfoContext {
-    struct DatabaseInfoProgress *infos;
-    size_t currentInfo;
-};
-
-static void add_quest_info(void *data, void *ctx);
-
-struct AddCompletedQuestContext {
-    struct DatabaseCompletedQuest *quests;
-    size_t currentQuest;
-};
-
-static void add_completed_quest(void *data, void *ctx);
-
-struct AddSkillContext {
-    struct DatabaseSkill *skills;
-    size_t currentSkill;
-};
-
-static void add_skill(void *data, void *ctx);
-
-struct AddMonsterBookContext {
-    struct DatabaseMonsterBookEntry *monsterBook;
-    size_t currentEntry;
-};
-
-static void add_monster_book_entry(void *data, void *ctx);
 
 enum ClientCommandType {
     CLIENT_COMMAND_PARTY_INVITE,
@@ -148,68 +114,86 @@ void clients_terminate(void)
     mtx_destroy(&CLIENTS_LOCK);
 }
 
-struct Client *client_create(struct Session *session, struct DatabaseConnection *conn, struct ScriptManager *quest_manager, struct ScriptManager *portal_mananger, struct ScriptManager *npc_manager, struct ScriptManager *map_manager)
+struct Client *client_create(struct Character *chr)
 {
     struct Client *client = malloc(sizeof(struct Client));
     if (client == NULL)
         return NULL;
 
-    client->visibleMapObjects = hash_set_u32_create(sizeof(uint32_t), 0);
-    if (client->visibleMapObjects == NULL) {
+    client->monsterQuests = hash_set_u32_create(sizeof(struct MonsterRefCount), offsetof(struct MonsterRefCount, id));
+    if (client->monsterQuests == NULL) {
         free(client);
         return NULL;
     }
 
-    client->session = session;
-    client->conn = conn;
-    client->map.player = NULL;
-    client->managers.quest = quest_manager;
-    client->managers.portal = portal_mananger;
-    client->managers.npc = npc_manager;
-    client->managers.map = map_manager;
-    client->character.quests = NULL;
-    client->character.monsterQuests = NULL;
-    client->character.itemQuests = NULL;
-    client->character.questInfos = NULL;
-    client->character.completedQuests = NULL;
-    client->character.skills = NULL;
-    client->character.monsterBook = NULL;
+    client->questItems = hash_set_u32_create(sizeof(uint32_t), 0);
+    if (client->questItems == NULL) {
+        hash_set_u32_destroy(client->monsterQuests);
+        free(client);
+        return NULL;
+    }
+
+    client->activeProjectile = -1;
+
+    if (!chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].isEmpty) {
+        // Bow
+        if (chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].equip.item.itemId / 10000 == 145) {
+            for (uint8_t i = 0; i < chr->inventory[0].slotCount; i++) {
+                if (!chr->inventory[0].items[i].isEmpty && chr->inventory[0].items[i].item.item.itemId / 1000 == 2060) {
+                    client->activeProjectile = i;
+                    break;
+                }
+            }
+            // Crossbow
+        } else if (chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].equip.item.itemId / 10000 == 146) {
+            for (uint8_t i = 0; i < chr->inventory[0].slotCount; i++) {
+                if (!chr->inventory[0].items[i].isEmpty && chr->inventory[0].items[i].item.item.itemId / 1000 == 2061) {
+                    client->activeProjectile = i;
+                    break;
+                }
+            }
+            // Claw
+        } else if (chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].equip.item.itemId / 10000 == 147) {
+            for (uint8_t i = 0; i < chr->inventory[0].slotCount; i++) {
+                if (!chr->inventory[0].items[i].isEmpty && ITEM_IS_THROWING_STAR(chr->inventory[0].items[i].item.item.itemId) && chr->inventory[0].items[i].item.quantity > 0) {
+                    client->activeProjectile = i;
+                    break;
+                }
+            }
+            // Gun
+        } else if (chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].equip.item.itemId / 10000 == 149) {
+            for (uint8_t i = 0; i < chr->inventory[0].slotCount; i++) {
+                if (!chr->inventory[0].items[i].isEmpty && ITEM_IS_BULLET(chr->inventory[0].items[i].item.item.itemId) && chr->inventory[0].items[i].item.quantity > 0) {
+                    client->activeProjectile = i;
+                    break;
+                }
+            }
+        }
+        // TODO: Capsules
+    }
+
+    client->character = *chr;
     client->script = NULL;
     client->shop = -1;
-    client->stats = 0;
     client->party = NULL;
     client->autoPickup = false;
-    client->handlerType = PACKET_TYPE_NONE;
 
     return client;
 }
 
 void client_destroy(struct Client *client)
 {
+    hash_set_u32_destroy(client->questItems);
+    hash_set_u32_destroy(client->monsterQuests);
     hash_set_u32_destroy(client->character.monsterBook);
     hash_set_u32_destroy(client->character.skills);
     hash_set_u16_destroy(client->character.completedQuests);
     hash_set_u16_destroy(client->character.questInfos);
-    hash_set_u32_destroy(client->character.itemQuests);
-    hash_set_u32_destroy(client->character.monsterQuests);
     hash_set_u16_destroy(client->character.quests);
-    hash_set_u32_destroy(client->visibleMapObjects);
     free(client);
 }
 
-struct Session *client_get_session(struct Client *client)
-{
-    return client->session;
-}
-
-void client_login_start(struct Client *client, uint32_t id)
-{
-    client->handlerType = PACKET_TYPE_LOGIN;
-    client->databaseState = 0;
-    client->character.id = id;
-}
-
-static void on_resume_database_operation(void *data, int fd, int status)
+/*static void on_resume_database_operation(void *data, int fd, int status)
 {
     struct ClientSave *save = data;
 
@@ -1734,14 +1718,9 @@ struct ClientContResult client_resume(struct Client *client, int status)
     }
 
     return (struct ClientContResult) { 0 };
-}
+}*/
 
-void client_update_conn(struct Client *client, struct DatabaseConnection *conn)
-{
-    client->conn = conn;
-}
-
-void client_handle_command(struct Client *client, struct ClientCommand *cmd)
+/*void client_handle_command(struct Client *client, struct ClientCommand *cmd)
 {
     switch (cmd->type) {
     case CLIENT_COMMAND_PARTY_INVITE: {
@@ -1793,11 +1772,21 @@ void client_notify_command_received(struct Client *client, struct ClientCommand 
     // If the map doesn't match then it means that client_warp() was called
     if (client->character.map != room_get_id(session_get_room(client->session)))
         client_warp(client, client->character.map, client->character.spawnPoint);
-}
+}*/
 
-const struct Character *client_get_character(struct Client *client)
+struct Character *client_get_character(struct Client *client)
 {
     return &client->character;
+}
+
+void client_set_map(struct Client *client, uint32_t map)
+{
+    client->character.map = map;
+}
+
+uint32_t client_map(struct Client *client)
+{
+    return client->character.map;
 }
 
 uint32_t client_get_active_npc(struct Client *client)
@@ -1810,12 +1799,7 @@ uint16_t client_get_active_quest(struct Client *client)
     return client->qid;
 }
 
-struct MapHandleContainer *client_get_map(struct Client *client)
-{
-    return &client->map;
-}
-
-void client_announce_self_to_map(struct Client *client)
+/*void client_announce_self_to_map(struct Client *client)
 {
     uint8_t packet[ADD_PLAYER_TO_MAP_PACKET_MAX_LENGTH];
     size_t len = add_player_to_map_packet(client_get_character(client), packet);
@@ -1848,57 +1832,9 @@ void client_announce_monster(struct Client *client, const struct Monster *monste
     uint8_t packet[SPAWN_MONSTER_PACKET_LENGTH];
     spawn_monster_packet(monster->oid, monster->id, monster->x, monster->y, monster->fh, false, packet);
     session_write(client->session, SPAWN_MONSTER_PACKET_LENGTH, packet);
-}
+}*/
 
-bool client_announce_drop(struct Client *client, uint32_t owner_id, uint32_t dropper_oid, uint8_t type, bool player_drop, const struct Drop *drop)
-{
-    struct Character *chr = &client->character;
-    if (hash_set_u32_insert(client->visibleMapObjects, &drop->oid) == -1)
-        return false;
-
-    if (type < 3 && owner_id == chr->id)
-        type = 2;
-
-    switch (drop->type) {
-    case DROP_TYPE_MESO: {
-        uint8_t packet[DROP_MESO_FROM_OBJECT_PACKET_LENGTH];
-        drop_meso_from_object_packet(drop->oid, drop->meso, owner_id, type,
-                drop->x, drop->y, drop->x, drop->y, dropper_oid, player_drop, packet);
-        session_write(client->session, DROP_MESO_FROM_OBJECT_PACKET_LENGTH, packet);
-    }
-    break;
-
-    case DROP_TYPE_ITEM: {
-        if (drop->qid != 0) {
-            struct Quest *quest = hash_set_u16_get(client->character.quests, drop->qid);
-            if (quest != NULL && hash_set_u32_get(chr->itemQuests, drop->item.item.itemId) != NULL) {
-                uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
-                drop_item_from_object_packet(drop->oid, drop->item.item.itemId, owner_id, type,
-                    drop->x, drop->y, drop->x, drop->y, dropper_oid, player_drop, packet);
-                session_write(client->session, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet);
-            }
-        } else {
-            uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
-            drop_item_from_object_packet(drop->oid, drop->item.item.itemId, owner_id, type,
-                    drop->x, drop->y, drop->x, drop->y, dropper_oid, player_drop, packet);
-            session_write(client->session, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet);
-        }
-    }
-    break;
-
-    case DROP_TYPE_EQUIP: {
-            uint8_t packet[DROP_ITEM_FROM_OBJECT_PACKET_LENGTH];
-            drop_item_from_object_packet(drop->oid, drop->equip.item.itemId, owner_id, type,
-                    drop->x, drop->y, drop->x, drop->y, dropper_oid, player_drop, packet);
-            session_write(client->session, DROP_ITEM_FROM_OBJECT_PACKET_LENGTH, packet);
-    }
-    break;
-    }
-
-    return true;
-}
-
-bool client_announce_spawn_drop(struct Client *client, uint32_t owner_id, uint32_t dropper_oid, uint8_t type, bool player_drop, const struct Drop *drop)
+/*bool client_announce_spawn_drop(struct Client *client, uint32_t owner_id, uint32_t dropper_oid, uint8_t type, bool player_drop, const struct Drop *drop)
 {
     struct Character *chr = &client->character;
     if (hash_set_u32_insert(client->visibleMapObjects, &drop->oid) == -1)
@@ -1940,92 +1876,97 @@ bool client_announce_spawn_drop(struct Client *client, uint32_t owner_id, uint32
     }
 
     return true;
-
-}
-
-void client_update_player_pos(struct Client *client, int16_t x, int16_t y, uint16_t fh, uint8_t stance)
-{
-    client->character.x = x;
-    client->character.y = y;
-    client->character.fh = fh;
-    client->character.stance = stance;
-}
+}*/
 
 void client_set_hp(struct Client *client, int16_t hp)
 {
     struct Character *chr = &client->character;
-    if (hp == chr->hp)
-        return;
-
     character_set_hp(chr, hp);
-    client->stats |= STAT_HP;
 }
 
-void client_set_hp_now(struct Client *client, int16_t hp)
+#define DEFINE_STAT_GET(type, stat, member) \
+    type client_##stat(struct Client *client) \
+    { \
+        return client->character.member; \
+    }
+
+DEFINE_STAT_GET(uint8_t, skin, skin)
+DEFINE_STAT_GET(uint32_t, face, face)
+DEFINE_STAT_GET(uint32_t, hair, hair)
+DEFINE_STAT_GET(uint8_t, level, level)
+DEFINE_STAT_GET(uint16_t, job, job)
+
+bool client_adjust_hp(struct Client *client, bool external, int16_t hp)
+{
+    if (hp > 0 && client->character.hp > INT16_MAX - hp)
+        hp = INT16_MAX - client->character.hp;
+    if (!external && client->character.hp + hp < 0)
+        return false;
+    client_set_hp(client, client->character.hp + hp);
+    return true;
+}
+
+void client_adjust_hp_precent(struct Client *client, uint8_t hpR)
 {
     struct Character *chr = &client->character;
-    character_set_hp(chr, hp);
-    uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
-    union StatValue value = { .i16 = chr->hp };
-    size_t len = stat_change_packet(true, STAT_HP, &value, packet);
-    session_write(client->session, len, packet);
+    int16_t hp = character_get_effective_hp(chr) * hpR / 100;
+    client_adjust_hp(client, false, hp);
 }
 
-void client_adjust_hp(struct Client *client, int32_t hp)
-{
-    // Overflow protection
-    if (hp > 0 && client->character.hp > INT16_MAX - hp)
-        hp = INT16_MAX - client->character.hp;
-    else if (client->character.hp < INT16_MIN - hp)
-        hp = INT16_MIN - client->character.hp;
-    client_set_hp(client, client->character.hp + hp);
-}
-
-void client_adjust_hp_now(struct Client *client, int32_t hp)
-{
-    // Overflow protection
-    if (hp > 0 && client->character.hp > INT16_MAX - hp)
-        hp = INT16_MAX - client->character.hp;
-    else if (client->character.hp < INT16_MIN - hp)
-        hp = INT16_MIN - client->character.hp;
-    client_set_hp_now(client, client->character.hp + hp);
-}
+DEFINE_STAT_GET(int16_t, hp, hp)
 
 void client_set_mp(struct Client *client, int16_t mp)
 {
     struct Character *chr = &client->character;
-    if (mp == chr->mp)
-        return;
-
     character_set_mp(chr, mp);
-    client->stats |= STAT_MP;
 }
 
-void client_set_mp_now(struct Client *client, int16_t mp)
+bool client_adjust_mp(struct Client *client, int16_t mp)
+{
+    if (mp > 0 && client->character.mp > INT16_MAX - mp)
+        mp = INT16_MAX - client->character.mp;
+    if (client->character.mp + mp < 0)
+        return false;
+    client_set_mp(client, client->character.mp + mp);
+    return true;
+}
+
+void client_adjust_mp_precent(struct Client *client, uint8_t mpR)
 {
     struct Character *chr = &client->character;
-    character_set_mp(chr, mp);
-    uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
-    union StatValue value = { .i16 = chr->mp };
-    size_t len = stat_change_packet(true, STAT_MP, &value, packet);
-    session_write(client->session, len, packet);
+    int16_t mp = character_get_effective_mp(chr) * mpR / 100;
+    client_adjust_mp(client, mp);
 }
 
-void client_adjust_mp(struct Client *client, int16_t mp)
+DEFINE_STAT_GET(int16_t, mp, mp)
+
+void client_set_max_mp(struct Client *client, int16_t mp)
+{
+    struct Character *chr = &client->character;
+    character_set_max_mp(chr, mp);
+}
+
+DEFINE_STAT_GET(int16_t, max_mp, maxMp)
+
+void client_set_max_hp(struct Client *client, int16_t hp)
+{
+    struct Character *chr = &client->character;
+    character_set_max_hp(chr, hp);
+}
+
+DEFINE_STAT_GET(int16_t, max_hp, maxHp)
+
+bool client_adjust_hp_mp(struct Client *client, int16_t hp, int16_t mp)
 {
     if (mp > 0 && client->character.mp > INT16_MAX - mp)
         mp = INT16_MAX - client->character.mp;
+    if (hp > 0 && client->character.hp > INT16_MAX - hp)
+        hp = INT16_MAX - client->character.hp;
+    if (client->character.mp + mp < 0 || client->character.hp + hp < 0)
+        return false;
     client_set_mp(client, client->character.mp + mp);
-}
-
-void client_adjust_mp_now(struct Client *client, int32_t mp)
-{
-    // Overflow protection
-    if (mp > 0 && client->character.mp > INT16_MAX - mp)
-        mp = INT16_MAX - client->character.mp;
-    else if (client->character.mp < INT16_MIN - mp)
-        mp = INT16_MIN - client->character.mp;
-    client_set_mp_now(client, client->character.mp + mp);
+    client_set_hp(client, client->character.hp + hp);
+    return true;
 }
 
 void client_adjust_sp(struct Client *client, int16_t sp)
@@ -2034,142 +1975,59 @@ void client_adjust_sp(struct Client *client, int16_t sp)
     if (sp > 0 && chr->sp > INT16_MAX - sp)
         sp = INT16_MAX - chr->sp;
     character_set_sp(chr, chr->sp + sp);
-    client->stats |= STAT_SP;
 }
 
-#define DEFINE_STAT_ADJUST(name, stat_name, stat) \
-    void client_adjust_##name(struct Client *client, int16_t amount) \
-    { \
-        if (amount == 0) \
-            return; \
- \
-        struct Character *chr = &client->character; \
-        if (chr->ap >= amount) { \
-            if (amount > INT16_MAX - chr->stat_name) \
-                amount = INT16_MAX - chr->stat_name; \
-            character_set_##name(chr, chr->stat_name + amount); \
-            character_set_ap(chr, chr->ap - amount); \
-            client->stats |= stat | STAT_AP; \
-        } \
-    }
-
-DEFINE_STAT_ADJUST(str, str, STAT_STR)
-DEFINE_STAT_ADJUST(dex, dex, STAT_DEX)
-DEFINE_STAT_ADJUST(int, int_, STAT_INT)
-DEFINE_STAT_ADJUST(luk, luk, STAT_LUK)
-
-void client_commit_stats(struct Client *client)
+int16_t client_sp(struct Client *client)
 {
     struct Character *chr = &client->character;
-    uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
-    uint8_t value_count = 0;
-    union StatValue value[20];
-    if (client->stats & STAT_SKIN) {
-        value[value_count].u8 = chr->skin;
-        value_count++;
-    }
-
-    if (client->stats & STAT_FACE) {
-        value[value_count].u32 = chr->face;
-        value_count++;
-    }
-
-    if (client->stats & STAT_HAIR) {
-        value[value_count].u32 = chr->hair;
-        value_count++;
-    }
-
-    if (client->stats & STAT_LEVEL) {
-        value[value_count].u8 = chr->level;
-        value_count++;
-    }
-
-    if (client->stats & STAT_JOB) {
-        value[value_count].u16 = chr->job;
-        value_count++;
-    }
-
-    if (client->stats & STAT_STR) {
-        value[value_count].i16 = chr->str;
-        value_count++;
-    }
-
-    if (client->stats & STAT_DEX) {
-        value[value_count].i16 = chr->dex;
-        value_count++;
-    }
-
-    if (client->stats & STAT_INT) {
-        value[value_count].i16 = chr->int_;
-        value_count++;
-    }
-
-    if (client->stats & STAT_LUK) {
-        value[value_count].i16 = chr->luk;
-        value_count++;
-    }
-
-    if (client->stats & STAT_HP) {
-        value[value_count].i16 = chr->hp;
-        value_count++;
-    }
-
-    if (client->stats & STAT_MAX_HP) {
-        value[value_count].i16 = chr->maxHp;
-        value_count++;
-    }
-
-    if (client->stats & STAT_MP) {
-        value[value_count].i16 = chr->mp;
-        value_count++;
-    }
-
-    if (client->stats & STAT_MAX_MP) {
-        value[value_count].i16 = chr->maxMp;
-        value_count++;
-    }
-
-    if (client->stats & STAT_AP) {
-        value[value_count].i16 = chr->ap;
-        value_count++;
-    }
-
-    if (client->stats & STAT_SP) {
-        value[value_count].i16 = chr->sp;
-        value_count++;
-    }
-
-    if (client->stats & STAT_EXP) {
-        value[value_count].i32 = chr->exp;
-        value_count++;
-    }
-
-    if (client->stats & STAT_FAME) {
-        value[value_count].i16 = chr->fame;
-        value_count++;
-    }
-
-    if (client->stats & STAT_MESO) {
-        value[value_count].i32 = chr->mesos;
-        value_count++;
-    }
-
-    if (client->stats & STAT_PET) {
-        //value[value_count].u8 = chr->pe;
-        //value_count++;
-    }
-
-    if (client->stats & STAT_GACHA_EXP) {
-        value[value_count].i32 = chr->gachaExp;
-        value_count++;
-    }
-
-    size_t len = stat_change_packet(true, client->stats, value, packet);
-    session_write(client->session, len, packet);
-    client->stats = 0;
+    return chr->sp;
 }
 
-bool client_assign_sp(struct Client *client, uint32_t id)
+#define DEFINE_STAT_ADJUST(name, stat_name)                          \
+    bool client_adjust_##name(struct Client *client, int16_t amount) \
+    {                                                                \
+        if (amount == 0)                                             \
+            return true;                                             \
+                                                                     \
+        struct Character *chr = &client->character;                  \
+        if (chr->ap < amount)                                        \
+            return false;                                            \
+                                                                     \
+        if (amount > INT16_MAX - chr->stat_name)                     \
+            amount = INT16_MAX - chr->stat_name;                     \
+        character_set_##name(chr, chr->stat_name + amount);          \
+        character_set_ap(chr, chr->ap - amount);                     \
+        return true;                                                 \
+    }
+
+DEFINE_STAT_ADJUST(str, str)
+DEFINE_STAT_GET(int16_t, str, str)
+DEFINE_STAT_ADJUST(dex, dex)
+DEFINE_STAT_GET(int16_t, dex, dex)
+DEFINE_STAT_ADJUST(int, int_)
+DEFINE_STAT_GET(int16_t, int, int_)
+DEFINE_STAT_ADJUST(luk, luk)
+DEFINE_STAT_GET(int16_t, luk, luk)
+
+void client_set_ap(struct Client *client, int16_t ap)
+{
+    struct Character *chr = &client->character;
+    character_set_ap(chr, ap);
+}
+
+bool client_adjust_ap(struct Client *client, int16_t ap)
+{
+    if (ap > 0 && client->character.ap > INT16_MAX - ap)
+        ap = INT16_MAX - client->character.ap;
+    if (client->character.ap + ap < 0)
+        return false;
+    client_set_ap(client, client->character.ap + ap);
+    return true;
+}
+
+DEFINE_STAT_GET(int16_t, ap, ap)
+
+bool client_assign_sp(struct Client *client, uint32_t id, int8_t *level, int8_t *master)
 {
     struct Character *chr = &client->character;
 
@@ -2177,18 +2035,12 @@ bool client_assign_sp(struct Client *client, uint32_t id)
     if (info == NULL)
         return false;
 
+    *level = 0;
+
     if (id >= 1000 && id <= 1002) {
-        uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
-        size_t len = stat_change_packet(true, 0, NULL, packet);
-        session_write(client->session, len, packet);
+        return true;
     } else if (chr->sp > 0) {
         chr->sp--;
-        uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
-        union StatValue value = {
-            .i16 = chr->sp,
-        };
-        size_t len = stat_change_packet(true, STAT_SP, &value, packet);
-        session_write(client->session, len, packet);
     } else {
         return true;
     }
@@ -2215,33 +2067,19 @@ bool client_assign_sp(struct Client *client, uint32_t id)
         skill = hash_set_u32_get(chr->skills, id);
     } else if (skill->level < skill->masterLevel) {
         skill->level++;
-    } else {
-        return true;
     }
 
-    {
-        uint8_t packet[UPDATE_SKILL_PACKET_LENGTH];
-        update_skill_packet(id, skill->level, skill->masterLevel, packet);
-        session_write(client->session, UPDATE_SKILL_PACKET_LENGTH, packet);
-    }
-
+    *level = skill->level;
+    *master = skill->masterLevel;
     return true;
 }
 
-void client_gain_exp(struct Client *client, int32_t exp, bool reward)
+uint8_t client_gain_exp(struct Client *client, int32_t exp, uint32_t *stats)
 {
     struct Character *chr = &client->character;
-    if (!reward) {
-        uint8_t packet[EXP_GAIN_PACKET_LENGTH];
-        exp_gain_packet(exp, 0, 0, true, packet);
-        session_write(client->session, EXP_GAIN_PACKET_LENGTH, packet);
-    } else {
-        uint8_t packet[EXP_GAIN_IN_CHAT_PACKET_LENGTH];
-        exp_gain_in_chat_packet(exp, 0, 0, true, packet);
-        session_write(client->session, EXP_GAIN_IN_CHAT_PACKET_LENGTH, packet);
-    }
+    uint8_t levels = 0;
 
-    client->stats |= STAT_EXP;
+    *stats = STAT_EXP;
 
     do {
         exp = character_gain_exp(chr, exp);
@@ -2251,16 +2089,16 @@ void client_gain_exp(struct Client *client, int32_t exp, bool reward)
         if ((chr->job == JOB_BEGINNER || chr->job == JOB_NOBLESSE || chr->job == JOB_LEGEND) && chr->level <= 10) {
             if (chr->level <= 5) {
                 chr->str += 5;
-                client->stats |= STAT_STR;
+                *stats |= STAT_STR;
             } else {
                 chr->str += 4;
                 chr->dex += 1;
-                client->stats |= STAT_STR | STAT_DEX;
+                *stats |= STAT_STR | STAT_DEX;
             }
         } else {
             if (chr->job != JOB_BEGINNER && chr->job != JOB_NOBLESSE && chr->job != JOB_LEGEND) {
                 chr->sp += 3;
-                client->stats |= STAT_SP;
+                *stats |= STAT_SP;
             }
 
             int8_t ap = 5;
@@ -2272,105 +2110,85 @@ void client_gain_exp(struct Client *client, int32_t exp, bool reward)
                         ap++;
                 }
             }
-            character_set_ap(chr, chr->ap + ap); // TODO: Overflow protection
-            client->stats |= STAT_AP;
+            client_adjust_ap(client, ap);
+            *stats |= STAT_AP;
         }
 
         if (chr->job == JOB_BEGINNER || chr->job == JOB_NOBLESSE || chr->job == JOB_LEGEND) {
-            character_set_max_hp(chr, chr->maxHp + rand() % 5 + 12);
-            character_set_max_mp(chr, chr->maxMp + rand() % 3 + 10);
-        } else if (job_is_a(chr->job, JOB_FIGHTER) || job_is_a(chr->job, JOB_DAWN_WARRIOR)) {
-            character_set_max_hp(chr, chr->maxHp + rand() % 5 + 24);
-            character_set_max_mp(chr, chr->maxMp + rand() % 3 + 4);
+            client_set_max_hp(client, chr->maxHp + rand() % 5 + 12);
+            client_set_max_mp(client, chr->maxMp + rand() % 3 + 10);
+        } else if (job_is_a(chr->job, JOB_SWORDSMAN) || job_is_a(chr->job, JOB_DAWN_WARRIOR)) {
+            client_set_max_hp(client, chr->maxHp + rand() % 5 + 24);
+            client_set_max_mp(client, chr->maxMp + rand() % 3 + 4);
         } else if (job_is_a(chr->job, JOB_MAGICIAN) || job_is_a(chr->job, JOB_BLAZE_WIZARD)) {
-            character_set_max_hp(chr, chr->maxHp + rand() % 5 + 10);
-            character_set_max_mp(chr, chr->maxMp + rand() % 3 + 22);
+            client_set_max_hp(client, chr->maxHp + rand() % 5 + 10);
+            client_set_max_mp(client, chr->maxMp + rand() % 3 + 22);
 
             if (job_is_a(chr->job, JOB_MAGICIAN)) {
                 struct Skill *improved_max_mp_increase = hash_set_u32_get(chr->skills, 2000001);
                 if (improved_max_mp_increase != NULL)
-                    character_set_max_mp(chr, chr->maxMp + improved_max_mp_increase->level * 2);
-            } else {
+                    client_set_max_mp(client, chr->maxMp + improved_max_mp_increase->level * 2);
+            } else { // BLAZE_WIZARD
                 struct Skill *increasing_max_mp = hash_set_u32_get(chr->skills, 12000000);
                 if (increasing_max_mp != NULL)
-                    character_set_max_mp(chr, chr->maxMp + increasing_max_mp->level * 2);
+                    client_set_max_mp(client, chr->maxMp + increasing_max_mp->level * 2);
             }
         } else if (job_is_a(chr->job, JOB_ARCHER) || job_is_a(chr->job, JOB_ROGUE) ||
                 job_is_a(chr->job, JOB_WIND_ARCHER) || job_is_a(chr->job, JOB_NIGHT_WALKER)) {
-            character_set_max_hp(chr, chr->maxHp + rand() % 5 + 20);
-            character_set_max_mp(chr, chr->maxMp + rand() % 3 + 14);
+            client_set_max_hp(client, chr->maxHp + rand() % 5 + 20);
+            client_set_max_mp(client, chr->maxMp + rand() % 3 + 14);
         } else if (job_is_a(chr->job, JOB_PIRATE) || job_is_a(chr->job, JOB_THUNDER_BREAKER)) {
-            character_set_max_hp(chr, chr->maxHp + rand() % 7 + 22);
-            character_set_max_mp(chr, chr->maxMp + rand() % 6 + 18);
+            client_set_max_hp(client, chr->maxHp + rand() % 7 + 22);
+            client_set_max_mp(client, chr->maxMp + rand() % 6 + 18);
         } else if (job_is_a(chr->job, JOB_ARAN)) {
-            character_set_max_hp(chr, chr->maxHp + rand() % 5 + 44);
-            character_set_max_mp(chr, chr->maxMp + rand() % 5 + 4);
+            client_set_max_hp(client, chr->maxHp + rand() % 5 + 44);
+            client_set_max_mp(client, chr->maxMp + rand() % 5 + 4);
         }
-        character_set_max_mp(chr, chr->maxMp + character_get_effective_int(chr) /
+        client_set_max_mp(client, chr->maxMp + character_get_effective_int(chr) /
                 (job_is_a(chr->job, JOB_MAGICIAN) || job_is_a(chr->job, JOB_BLAZE_WIZARD) ? 20 : 10));
 
-        client->stats |= STAT_MAX_HP;
-        client->stats |= STAT_MAX_MP;
+        client_set_hp(client, character_get_effective_hp(chr));
+        client_set_mp(client, character_get_effective_mp(chr));
 
-        character_set_hp(chr, character_get_effective_hp(chr));
-        character_set_mp(chr, character_get_effective_mp(chr));
-        client->stats |= STAT_HP;
-        client->stats |= STAT_MP;
+        *stats |= STAT_HP | STAT_MAX_HP |  STAT_MP | STAT_MAX_MP;
 
-        {
-            uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
-            union StatValue value = {
-                .u8 = client->character.level,
-            };
-            size_t size = stat_change_packet(true, STAT_LEVEL, &value, packet);
-            session_write(client->session, size, packet);
-        }
-
-        {
-            uint8_t packet[SHOW_FOREIGN_EFFECT_PACKET_LENGTH];
-            show_foreign_effect_packet(client->character.id, 0, packet);
-            session_broadcast_to_room(client->session, SHOW_FOREIGN_EFFECT_PACKET_LENGTH, packet);
-        }
-
+        levels++;
     } while (true);
+
+    return levels;
 }
 
-void client_gain_meso(struct Client *client, int32_t mesos, bool pickup, bool reward)
+DEFINE_STAT_GET(int32_t, exp, exp)
+
+bool client_adjust_mesos(struct Client *client, bool underflow, int32_t mesos)
 {
     struct Character *chr = &client->character;
-    if (mesos > 0) {
-        if (chr->mesos > INT32_MAX - mesos)
-            mesos = INT32_MAX - chr->mesos;
-    } else {
-        if (chr->mesos + mesos < 0)
-            mesos = chr->mesos;
+    if (mesos > 0 && chr->mesos > INT32_MAX - mesos)
+        mesos = INT32_MAX - chr->mesos;
+    else if (mesos < 0 && chr->mesos + mesos < 0) {
+        if (underflow)
+            mesos = -chr->mesos;
+        else
+            return false;
     }
 
     character_set_meso(chr, chr->mesos + mesos);
-    client->stats |= STAT_MESO;
-
-    if (pickup) {
-        uint8_t packet[MESO_GAIN_PACKET_LENGTH];
-        meso_gain_packet(mesos, packet);
-        session_write(client->session, MESO_GAIN_PACKET_LENGTH, packet);
-    } else if (reward) {
-        uint8_t packet[MESO_GAIN_IN_CHAT_PACKET_LENGTH];
-        meso_gain_in_chat_packet(mesos, packet);
-        session_write(client->session, MESO_GAIN_IN_CHAT_PACKET_LENGTH, packet);
-    }
+    return true;
 }
+
+DEFINE_STAT_GET(int32_t, meso, mesos)
 
 void client_adjust_fame(struct Client *client, int16_t fame)
 {
     if (fame > 0 && client->character.fame > INT16_MAX - fame)
         fame = INT16_MAX - client->character.fame;
-
-    if (fame < 0 && client->character.fame < INT16_MIN - fame)
+    else if (fame < 0 && client->character.fame < INT16_MIN - fame)
         fame = INT16_MIN - client->character.fame;
 
     character_set_fame(&client->character, client->character.fame + fame);
-    client->stats |= STAT_FAME;
 }
+
+DEFINE_STAT_GET(int16_t, fame, fame)
 
 bool client_has_item(struct Client *client, uint32_t id, int16_t qty)
 {
@@ -2399,13 +2217,27 @@ bool client_has_item(struct Client *client, uint32_t id, int16_t qty)
     return false;
 }
 
-bool client_gain_items(struct Client *client, size_t len, const uint32_t *ids, const int16_t *counts, bool reward, bool *success)
+uint8_t client_inventory_slot_count(struct Client *client, uint8_t inv)
+{
+    struct Character *chr = &client->character;
+    return chr->inventory[inv].slotCount;
+}
+
+uint8_t client_equip_slot_count(struct Client *client)
+{
+    struct Character *chr = &client->character;
+    return chr->equipmentInventory.slotCount;
+}
+
+bool client_gain_items(struct Client *client, size_t len, const uint32_t *ids, const int16_t *counts, size_t *count, struct InventoryModify **changes)
 {
     // Copy the character's inventories, start trying to insert the items, if we successfuly inserted all items copy the inventories back
     struct Character *chr = &client->character;
-    struct InventoryModify *mods = malloc(len * sizeof(struct InventoryModify));
-    if (mods == NULL)
+    *changes = malloc(len * sizeof(struct InventoryModify));
+    if (*changes == NULL)
         return false;
+
+    *count = 0;
 
     size_t mod_capacity = len;
     size_t mod_count = 0;
@@ -2432,10 +2264,9 @@ bool client_gain_items(struct Client *client, size_t len, const uint32_t *ids, c
         equip_inv.items[i].equip = chr->equipmentInventory.items[i].equip;
     }
 
-    uint8_t active_projectile = chr->activeProjectile;
+    uint8_t active_projectile = client->activeProjectile;
 
     // Try to remove items before adding other ones
-    *success = false;
     for (size_t i = 0; i < len; i++) {
         if (amounts[i] < 0) {
             uint8_t inv = ids[i] / 1000000;
@@ -2445,13 +2276,18 @@ bool client_gain_items(struct Client *client, size_t len, const uint32_t *ids, c
                         equip_inv.items[j].isEmpty = true;
                         amounts[i]++;
                         if (mod_count == mod_capacity) {
-                            mods = realloc(mods, (mod_capacity * 2) * sizeof(struct InventoryModify));
+                            void *temp = realloc(*changes, (mod_capacity * 2) * sizeof(struct InventoryModify));
+                            if (temp == NULL) {
+                                free(*changes);
+                                return false;
+                            }
+                            *changes = temp;
                             mod_capacity *= 2;
                         }
 
-                        mods[mod_count].mode = INVENTORY_MODIFY_TYPE_REMOVE;
-                        mods[mod_count].inventory = 1;
-                        mods[mod_count].slot = j + 1;
+                        (*changes)[mod_count].mode = INVENTORY_MODIFY_TYPE_REMOVE;
+                        (*changes)[mod_count].inventory = 1;
+                        (*changes)[mod_count].slot = j + 1;
                         mod_count++;
                         if (amounts[i] == 0)
                             break;
@@ -2468,26 +2304,36 @@ bool client_gain_items(struct Client *client, size_t len, const uint32_t *ids, c
                             invs[inv].items[j].item.quantity += amounts[i];
                             amounts[i] = 0;
                             if (mod_count == mod_capacity) {
-                                mods = realloc(mods, (mod_capacity * 2) * sizeof(struct InventoryModify));
+                                void *temp = realloc(*changes, (mod_capacity * 2) * sizeof(struct InventoryModify));
+                                if (temp == NULL) {
+                                    free(*changes);
+                                    return false;
+                                }
+                                *changes = temp;
                                 mod_capacity *= 2;
                             }
 
-                            mods[mod_count].mode = INVENTORY_MODIFY_TYPE_MODIFY;
-                            mods[mod_count].inventory = inv + 2;
-                            mods[mod_count].slot = j + 1;
-                            mods[mod_count].quantity = invs[inv].items[j].item.quantity;
+                            (*changes)[mod_count].mode = INVENTORY_MODIFY_TYPE_MODIFY;
+                            (*changes)[mod_count].inventory = inv + 2;
+                            (*changes)[mod_count].slot = j + 1;
+                            (*changes)[mod_count].quantity = invs[inv].items[j].item.quantity;
                             mod_count++;
                         } else {
                             amounts[i] += invs[inv].items[j].item.quantity;
                             invs[inv].items[j].isEmpty = true;
                             if (mod_count == mod_capacity) {
-                                mods = realloc(mods, (mod_capacity * 2) * sizeof(struct InventoryModify));
+                                void *temp = realloc(*changes, (mod_capacity * 2) * sizeof(struct InventoryModify));
+                                if (temp == NULL) {
+                                    free(*changes);
+                                    return false;
+                                }
+                                *changes = temp;
                                 mod_capacity *= 2;
                             }
 
-                            mods[mod_count].mode = INVENTORY_MODIFY_TYPE_REMOVE;
-                            mods[mod_count].inventory = inv + 2;
-                            mods[mod_count].slot = j + 1;
+                            (*changes)[mod_count].mode = INVENTORY_MODIFY_TYPE_REMOVE;
+                            (*changes)[mod_count].inventory = inv + 2;
+                            (*changes)[mod_count].slot = j + 1;
                             mod_count++;
                         }
                     }
@@ -2511,14 +2357,19 @@ bool client_gain_items(struct Client *client, size_t len, const uint32_t *ids, c
 
                         amounts[i]--;
                         if (mod_count == mod_capacity) {
-                            mods = realloc(mods, (mod_capacity * 2) * sizeof(struct InventoryModify));
+                            void *temp = realloc(*changes, (mod_capacity * 2) * sizeof(struct InventoryModify));
+                            if (temp == NULL) {
+                                free(*changes);
+                                return false;
+                            }
+                            *changes = temp;
                             mod_capacity *= 2;
                         }
 
-                        mods[mod_count].mode = INVENTORY_MODIFY_TYPE_ADD;
-                        mods[mod_count].inventory = 1;
-                        mods[mod_count].slot = j + 1;
-                        mods[mod_count].equip = equip_inv.items[j].equip;
+                        (*changes)[mod_count].mode = INVENTORY_MODIFY_TYPE_ADD;
+                        (*changes)[mod_count].inventory = 1;
+                        (*changes)[mod_count].slot = j + 1;
+                        (*changes)[mod_count].equip = equip_inv.items[j].equip;
                         mod_count++;
                         if (amounts[i] == 0)
                             break;
@@ -2526,7 +2377,7 @@ bool client_gain_items(struct Client *client, size_t len, const uint32_t *ids, c
                 }
 
                 if (amounts[i] > 0) {
-                    free(mods);
+                    free(*changes);
                     return true;
                 }
             } else {
@@ -2545,14 +2396,19 @@ bool client_gain_items(struct Client *client, size_t len, const uint32_t *ids, c
                             }
 
                             if (mod_count == mod_capacity) {
-                                mods = realloc(mods, (mod_capacity * 2) * sizeof(struct InventoryModify));
+                                void *temp = realloc(*changes, (mod_capacity * 2) * sizeof(struct InventoryModify));
+                                if (temp == NULL) {
+                                    free(*changes);
+                                    return NULL;
+                                }
+                                *changes = temp;
                                 mod_capacity *= 2;
                             }
 
-                            mods[mod_count].mode = INVENTORY_MODIFY_TYPE_MODIFY;
-                            mods[mod_count].inventory = inv + 2;
-                            mods[mod_count].slot = j + 1;
-                            mods[mod_count].quantity = invs[inv].items[j].item.quantity;
+                            (*changes)[mod_count].mode = INVENTORY_MODIFY_TYPE_MODIFY;
+                            (*changes)[mod_count].inventory = inv + 2;
+                            (*changes)[mod_count].slot = j + 1;
+                            (*changes)[mod_count].quantity = invs[inv].items[j].item.quantity;
                             mod_count++;
                         }
 
@@ -2580,14 +2436,19 @@ bool client_gain_items(struct Client *client, size_t len, const uint32_t *ids, c
                             }
 
                             if (mod_count == mod_capacity) {
-                                mods = realloc(mods, (mod_capacity * 2) * sizeof(struct InventoryModify));
+                                void *temp = realloc(*changes, (mod_capacity * 2) * sizeof(struct InventoryModify));
+                                if (temp == NULL) {
+                                    free(*changes);
+                                    return NULL;
+                                }
+                                *changes = temp;
                                 mod_capacity *= 2;
                             }
 
-                            mods[mod_count].mode = INVENTORY_MODIFY_TYPE_ADD;
-                            mods[mod_count].inventory = inv + 2;
-                            mods[mod_count].slot = j + 1;
-                            mods[mod_count].item = invs[inv].items[j].item;
+                            (*changes)[mod_count].mode = INVENTORY_MODIFY_TYPE_ADD;
+                            (*changes)[mod_count].inventory = inv + 2;
+                            (*changes)[mod_count].slot = j + 1;
+                            (*changes)[mod_count].item = invs[inv].items[j].item;
                             mod_count++;
 
                             if (inv == 0 && j < active_projectile) {
@@ -2613,7 +2474,7 @@ bool client_gain_items(struct Client *client, size_t len, const uint32_t *ids, c
                     }
 
                     if (amounts[i] > 0) {
-                        free(mods);
+                        free(*changes);
                         return true;
                     }
                 }
@@ -2629,71 +2490,22 @@ bool client_gain_items(struct Client *client, size_t len, const uint32_t *ids, c
         chr->equipmentInventory.items[i].equip = equip_inv.items[i].equip;
     }
 
-    chr->activeProjectile = active_projectile;
+    client->activeProjectile = active_projectile;
 
     assert(mod_count != 0);
-    while (mod_count > 255) {
-        uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
-        size_t len = modify_items_packet(255, mods, packet);
-        session_write(client->session, len, packet);
-        mod_count -= 255;
-    }
-
-    {
-        uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
-        size_t len = modify_items_packet(mod_count, mods, packet);
-        session_write(client->session, len, packet);
-    }
-
-    if (reward) {
-        for (size_t i = 0; i < len; i++) {
-            uint8_t packet[ITEM_GAIN_IN_CHAT_PACKET_LENGTH];
-            item_gain_in_chat_packet(ids[i], counts[i], packet);
-            session_write(client->session, ITEM_GAIN_IN_CHAT_PACKET_LENGTH, packet);
-        }
-    }
-
-    free(mods);
-    *success = true;
+    *count = mod_count;
     return true;
 }
 
-struct CheckQuestItemContext {
-    uint32_t id;
-    int16_t max;
-};
-
-static void check_quest_item(void *data, void *ctx_)
-{
-    struct CheckQuestItemContext *ctx = ctx_;
-    struct Quest *quest = data;
-
-    const struct QuestInfo *info = wz_get_quest_info(quest->id);
-    for (size_t i = 0; i < info->endRequirementCount; i++) {
-        if (info->endRequirements[i].type == QUEST_REQUIREMENT_TYPE_ITEM &&
-                info->endRequirements[i].item.id == ctx->id) {
-            ctx->max = info->endRequirements[i].item.count;
-            break;
-        }
-    }
-
-}
-
-bool client_gain_inventory_item(struct Client *client, const struct InventoryItem *item, enum InventoryGainResult *result)
+bool client_gain_inventory_item(struct Client *client, const struct InventoryItem *item, size_t *count, struct InventoryModify **changes)
 {
     struct Character *chr = &client->character;
 
-    const struct ItemInfo *info = wz_get_item_info(item->item.itemId);
-
-    if (info->quest && hash_set_u32_get(chr->itemQuests, item->item.itemId) == NULL) {
-        *result = INVENTORY_GAIN_RESULT_UNAVAILABLE;
-        return true;
-    }
-
-    struct InventoryModify *mods = malloc(sizeof(struct InventoryModify));
-    if (mods == NULL)
+    *changes = malloc(sizeof(struct InventoryModify));
+    if (*changes == NULL)
         return false;
 
+    *count = 0;
     size_t mod_capacity = 1;
     size_t mod_count = 0;
 
@@ -2707,40 +2519,32 @@ bool client_gain_inventory_item(struct Client *client, const struct InventoryIte
                 inv.items[i].isEmpty = false;
                 inv.items[i].item = *item;
 
-                mods[0].mode = INVENTORY_MODIFY_TYPE_ADD;
-                mods[0].inventory = 2;
-                mods[0].slot = i + 1;
-                mods[0].item = *item;
+                (*changes)[0].mode = INVENTORY_MODIFY_TYPE_ADD;
+                (*changes)[0].inventory = 2;
+                (*changes)[0].slot = i + 1;
+                (*changes)[0].item = *item;
                 mod_count++;
 
-                uint32_t wid = chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].equip.item.itemId;
-                if (!chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].isEmpty && i < chr->activeProjectile) {
+                if (!chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].isEmpty && i < client->activeProjectile) {
+                    uint32_t wid = chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].equip.item.itemId;
                     if (wid / 10000 == 147 && ITEM_IS_THROWING_STAR(item->item.itemId) && item->quantity > 0) {
                         // Claw
-                        chr->activeProjectile = i;
+                        client->activeProjectile = i;
                     } else if (wid / 10000 == 149 && ITEM_IS_BULLET(item->item.itemId) && item->quantity > 0) {
                         // Gun
-                        chr->activeProjectile = i;
+                        client->activeProjectile = i;
                     }
                 }
 
                 break;
             }
         }
-
     } else {
         int16_t quantity = item->quantity;
 
         // First try to fill up existing stacks
         for (size_t i = 0; i < inv.slotCount; i++) {
             if (!inv.items[i].isEmpty && inv.items[i].item.item.itemId == item->item.itemId) {
-                struct CheckQuestItemContext ctx = {
-                    .id = item->item.itemId
-                };
-                hash_set_u16_foreach(chr->quests, check_quest_item, &ctx);
-                if (info->quest && inv.items[i].item.quantity + item->quantity == ctx.max) {
-                    hash_set_u32_remove(chr->itemQuests, item->item.itemId);
-                }
 
                 if (inv.items[i].item.quantity > wz_get_item_info(item->item.itemId)->slotMax - quantity) {
                     quantity -= wz_get_item_info(item->item.itemId)->slotMax - inv.items[i].item.quantity;
@@ -2754,20 +2558,20 @@ bool client_gain_inventory_item(struct Client *client, const struct InventoryIte
                 }
 
                 if (mod_count == mod_capacity) {
-                    void *temp = realloc(mods, (mod_capacity * 2) * sizeof(struct InventoryModify));
+                    void *temp = realloc(*changes, (mod_capacity * 2) * sizeof(struct InventoryModify));
                     if (temp == NULL) {
-                        free(mods);
+                        free(*changes);
                         return false;
                     }
 
-                    mods = temp;
+                    *changes = temp;
                     mod_capacity *= 2;
                 }
 
-                mods[mod_count].mode = INVENTORY_MODIFY_TYPE_MODIFY;
-                mods[mod_count].inventory = item->item.itemId / 1000000;
-                mods[mod_count].slot = i + 1;
-                mods[mod_count].quantity = inv.items[i].item.quantity;
+                (*changes)[mod_count].mode = INVENTORY_MODIFY_TYPE_MODIFY;
+                (*changes)[mod_count].inventory = item->item.itemId / 1000000;
+                (*changes)[mod_count].slot = i + 1;
+                (*changes)[mod_count].quantity = inv.items[i].item.quantity;
                 mod_count++;
             }
 
@@ -2780,45 +2584,38 @@ bool client_gain_inventory_item(struct Client *client, const struct InventoryIte
             uint8_t j;
             for (j = 0; j < inv.slotCount; j++) {
                 if (inv.items[j].isEmpty) {
-                    struct CheckQuestItemContext ctx = {
-                        .id = item->item.itemId
-                    };
-                    hash_set_u16_foreach(chr->quests, check_quest_item, &ctx);
-                    if (info->quest && item->quantity == ctx.max)
-                        hash_set_u32_remove(chr->itemQuests, item->item.itemId);
-
                     inv.items[j].isEmpty = false;
                     inv.items[j].item.item = item->item;
                     inv.items[j].item.quantity = quantity;
 
                     if (mod_count == mod_capacity) {
-                        void *temp = realloc(mods, (mod_capacity * 2) * sizeof(struct InventoryModify));
+                        void *temp = realloc(*changes, (mod_capacity * 2) * sizeof(struct InventoryModify));
                         if (temp == NULL) {
-                            free(mods);
+                            free(*changes);
                             return false;
                         }
 
-                        mods = temp;
+                        *changes = temp;
                         mod_capacity *= 2;
                     }
 
                     // Do it after the possiblity of failure from realloc()
                     // This should still work even when chr->activeProjectile == -1
-                    if (!chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].isEmpty && j < chr->activeProjectile) {
+                    if (!chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].isEmpty && j < client->activeProjectile) {
                         uint32_t wid = chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].equip.item.itemId;
                         if (wid / 10000 == 145 && item->item.itemId / 1000 == 2060) {
                             // Bow
-                            chr->activeProjectile = j;
+                            client->activeProjectile = j;
                         } else if (wid / 10000 == 146 && item->item.itemId / 1000 == 2061) {
                             // Crossbow
-                            chr->activeProjectile = j;
+                            client->activeProjectile = j;
                         }
                     }
 
-                    mods[mod_count].mode = INVENTORY_MODIFY_TYPE_ADD;
-                    mods[mod_count].inventory = item->item.itemId / 1000000;
-                    mods[mod_count].slot = j + 1;
-                    mods[mod_count].item = inv.items[j].item;
+                    (*changes)[mod_count].mode = INVENTORY_MODIFY_TYPE_ADD;
+                    (*changes)[mod_count].inventory = item->item.itemId / 1000000;
+                    (*changes)[mod_count].slot = j + 1;
+                    (*changes)[mod_count].item = inv.items[j].item;
                     mod_count++;
 
                     break;
@@ -2827,113 +2624,64 @@ bool client_gain_inventory_item(struct Client *client, const struct InventoryIte
 
             // Inventory is full
             if (j == inv.slotCount) {
-                {
-                    uint8_t packet[INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH];
-                    inventory_full_notification_packet(packet);
-                    session_write(client_get_session(client), INVENTORY_FULL_NOTIFICATION_PACKET_LENGTH, packet);
-                }
-
-                {
-                    uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
-                    size_t len = modify_items_packet(0, NULL, packet);
-                    session_write(client_get_session(client), len, packet);
-                }
-                free(mods);
-                *result = INVENTORY_GAIN_RESULT_FULL;
+                free(*changes);
                 return true;
             }
         }
     }
 
     chr->inventory[item->item.itemId / 1000000 - 2] = inv;
-
-    while (mod_count > 255) {
-        uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
-        size_t len = modify_items_packet(255, mods, packet);
-        session_write(client->session, len, packet);
-        mod_count -= 255;
-    }
-
-    {
-        uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
-        size_t len = modify_items_packet(mod_count, mods, packet);
-        session_write(client->session, len, packet);
-    }
-
-    free(mods);
-    *result = INVENTORY_GAIN_RESULT_SUCCESS;
+    *count = mod_count;
     return true;
 }
 
-bool client_gain_equipment(struct Client *client, const struct Equipment *item, bool equip, enum InventoryGainResult *result)
+void client_decrease_quest_item(struct Client *client, uint32_t id, int16_t quantity)
+{
+    struct QuestItem *item = hash_set_u32_get(client->questItems, id);
+    item->quantity -= quantity;
+    if (item->quantity == 0)
+        hash_set_u32_remove(client->questItems, id);
+}
+
+bool client_gain_equipment(struct Client *client, const struct Equipment *item, struct InventoryModify *change)
 {
     struct Character *chr = &client->character;
-    const struct ItemInfo *info = wz_get_item_info(item->item.itemId);
 
-    if (info->quest && hash_set_u32_get(chr->itemQuests, item->item.itemId) == NULL) {
-        *result = INVENTORY_GAIN_RESULT_UNAVAILABLE;
-        return true;
-    }
+    for (size_t j = 0; j < chr->equipmentInventory.slotCount; j++) {
+        if (chr->equipmentInventory.items[j].isEmpty) {
+            // TODO: This is assuming that a quest can't have more than one equipment of the same kind as a quest item
 
-    if (!equip) {
-        for (size_t j = 0; j < chr->equipmentInventory.slotCount; j++) {
-            if (chr->equipmentInventory.items[j].isEmpty) {
-                // TODO: This is assuming that a quest can't have more than one equipment of the same kind as a quest item
-                if (info->quest)
-                    hash_set_u32_remove(chr->itemQuests, item->item.itemId);
+            chr->equipmentInventory.items[j].isEmpty = false;
+            chr->equipmentInventory.items[j].equip = *item;
 
-                chr->equipmentInventory.items[j].isEmpty = false;
-                chr->equipmentInventory.items[j].equip = *item;
+            change->mode = INVENTORY_MODIFY_TYPE_ADD;
+            change->inventory = 1;
+            change->slot = j + 1;
+            change->equip = chr->equipmentInventory.items[j].equip;
 
-                struct InventoryModify mod = {
-                    .mode = INVENTORY_MODIFY_TYPE_ADD,
-                    .inventory = 1,
-                    .slot = j + 1,
-                    .equip = chr->equipmentInventory.items[j].equip
-                };
-
-                {
-                    uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
-                    size_t len = modify_items_packet(1, &mod, packet);
-                    session_write(client->session, len, packet);
-                }
-
-                *result = INVENTORY_GAIN_RESULT_SUCCESS;
-                return true;
-            }
+            return true;
         }
     }
 
-    // TODO: Handle immediate equip
-    *result = INVENTORY_GAIN_RESULT_FULL;
-    return true;
+    return false;
 }
 
-bool client_remove_item(struct Client *client, uint8_t inv, uint8_t src, int16_t amount, bool *success, struct InventoryItem *item)
+bool client_remove_item(struct Client *client, uint8_t inv, uint8_t src, int16_t amount, struct InventoryModify *change, struct InventoryItem *item)
 {
+    struct Character *chr = &client->character;
     struct InventoryItem item_;
     if (item == NULL)
         item = &item_;
 
-    struct Character *chr = &client->character;
-    if (inv < 2 || inv > 5)
-        return false;
-
-    inv -= 2;
-    src--;
-    if (src >= chr->inventory[inv].slotCount)
-        return false;
-
-    *success = false;
     if (chr->inventory[inv].items[src].isEmpty)
-        return true;
+        return false;
 
     *item = chr->inventory[inv].items[src].item;
     if (ITEM_IS_RECHARGEABLE(chr->inventory[inv].items[src].item.item.itemId)) {
         chr->inventory[inv].items[src].isEmpty = true;
     } else {
         if (chr->inventory[inv].items[src].item.quantity < amount)
-            return true;
+            return false;
 
         item->quantity = amount;
         if (chr->inventory[inv].items[src].item.quantity == amount) {
@@ -2945,82 +2693,93 @@ bool client_remove_item(struct Client *client, uint8_t inv, uint8_t src, int16_t
     }
 
     // Update the active projectile if we removed the currently active one
-    if (inv == 0 && chr->activeProjectile == src && (chr->inventory[0].items[src].isEmpty || chr->inventory[0].items[src].item.quantity == 0)) {
+    if (inv == 0 && client->activeProjectile == src && (chr->inventory[0].items[src].isEmpty || chr->inventory[0].items[src].item.quantity == 0)) {
         uint32_t wid = chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].equip.item.itemId;
         if (wid / 10000 == 145) {
             // Bow
-            chr->activeProjectile = -1;
+            client->activeProjectile = -1;
             for (uint8_t i = src + 1; i < chr->inventory[0].slotCount; i++) {
                 if (!chr->inventory[0].items[i].isEmpty && chr->inventory[0].items[i].item.item.itemId / 1000 == 2060) {
-                    chr->activeProjectile = i;
+                    client->activeProjectile = i;
                     break;
                 }
             }
         } else if (wid / 10000 == 146) {
             // Crossbow
-            chr->activeProjectile = -1;
+            client->activeProjectile = -1;
             for (uint8_t i = src + 1; i < chr->inventory[0].slotCount; i++) {
                 if (!chr->inventory[0].items[i].isEmpty && chr->inventory[0].items[i].item.item.itemId / 1000 == 2061) {
-                    chr->activeProjectile = i;
+                    client->activeProjectile = i;
                     break;
                 }
             }
         } else if (wid / 10000 == 147) {
             // Claw
-            chr->activeProjectile = -1;
+            client->activeProjectile = -1;
             for (uint8_t i = src + 1; i < chr->inventory[0].slotCount; i++) {
                 if (!chr->inventory[0].items[i].isEmpty && ITEM_IS_THROWING_STAR(chr->inventory[0].items[i].item.item.itemId) && chr->inventory[0].items[i].item.quantity > 0) {
-                    chr->activeProjectile = i;
+                    client->activeProjectile = i;
                     break;
                 }
             }
         } else if (wid / 10000 == 149) {
             // Gun
-            chr->activeProjectile = -1;
+            client->activeProjectile = -1;
             for (uint8_t i = src + 1; i < chr->inventory[0].slotCount; i++) {
                 if (!chr->inventory[0].items[i].isEmpty && ITEM_IS_BULLET(chr->inventory[0].items[i].item.item.itemId) && chr->inventory[0].items[i].item.quantity > 0) {
-                    chr->activeProjectile = i;
+                    client->activeProjectile = i;
                     break;
                 }
             }
         }
     }
 
-    const struct ItemInfo *item_info = wz_get_item_info(item->item.itemId);
-    if (item_info->quest && hash_set_u32_get(chr->itemQuests, item->item.itemId) == NULL) {
-        hash_set_u32_insert(chr->itemQuests, &item->item.itemId);
+    //const struct ItemInfo *item_info = wz_get_item_info(item->item.itemId);
+    //if (item_info->quest && hash_set_u32_get(chr->itemQuests, item->item.itemId) == NULL) {
+    //    hash_set_u32_insert(chr->itemQuests, &item->item.itemId);
+    //}
+
+    change->inventory = inv + 2;
+    change->slot = src + 1;
+    if (chr->inventory[inv].items[src].isEmpty) {
+        change->mode = INVENTORY_MODIFY_TYPE_REMOVE;
+    } else {
+        change->mode = INVENTORY_MODIFY_TYPE_MODIFY;
+        change->quantity = chr->inventory[inv].items[src].item.quantity;
     }
 
-    {
-        struct InventoryModify mod;
-        mod.inventory = inv + 2;
-        mod.slot = src + 1;
-        if (chr->inventory[inv].items[src].isEmpty) {
-            mod.mode = INVENTORY_MODIFY_TYPE_REMOVE;
-        } else {
-            mod.mode = INVENTORY_MODIFY_TYPE_MODIFY;
-            mod.quantity = chr->inventory[inv].items[src].item.quantity;
-        }
-
-        uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
-        size_t len = modify_items_packet(1, &mod, packet);
-        session_write(client->session, len, packet);
-    }
-
-    *success = true;
     return true;
 }
 
-bool client_use_projectile(struct Client *client, int16_t amount, bool *success)
+uint32_t client_get_item(struct Client *client, uint8_t inventory, uint8_t slot)
 {
     struct Character *chr = &client->character;
 
-    *success = false;
-    if (chr->activeProjectile == (uint8_t)-1)
-        return true;
+    if (!chr->inventory[inventory].items[slot].isEmpty)
+        return chr->inventory[inventory].items[slot].item.item.itemId;
+    return -1;
+}
+
+int16_t client_remaining_quest_item_quantity(struct Client *client, uint32_t id)
+{
+    struct Character *chr = &client->character;
+
+    struct QuestItem *quest_item = hash_set_u32_get(client->questItems, id);
+    if (quest_item == NULL)
+        return 0;
+
+    return quest_item->quantity;
+}
+
+bool client_use_projectile(struct Client *client, int16_t amount, uint32_t *id, struct InventoryModify *change)
+{
+    struct Character *chr = &client->character;
+
+    if (client->activeProjectile == (uint8_t)-1)
+        return false;
 
     uint8_t slot;
-    for (slot = chr->activeProjectile; slot < chr->inventory[0].slotCount; slot++) {
+    for (slot = client->activeProjectile; slot < chr->inventory[0].slotCount; slot++) {
         if (chr->inventory[0].items[slot].item.quantity >= amount) {
             if (ITEM_IS_RECHARGEABLE(chr->inventory[0].items[slot].item.item.itemId)) {
                 chr->inventory[0].items[slot].item.quantity -= amount;
@@ -3037,59 +2796,61 @@ bool client_use_projectile(struct Client *client, int16_t amount, bool *success)
     }
 
     if (slot == chr->inventory[0].slotCount)
-        return true;
+        return false;
+
+    *id = chr->inventory[0].items[slot].item.item.itemId;
 
     // Update the active projectile
-    if ((chr->inventory[0].items[chr->activeProjectile].isEmpty || chr->inventory[0].items[chr->activeProjectile].item.quantity == 0)) {
+    if ((chr->inventory[0].items[client->activeProjectile].isEmpty || chr->inventory[0].items[client->activeProjectile].item.quantity == 0)) {
         uint32_t wid = chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].equip.item.itemId;
         if (wid / 10000 == 145) {
             // Bow
             uint8_t i;
-            for (i = chr->activeProjectile + 1; i < chr->inventory[0].slotCount; i++) {
+            for (i = client->activeProjectile + 1; i < chr->inventory[0].slotCount; i++) {
                 if (!chr->inventory[0].items[i].isEmpty && chr->inventory[0].items[i].item.item.itemId / 1000 == 2060) {
-                    chr->activeProjectile = i;
+                    client->activeProjectile = i;
                     break;
                 }
             }
 
             if (i == chr->inventory[0].slotCount)
-                chr->activeProjectile = -1;
+                client->activeProjectile = -1;
         } else if (wid / 10000 == 146) {
             // Crossbow
             uint8_t i;
-            for (i = chr->activeProjectile + 1; i < chr->inventory[0].slotCount; i++) {
+            for (i = client->activeProjectile + 1; i < chr->inventory[0].slotCount; i++) {
                 if (!chr->inventory[0].items[i].isEmpty && chr->inventory[0].items[i].item.item.itemId / 1000 == 2061) {
-                    chr->activeProjectile = i;
+                    client->activeProjectile = i;
                     break;
                 }
             }
 
             if (i == chr->inventory[0].slotCount)
-                chr->activeProjectile = -1;
+                client->activeProjectile = -1;
         } else if (wid / 10000 == 147) {
             // Claw
             uint8_t i;
-            for (i = chr->activeProjectile + 1; i < chr->inventory[0].slotCount; i++) {
+            for (i = client->activeProjectile + 1; i < chr->inventory[0].slotCount; i++) {
                 if (!chr->inventory[0].items[i].isEmpty && ITEM_IS_THROWING_STAR(chr->inventory[0].items[i].item.item.itemId) && chr->inventory[0].items[i].item.quantity > 0) {
-                    chr->activeProjectile = i;
+                    client->activeProjectile = i;
                     break;
                 }
             }
 
             if (i == chr->inventory[0].slotCount)
-                chr->activeProjectile = -1;
+                client->activeProjectile = -1;
         } else if (wid / 10000 == 149) {
             // Gun
             uint8_t i;
-            for (i = chr->activeProjectile + 1; i < chr->inventory[0].slotCount; i++) {
+            for (i = client->activeProjectile + 1; i < chr->inventory[0].slotCount; i++) {
                 if (!chr->inventory[0].items[i].isEmpty && ITEM_IS_BULLET(chr->inventory[0].items[i].item.item.itemId) && chr->inventory[0].items[i].item.quantity > 0) {
-                    chr->activeProjectile = i;
+                    client->activeProjectile = i;
                     break;
                 }
             }
 
             if (i == chr->inventory[0].slotCount)
-                chr->activeProjectile = -1;
+                client->activeProjectile = -1;
         }
     }
 
@@ -3099,60 +2860,42 @@ bool client_use_projectile(struct Client *client, int16_t amount, bool *success)
         hash_set_u32_insert(chr->itemQuests, &item->item.itemId);
     }*/
 
-    {
-        struct InventoryModify mod;
-        mod.inventory = 2;
-        mod.slot = slot + 1;
-        if (chr->inventory[0].items[slot].isEmpty) {
-            mod.mode = INVENTORY_MODIFY_TYPE_REMOVE;
-        } else {
-            mod.mode = INVENTORY_MODIFY_TYPE_MODIFY;
-            mod.quantity = chr->inventory[0].items[slot].item.quantity;
-        }
-
-        uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
-        size_t len = modify_items_packet(1, &mod, packet);
-        session_write(client->session, len, packet);
+    change->inventory = 2;
+    change->slot = slot + 1;
+    if (chr->inventory[0].items[slot].isEmpty) {
+        change->mode = INVENTORY_MODIFY_TYPE_REMOVE;
+    } else {
+        change->mode = INVENTORY_MODIFY_TYPE_MODIFY;
+        change->quantity = chr->inventory[0].items[slot].item.quantity;
     }
 
-    *success = true;
     return true;
-
 }
 
-bool client_remove_equip(struct Client *client, bool equipped, uint8_t src, bool *success, struct Equipment *equip)
+bool client_remove_equip(struct Client *client, bool equipped, uint8_t src, struct InventoryModify *change, struct Equipment *equip)
 {
     struct Character *chr = &client->character;
+    struct Equipment equip_;
+    if (equip == NULL)
+        equip = &equip_;
 
     if (equipped) {
         src = equip_slot_to_compact(src);
-        if (src >= EQUIP_SLOT_COUNT)
-            return false;
 
-        *success = false;
         if (chr->equippedEquipment[src].isEmpty)
-            return true;
+            return false;
 
         *equip = chr->equippedEquipment[src].equip;
         chr->equippedEquipment[src].isEmpty = true;
 
         {
-            struct InventoryModify mod;
-            mod.inventory = 1;
-            mod.slot = -equip_slot_from_compact(src);
-            mod.mode = INVENTORY_MODIFY_TYPE_REMOVE;
-            uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
-            size_t len = modify_items_packet(1, &mod, packet);
-            session_write(client->session, len, packet);
+            change->inventory = 1;
+            change->slot = -equip_slot_from_compact(src);
+            change->mode = INVENTORY_MODIFY_TYPE_REMOVE;
         }
     } else {
-        src--;
-        if (src >= chr->equipmentInventory.slotCount)
-            return false;
-
-        *success = false;
         if (chr->equipmentInventory.items[src].isEmpty)
-            return true;
+            return false;
 
         *equip = chr->equipmentInventory.items[src].equip;
         chr->equipmentInventory.items[src].isEmpty = true;
@@ -3162,52 +2905,39 @@ bool client_remove_equip(struct Client *client, bool equipped, uint8_t src, bool
             mod.inventory = 1;
             mod.slot = src + 1;
             mod.mode = INVENTORY_MODIFY_TYPE_REMOVE;
-            uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
-            size_t len = modify_items_packet(1, &mod, packet);
-            session_write(client->session, len, packet);
         }
     }
 
-    *success = true;
     return true;
 }
 
-bool client_move_item(struct Client *client, uint8_t inventory, uint8_t src, uint8_t dst)
+uint8_t client_move_item(struct Client *client, uint8_t inventory, uint8_t src, uint8_t dst, struct InventoryModify *changes)
 {
     struct Character *chr = &client->character;
     if (client->shop != -1)
-        return true;
+        return 0;
 
-    if (inventory < 1 || inventory > 5)
-        return false;
-
-    src--;
-    dst--;
+    uint8_t change_count;
     if (inventory != 1) {
         inventory -= 2;
 
-        if (src >= chr->inventory[inventory].slotCount || dst >= chr->inventory[inventory].slotCount)
-            return false;
-
         if (chr->inventory[inventory].items[src].isEmpty)
-            return true;
+            return 0;
 
-        uint8_t mod_count;
-        struct InventoryModify mods[2];
         if (chr->inventory[inventory].items[dst].isEmpty) {
             // Destination is empty - move the whole stack there
             chr->inventory[inventory].items[dst] = chr->inventory[inventory].items[src];
             chr->inventory[inventory].items[src].isEmpty = true;
-            if (inventory == 0 && src == chr->activeProjectile) {
+            if (inventory == 0 && src == client->activeProjectile) {
                 if (dst < src) {
-                    chr->activeProjectile = dst;
+                    client->activeProjectile = dst;
                 } else {
                     uint32_t wid = chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].equip.item.itemId;
                     if (wid / 10000 == 145) {
                         // Bow
                         for (uint8_t i = src + 1; i < chr->inventory[0].slotCount; i++) {
                             if (!chr->inventory[0].items[i].isEmpty && chr->inventory[0].items[i].item.item.itemId / 1000 == 2060) {
-                                chr->activeProjectile = i;
+                                client->activeProjectile = i;
                                 break;
                             }
                         }
@@ -3215,7 +2945,7 @@ bool client_move_item(struct Client *client, uint8_t inventory, uint8_t src, uin
                         // Crossbow
                         for (uint8_t i = src + 1; i < chr->inventory[0].slotCount; i++) {
                             if (!chr->inventory[0].items[i].isEmpty && chr->inventory[0].items[i].item.item.itemId / 1000 == 2061) {
-                                chr->activeProjectile = i;
+                                client->activeProjectile = i;
                                 break;
                             }
                         }
@@ -3224,7 +2954,7 @@ bool client_move_item(struct Client *client, uint8_t inventory, uint8_t src, uin
                         for (uint8_t i = src + 1; i < chr->inventory[0].slotCount; i++) {
                             struct InventoryItem *item = &chr->inventory[0].items[i].item;
                             if (!chr->inventory[0].items[i].isEmpty && ITEM_IS_THROWING_STAR(item->item.itemId) && item->quantity > 0) {
-                                chr->activeProjectile = i;
+                                client->activeProjectile = i;
                                 break;
                             }
                         }
@@ -3233,34 +2963,34 @@ bool client_move_item(struct Client *client, uint8_t inventory, uint8_t src, uin
                         for (uint8_t i = src + 1; i < chr->inventory[0].slotCount; i++) {
                             struct InventoryItem *item = &chr->inventory[0].items[i].item;
                             if (!chr->inventory[0].items[i].isEmpty && ITEM_IS_BULLET(item->item.itemId) && item->quantity > 0) {
-                                chr->activeProjectile = i;
+                                client->activeProjectile = i;
                                 break;
                             }
                         }
                     }
                 }
-            } else if (inventory == 0 && dst < chr->activeProjectile) {
+            } else if (inventory == 0 && dst < client->activeProjectile) {
                 uint32_t wid = chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].equip.item.itemId;
                 struct InventoryItem *item = &chr->inventory[0].items[dst].item;
                 if (wid / 10000 == 145 && item->item.itemId / 1000 == 2060) {
                     // Bow
-                    chr->activeProjectile = dst;
+                    client->activeProjectile = dst;
                 } else if (wid / 10000 == 146 && item->item.itemId / 1000 == 2061) {
-                    chr->activeProjectile = dst;
+                    client->activeProjectile = dst;
                 } else if (wid / 10000 == 147 && ITEM_IS_THROWING_STAR(item->item.itemId) && item->quantity > 0) {
                     // Claw
-                    chr->activeProjectile = dst;
+                    client->activeProjectile = dst;
                 } else if (wid / 10000 == 149 && ITEM_IS_BULLET(item->item.itemId) && item->quantity > 0) {
                     // Gun
-                    chr->activeProjectile = dst;
+                    client->activeProjectile = dst;
                 }
             }
 
-            mods[0].mode = INVENTORY_MODIFY_TYPE_MOVE;
-            mods[0].inventory = inventory + 2;
-            mods[0].slot = src + 1;
-            mods[0].dst = dst + 1;
-            mod_count = 1;
+            changes[0].mode = INVENTORY_MODIFY_TYPE_MOVE;
+            changes[0].inventory = inventory + 2;
+            changes[0].slot = src + 1;
+            changes[0].dst = dst + 1;
+            change_count = 1;
         } else if (chr->inventory[inventory].items[dst].item.item.itemId == chr->inventory[inventory].items[src].item.item.itemId && !ITEM_IS_RECHARGEABLE(chr->inventory[inventory].items[dst].item.item.itemId)) {
             const struct ItemInfo *info = wz_get_item_info(chr->inventory[inventory].items[dst].item.item.itemId);
             if (chr->inventory[inventory].items[dst].item.quantity == info->slotMax) {
@@ -3269,23 +2999,23 @@ bool client_move_item(struct Client *client, uint8_t inventory, uint8_t src, uin
                 struct InventoryItem temp = chr->inventory[inventory].items[dst].item;
                 chr->inventory[inventory].items[dst].item = chr->inventory[inventory].items[src].item;
                 chr->inventory[inventory].items[src].item = temp;
-                mods[0].mode = INVENTORY_MODIFY_TYPE_MOVE;
-                mods[0].inventory = inventory + 2;
-                mods[0].slot = src + 1;
-                mods[0].dst = dst + 1;
-                mod_count = 1;
+                changes[0].mode = INVENTORY_MODIFY_TYPE_MOVE;
+                changes[0].inventory = inventory + 2;
+                changes[0].slot = src + 1;
+                changes[0].dst = dst + 1;
+                change_count = 1;
             } else {
                 int16_t amount = info->slotMax - chr->inventory[inventory].items[dst].item.quantity;
                 if (chr->inventory[inventory].items[src].item.quantity < amount) {
                     // Destination isn't full and it can consume the whole source - remove the source and modify the destination's item count
                     chr->inventory[inventory].items[dst].item.quantity += chr->inventory[inventory].items[src].item.quantity;
                     chr->inventory[inventory].items[src].isEmpty = true;
-                    if (inventory == 0 && src < dst && src == chr->activeProjectile) {
+                    if (inventory == 0 && src < dst && src == client->activeProjectile) {
                         if (chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].equip.item.itemId / 10000 == 145) {
                             // Bow
                             for (uint8_t i = src + 1; i < chr->inventory[0].slotCount; i++) {
                                 if (!chr->inventory[0].items[i].isEmpty && chr->inventory[0].items[i].item.item.itemId / 1000 == 2060) {
-                                    chr->activeProjectile = i;
+                                    client->activeProjectile = i;
                                     break;
                                 }
                             }
@@ -3293,7 +3023,7 @@ bool client_move_item(struct Client *client, uint8_t inventory, uint8_t src, uin
                             // Crossbow
                             for (uint8_t i = src + 1; i < chr->inventory[0].slotCount; i++) {
                                 if (!chr->inventory[0].items[i].isEmpty && chr->inventory[0].items[i].item.item.itemId / 1000 == 2061) {
-                                    chr->activeProjectile = i;
+                                    client->activeProjectile = i;
                                     break;
                                 }
                             }
@@ -3301,7 +3031,7 @@ bool client_move_item(struct Client *client, uint8_t inventory, uint8_t src, uin
                             // Claw
                             for (uint8_t i = src + 1; i < chr->inventory[0].slotCount; i++) {
                                 if (!chr->inventory[0].items[i].isEmpty && ITEM_IS_THROWING_STAR(chr->inventory[0].items[i].item.item.itemId) && chr->inventory[0].items[i].item.quantity > 0) {
-                                    chr->activeProjectile = i;
+                                    client->activeProjectile = i;
                                     break;
                                 }
                             }
@@ -3309,33 +3039,33 @@ bool client_move_item(struct Client *client, uint8_t inventory, uint8_t src, uin
                             // Gun
                             for (uint8_t i = src + 1; i < chr->inventory[0].slotCount; i++) {
                                 if (!chr->inventory[0].items[i].isEmpty && ITEM_IS_BULLET(chr->inventory[0].items[i].item.item.itemId) && chr->inventory[0].items[i].item.quantity > 0) {
-                                    chr->activeProjectile = i;
+                                    client->activeProjectile = i;
                                     break;
                                 }
                             }
                         }
                     }
-                    mods[0].mode = INVENTORY_MODIFY_TYPE_REMOVE;
-                    mods[0].inventory = inventory + 2;
-                    mods[0].slot = src + 1;
-                    mods[1].mode = INVENTORY_MODIFY_TYPE_MODIFY;
-                    mods[1].inventory = inventory + 2;
-                    mods[1].slot = dst + 1;
-                    mods[1].quantity = chr->inventory[inventory].items[dst].item.quantity;
-                    mod_count = 2;
+                    changes[0].mode = INVENTORY_MODIFY_TYPE_REMOVE;
+                    changes[0].inventory = inventory + 2;
+                    changes[0].slot = src + 1;
+                    changes[1].mode = INVENTORY_MODIFY_TYPE_MODIFY;
+                    changes[1].inventory = inventory + 2;
+                    changes[1].slot = dst + 1;
+                    changes[1].quantity = chr->inventory[inventory].items[dst].item.quantity;
+                    change_count = 2;
                 } else {
                     // Destination isn't full and it can't consume the whole source - modify both the source and the destination's item count
                     chr->inventory[inventory].items[dst].item.quantity += amount;
                     chr->inventory[inventory].items[src].item.quantity -= amount;
-                    mods[0].mode = INVENTORY_MODIFY_TYPE_MODIFY;
-                    mods[0].inventory = inventory + 2;
-                    mods[0].slot = src + 1;
-                    mods[0].quantity = chr->inventory[inventory].items[src].item.quantity;
-                    mods[1].mode = INVENTORY_MODIFY_TYPE_MODIFY;
-                    mods[1].inventory = inventory + 2;
-                    mods[1].slot = dst + 1;
-                    mods[1].quantity = chr->inventory[inventory].items[dst].item.quantity;
-                    mod_count = 2;
+                    changes[0].mode = INVENTORY_MODIFY_TYPE_MODIFY;
+                    changes[0].inventory = inventory + 2;
+                    changes[0].slot = src + 1;
+                    changes[0].quantity = chr->inventory[inventory].items[src].item.quantity;
+                    changes[1].mode = INVENTORY_MODIFY_TYPE_MODIFY;
+                    changes[1].inventory = inventory + 2;
+                    changes[1].slot = dst + 1;
+                    changes[1].quantity = chr->inventory[inventory].items[dst].item.quantity;
+                    change_count = 2;
                 }
             }
         } else {
@@ -3352,13 +3082,13 @@ bool client_move_item(struct Client *client, uint8_t inventory, uint8_t src, uin
                     src = temp;
                 }
 
-                if (src <= chr->activeProjectile && chr->activeProjectile <= dst) {
-                    if (chr->activeProjectile == src) {
+                if (src <= client->activeProjectile && client->activeProjectile <= dst) {
+                    if (client->activeProjectile == src) {
                         if (chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].equip.item.itemId / 10000 == 145) {
                             // Bow
                             for (uint8_t i = src; i < chr->inventory[0].slotCount; i++) {
                                 if (!chr->inventory[0].items[i].isEmpty && chr->inventory[0].items[i].item.item.itemId / 1000 == 2060) {
-                                    chr->activeProjectile = i;
+                                    client->activeProjectile = i;
                                     break;
                                 }
                             }
@@ -3366,7 +3096,7 @@ bool client_move_item(struct Client *client, uint8_t inventory, uint8_t src, uin
                             // Crossbow
                             for (uint8_t i = src; i < chr->inventory[0].slotCount; i++) {
                                 if (!chr->inventory[0].items[i].isEmpty && chr->inventory[0].items[i].item.item.itemId / 1000 == 2061) {
-                                    chr->activeProjectile = i;
+                                    client->activeProjectile = i;
                                     break;
                                 }
                             }
@@ -3374,7 +3104,7 @@ bool client_move_item(struct Client *client, uint8_t inventory, uint8_t src, uin
                             // Claw
                             for (uint8_t i = src; i < chr->inventory[0].slotCount; i++) {
                                 if (!chr->inventory[0].items[i].isEmpty && ITEM_IS_THROWING_STAR(chr->inventory[0].items[i].item.item.itemId) && chr->inventory[0].items[i].item.quantity > 0) {
-                                    chr->activeProjectile = i;
+                                    client->activeProjectile = i;
                                     break;
                                 }
                             }
@@ -3382,83 +3112,66 @@ bool client_move_item(struct Client *client, uint8_t inventory, uint8_t src, uin
                             // Gun
                             for (uint8_t i = src; i < chr->inventory[0].slotCount; i++) {
                                 if (!chr->inventory[0].items[i].isEmpty && ITEM_IS_BULLET(chr->inventory[0].items[i].item.item.itemId) && chr->inventory[0].items[i].item.quantity > 0) {
-                                    chr->activeProjectile = i;
+                                    client->activeProjectile = i;
                                     break;
                                 }
                             }
                         }
-                    } else if (chr->activeProjectile == dst) {
-                        chr->activeProjectile = src;
+                    } else if (client->activeProjectile == dst) {
+                        client->activeProjectile = src;
                     } else {
                         uint32_t wid = chr->equippedEquipment[equip_slot_to_compact(EQUIP_SLOT_WEAPON)].equip.item.itemId;
                         struct InventoryItem *item = &chr->inventory[0].items[src].item;
                         if (wid / 10000 == 145 && item->item.itemId / 1000 == 2060) {
                             // Bow
-                            chr->activeProjectile = src;
+                            client->activeProjectile = src;
                         } else if (wid / 10000 == 146 && item->item.itemId / 1000 == 2061) {
-                            chr->activeProjectile = src;
+                            client->activeProjectile = src;
                         } else if (wid / 10000 == 147 && ITEM_IS_THROWING_STAR(item->item.itemId) && item->quantity > 0) {
                             // Claw
-                            chr->activeProjectile = src;
+                            client->activeProjectile = src;
                         } else if (wid / 10000 == 149 && ITEM_IS_BULLET(item->item.itemId) && item->quantity > 0) {
                             // Gun
-                            chr->activeProjectile = src;
+                            client->activeProjectile = src;
                         }
-
                     }
                 }
             }
 
-            mods[0].mode = INVENTORY_MODIFY_TYPE_MOVE;
-            mods[0].inventory = inventory + 2;
-            mods[0].slot = src + 1;
-            mods[0].dst = dst + 1;
-            mod_count = 1;
+            changes[0].mode = INVENTORY_MODIFY_TYPE_MOVE;
+            changes[0].inventory = inventory + 2;
+            changes[0].slot = src + 1;
+            changes[0].dst = dst + 1;
+            change_count = 1;
         }
-
-        {
-            uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
-            size_t len = modify_items_packet(mod_count, mods, packet);
-            session_write(client->session, len, packet);
-        }
-
-        return true;
     } else {
-        if (src >= chr->equipmentInventory.slotCount || dst >= chr->equipmentInventory.slotCount)
-            return false;
-
         if (chr->equipmentInventory.items[src].isEmpty)
-            return true;
+            return 0;
 
-        struct InventoryModify mod;
         if (chr->equipmentInventory.items[dst].isEmpty) {
             chr->equipmentInventory.items[dst] = chr->equipmentInventory.items[src];
             chr->equipmentInventory.items[src].isEmpty = true;
-            mod.mode = INVENTORY_MODIFY_TYPE_MOVE;
-            mod.inventory = 1;
-            mod.slot = src + 1;
-            mod.dst = dst + 1;
+            changes[0].mode = INVENTORY_MODIFY_TYPE_MOVE;
+            changes[0].inventory = 1;
+            changes[0].slot = src + 1;
+            changes[0].dst = dst + 1;
+            change_count = 1;
         } else {
             struct InventoryItem temp = chr->inventory[inventory].items[dst].item;
             chr->inventory[inventory].items[dst].item = chr->inventory[inventory].items[src].item;
             chr->inventory[inventory].items[src].item = temp;
-            mod.mode = INVENTORY_MODIFY_TYPE_MOVE;
-            mod.inventory = 1;
-            mod.slot = src + 1;
-            mod.dst = dst + 1;
+            changes[0].mode = INVENTORY_MODIFY_TYPE_MOVE;
+            changes[0].inventory = 1;
+            changes[0].slot = src + 1;
+            changes[0].dst = dst + 1;
+            change_count = 1;
         }
-
-        {
-            uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
-            size_t len = modify_items_packet(1, &mod, packet);
-            session_write(client->session, len, packet);
-        }
-
-        return true;
     }
+
+    return change_count;
 }
 
-bool client_equip(struct Client *client, uint8_t src, enum EquipSlot slot)
+bool client_equip(struct Client *client, uint8_t src, enum EquipSlot slot, struct InventoryModify *change)
 {
     // TODO: Check if there is enough room in the equipment inventory when both a top and a bottom are equipped and the player tries to equip an overall
     // or when both a weapon and a shield are equipped and the player tries to equip a two-handed weapon
@@ -3468,7 +3181,6 @@ bool client_equip(struct Client *client, uint8_t src, enum EquipSlot slot)
         return false;
 
     uint8_t dst = equip_slot_to_compact(slot);
-    src--;
     if (src >= chr->equipmentInventory.slotCount)
         return false;
 
@@ -3510,7 +3222,7 @@ bool client_equip(struct Client *client, uint8_t src, enum EquipSlot slot)
         // Bow
         for (uint8_t i = 0; i < chr->inventory[0].slotCount; i++) {
             if (!chr->inventory[0].items[i].isEmpty && chr->inventory[0].items[i].item.item.itemId / 1000 == 2060) {
-                chr->activeProjectile = i;
+                client->activeProjectile = i;
                 break;
             }
         }
@@ -3518,7 +3230,7 @@ bool client_equip(struct Client *client, uint8_t src, enum EquipSlot slot)
         // Crossbow
         for (uint8_t i = 0; i < chr->inventory[0].slotCount; i++) {
             if (!chr->inventory[0].items[i].isEmpty && chr->inventory[0].items[i].item.item.itemId / 1000 == 2061) {
-                chr->activeProjectile = i;
+                client->activeProjectile = i;
                 break;
             }
         }
@@ -3526,7 +3238,7 @@ bool client_equip(struct Client *client, uint8_t src, enum EquipSlot slot)
         // Claw
         for (uint8_t i = 0; i < chr->inventory[0].slotCount; i++) {
             if (!chr->inventory[0].items[i].isEmpty && ITEM_IS_THROWING_STAR(chr->inventory[0].items[i].item.item.itemId) && chr->inventory[0].items[i].item.quantity > 0) {
-                chr->activeProjectile = i;
+                client->activeProjectile = i;
                 break;
             }
         }
@@ -3534,35 +3246,21 @@ bool client_equip(struct Client *client, uint8_t src, enum EquipSlot slot)
         // Gun
         for (uint8_t i = 0; i < chr->inventory[0].slotCount; i++) {
             if (!chr->inventory[0].items[i].isEmpty && ITEM_IS_BULLET(chr->inventory[0].items[i].item.item.itemId) && chr->inventory[0].items[i].item.quantity > 0) {
-                chr->activeProjectile = i;
+                client->activeProjectile = i;
                 break;
             }
         }
     }
 
-    struct InventoryModify mod = {
-        .mode = INVENTORY_MODIFY_TYPE_MOVE,
-        .inventory = 1,
-        .slot = src + 1,
-        .dst = -slot
-    };
-
-    {
-        uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
-        size_t len = modify_items_packet(1, &mod, packet);
-        session_write(client->session, len, packet);
-    }
-
-    {
-        uint8_t packet[UPDATE_CHAR_LOOK_MAX_LENGTH];
-        size_t len = update_char_look_packet(chr, packet);
-        session_broadcast_to_room(client->session, len, packet);
-    }
+    change->mode = INVENTORY_MODIFY_TYPE_MOVE;
+    change->inventory = 1;
+    change->slot = src + 1;
+    change->dst = -slot;
 
     return true;
 }
 
-bool client_unequip(struct Client *client, enum EquipSlot slot, uint8_t dst)
+bool client_unequip(struct Client *client, enum EquipSlot slot, uint8_t dst, struct InventoryModify *change)
 {
     // TODO: Also unequip the bottom if the player tries to equip an overall instead of a shirt
     // TODO: Check if all equipment can still be worn after the stat change
@@ -3576,7 +3274,7 @@ bool client_unequip(struct Client *client, enum EquipSlot slot, uint8_t dst)
         return false;
 
     if (slot == EQUIP_SLOT_WEAPON)
-        chr->activeProjectile = -1;
+        client->activeProjectile = -1;
 
     if (chr->equipmentInventory.items[dst].isEmpty) {
         chr->estr -= chr->equippedEquipment[src].equip.str;
@@ -3609,255 +3307,105 @@ bool client_unequip(struct Client *client, enum EquipSlot slot, uint8_t dst)
         chr->equipmentInventory.items[dst].equip = temp;
     }
 
-    enum Stat stats = 0;
-    union StatValue values[2];
     if (chr->hp > character_get_effective_hp(chr)) {
         chr->hp = character_get_effective_hp(chr);
-        values[0].i16 = chr->hp;
-        stats |= STAT_HP;
     }
 
     if (chr->mp > character_get_effective_mp(chr)) {
         chr->mp = character_get_effective_mp(chr);
-        values[stats != 0 ? 1 : 0].i16 = chr->mp;
-        stats |= STAT_MP;
     }
 
-    if (stats != 0) {
-        uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
-        size_t len = stat_change_packet(true, stats, values, packet);
-        session_write(client->session, len, packet);
-    }
-
-    struct InventoryModify mod = {
-        .mode = INVENTORY_MODIFY_TYPE_MOVE,
-        .inventory = 1,
-        .slot = -slot,
-        .dst = dst + 1,
-    };
-
-    {
-        uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
-        size_t len = modify_items_packet(1, &mod, packet);
-        session_write(client->session, len, packet);
-    }
-
-    {
-        uint8_t packet[UPDATE_CHAR_LOOK_MAX_LENGTH];
-        size_t len = update_char_look_packet(chr, packet);
-        session_broadcast_to_room(client->session, len, packet);
-    }
+    change->mode = INVENTORY_MODIFY_TYPE_MOVE;
+    change->inventory = 1;
+    change->slot = -slot;
+    change->dst = dst + 1;
 
     return true;
 }
 
-bool client_use_item(struct Client *client, uint8_t slot, uint32_t id)
+uint32_t client_get_equip(struct Client *client, bool equipped, uint8_t slot)
 {
     struct Character *chr = &client->character;
-    slot--;
-    if (slot >= chr->inventory[0].slotCount)
-        return false;
+    if (equipped) {
+        if (!chr->equippedEquipment[equip_slot_to_compact(slot)].isEmpty)
+            return chr->equippedEquipment[equip_slot_to_compact(slot)].equip.item.itemId;
+    } else {
+        if (!chr->equipmentInventory.items[slot].isEmpty)
+            return chr->equipmentInventory.items[slot].equip.item.itemId;
+    }
+    return -1;
+}
+
+bool client_has_use_item(struct Client *client, uint8_t slot, uint32_t id)
+{
+    struct Character *chr = &client->character;
 
     // TODO: Check if id is a usable item
 
-    const struct ConsumableInfo *info = wz_get_consumable_info(id);
-    if (info == NULL)
-        return false;
-
     if (chr->inventory[0].items[slot].isEmpty || chr->inventory[0].items[slot].item.item.itemId != id)
-        return true;
-
-    enum Stat stats = 0;
-    size_t value_count = 0;
-    union StatValue values[2];
-
-    if (info->hp != 0 || info->hpR != 0) {
-        int16_t hp = info->hp + character_get_effective_hp(chr) * info->hpR / 100; // TODO: This addition can overflow
-        if (chr->hp > character_get_effective_hp(chr) - hp)
-            hp = character_get_effective_hp(chr) - chr->hp;
-
-        chr->hp += hp;
-
-        values[value_count].i16 = chr->hp,
-        stats |= STAT_HP;
-        value_count++;
-    }
-
-    if (info->mp != 0 || info->mpR != 0) {
-        int16_t mp = info->mp + character_get_effective_mp(chr) * info->mpR / 100; // TODO: This addition can overflow
-        if (chr->mp > character_get_effective_mp(chr) - mp)
-            mp = character_get_effective_mp(chr) - chr->mp;
-
-        chr->mp += mp;
-
-        values[value_count].i16 = chr->mp;
-        stats |= STAT_MP;
-        value_count++;
-    }
-
-    // Also enables actions if value_count is 0
-    {
-        uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
-        size_t len = stat_change_packet(true, stats, values, packet);
-        session_write(client->session, len, packet);
-    }
-
-    chr->inventory[0].items[slot].item.quantity--;
-    if (chr->inventory[0].items[slot].item.quantity == 0) {
-        chr->inventory[0].items[slot].isEmpty = true;
-        struct InventoryModify mod = {
-            .mode = INVENTORY_MODIFY_TYPE_REMOVE,
-            .inventory = 2,
-            .slot = slot + 1,
-        };
-        uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
-        size_t len = modify_items_packet(1, &mod, packet);
-        session_write(client->session, len, packet);
-    } else {
-        struct InventoryModify mod = {
-            .mode = INVENTORY_MODIFY_TYPE_MODIFY,
-            .inventory = 2,
-            .slot = slot + 1,
-            .quantity = chr->inventory[0].items[slot].item.quantity
-        };
-        uint8_t packet[MODIFY_ITEMS_PACKET_MAX_LENGTH];
-        size_t len = modify_items_packet(1, &mod, packet);
-        session_write(client->session, len, packet);
-    }
-
+        return false;
     return true;
 }
 
-bool client_use_item_immediate(struct Client *client, uint32_t id)
+bool client_record_monster_book_entry(struct Client *client, uint32_t id, uint8_t *count)
 {
     struct Character *chr = &client->character;
+    struct MonsterBookEntry *entry = hash_set_u32_get(chr->monsterBook, id);
+    if (entry == NULL || entry->count < 5) {
+        if (entry == NULL) {
+            struct MonsterBookEntry new = {
+                .id = id,
+                .count = 0
+            };
+            if (hash_set_u32_insert(chr->monsterBook, &new) == -1)
+                return false;
 
-    const struct ConsumableInfo *info = wz_get_consumable_info(id);
-    if (info == NULL)
-        return false;
-
-    //apply_effects(client, info)
-    enum Stat stats = 0;
-    size_t value_count = 0;
-    union StatValue values[2];
-
-    if (info->hp != 0 || info->hpR != 0) {
-        int16_t hp = info->hp + character_get_effective_hp(chr) * info->hpR / 100; // TODO: This addition can overflow
-        if (chr->hp > character_get_effective_hp(chr) - hp)
-            hp = character_get_effective_hp(chr) - chr->hp;
-
-        chr->hp += hp;
-
-        values[value_count].i16 = chr->hp,
-        stats |= STAT_HP;
-        value_count++;
-    }
-
-    if (info->mp != 0 || info->mpR != 0) {
-        int16_t mp = info->mp + character_get_effective_mp(chr) * info->mpR / 100; // TODO: This addition can overflow
-        if (chr->mp > character_get_effective_mp(chr) - mp)
-            mp = character_get_effective_mp(chr) - chr->mp;
-
-        chr->mp += mp;
-
-        values[value_count].i16 = chr->mp;
-        stats |= STAT_MP;
-        value_count++;
-    }
-
-    if (wz_get_item_info(id)->monsterBook) {
-        struct MonsterBookEntry *entry = hash_set_u32_get(chr->monsterBook, id);
-        if (entry == NULL || entry->count < 5) {
-            if (entry == NULL) {
-                struct MonsterBookEntry new = {
-                    .id = id,
-                    .count = 0
-                };
-                hash_set_u32_insert(chr->monsterBook, &new);
-                entry = hash_set_u32_get(chr->monsterBook, id);
-            }
-
-            entry->count++;
-
-            {
-                uint8_t packet[ADD_CARD_PACKET_LENGTH];
-                add_card_packet(false, id, entry->count, packet);
-                session_write(client->session, ADD_CARD_PACKET_LENGTH, packet);
-            }
-
-            {
-                uint8_t packet[SHOW_EFFECT_PACKET_LENGTH];
-                show_effect_packet(0x0D, packet);
-                session_write(client->session, SHOW_EFFECT_PACKET_LENGTH, packet);
-            }
-        } else {
-            uint8_t packet[ADD_CARD_PACKET_LENGTH];
-            add_card_packet(true, id, 5, packet);
-            session_write(client->session, ADD_CARD_PACKET_LENGTH, packet);
+            entry = hash_set_u32_get(chr->monsterBook, id);
         }
 
-        // Show monster card effect to other players regardless if the card slot is full or not
-        {
-            uint8_t packet[SHOW_FOREIGN_EFFECT_PACKET_LENGTH];
-            show_foreign_effect_packet(chr->id, 0x0D, packet);
-            session_broadcast_to_room(client->session, SHOW_FOREIGN_EFFECT_PACKET_LENGTH, packet);
-        }
-    }
+        entry->count++;
 
-    // Also enables actions if value_count is 0
-    {
-        uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
-        size_t len = stat_change_packet(true, stats, values, packet);
-        session_write(client->session, len, packet);
+        *count = entry->count;
+    } else {
+        *count = 0;
     }
 
     return true;
 }
 
-bool client_is_quest_started(struct Client *client, uint16_t qid)
+bool client_check_start_quest_requirements(struct Client *client, const struct QuestInfo *info, uint32_t npc)
 {
-    return hash_set_u16_get(client->character.quests, qid) != NULL;
+    struct Character *chr = &client->character;
+    return check_quest_requirements(chr, info->startRequirementCount, info->startRequirements, npc);
 }
 
-bool client_is_quest_complete(struct Client *client, uint16_t qid)
+bool client_check_end_quest_requirements(struct Client *client, const struct QuestInfo *info, uint32_t npc)
 {
-    return hash_set_u16_get(client->character.completedQuests, qid) != NULL;
+    struct Character *chr = &client->character;
+    return check_quest_requirements(chr, info->endRequirementCount, info->endRequirements, npc);
 }
 
-struct ClientResult client_npc_talk(struct Client *client, uint32_t npc)
+void client_set_npc(struct Client *client, uint32_t id)
 {
-    if (client->script != NULL)
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
-
-    client->npc = npc;
-    char script[12];
-    snprintf(script, 12, "%d.lua", npc);
-    client->script = script_manager_alloc(client->managers.npc, script, 0);
-    if (client->script == NULL)
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_ERROR };
-    enum ScriptResult res = script_manager_run(client->script, SCRIPT_CLIENT_TYPE, client);
-    switch (res) {
-    case SCRIPT_RESULT_VALUE_KICK:
-        script_manager_free(client->script);
-        client->script = NULL;
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
-    case SCRIPT_RESULT_VALUE_FAILURE:
-        script_manager_free(client->script);
-        client->script = NULL;
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_ERROR };
-    case SCRIPT_RESULT_VALUE_SUCCESS:
-        script_manager_free(client->script);
-        client->script = NULL;
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
-    case SCRIPT_RESULT_VALUE_NEXT:
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_NEXT };
-    break;
-    }
-
-    return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
+    client->npc = id;
 }
 
-struct ClientResult client_launch_map_script(struct Client *client, const char *script_name)
+uint32_t client_get_npc(struct Client *client)
+{
+    return client->npc;
+}
+
+void client_set_quest(struct Client *client, uint32_t id)
+{
+    client->qid = id;
+}
+
+uint32_t client_get_quest(struct Client *client)
+{
+    return client->qid;
+}
+
+/*struct ClientResult client_launch_map_script(struct Client *client, const char *script_name)
 {
     char script[32];
     snprintf(script, 32, "%s.lua", script_name);
@@ -3883,81 +3431,101 @@ struct ClientResult client_launch_map_script(struct Client *client, const char *
     }
 
     return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
-}
+}*/
 
-struct ClientResult client_start_quest(struct Client *client, uint16_t qid, uint32_t npc, bool scripted)
+bool client_add_quest(struct Client *client, uint16_t qid, size_t count, uint32_t *ids, bool *success)
 {
     struct Character *chr = &client->character;
 
-    if (scripted && client->script != NULL)
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
-
-    const struct QuestInfo *info = wz_get_quest_info(qid);
-    if (info == NULL)
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
+    *success = false;
 
     if (hash_set_u16_get(chr->quests, qid) != NULL)
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
+        return true;
 
-    // TODO: Also check if this quest isn't repeatable
-    if (hash_set_u16_get(chr->completedQuests, qid) != NULL)
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
+    struct Quest quest = {
+        .id = qid,
+        .progressCount = 0
+    };
 
-    if ((scripted && !info->startScript) || (!scripted && info->startScript))
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
-
-    if (!check_quest_requirements(chr, info->startRequirementCount, info->startRequirements, npc))
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
-
-    for (size_t i = 0; i < info->endRequirementCount; i++) {
-        if (info->endRequirements[i].type == QUEST_REQUIREMENT_TYPE_ITEM) {
-            const struct ItemInfo *item_info = wz_get_item_info(info->endRequirements[i].item.id);
-            if (item_info->quest) {
-                hash_set_u32_insert(chr->itemQuests, &info->endRequirements[i].item.id);
-            }
+    for (size_t i = 0; i < count; i++) {
+        struct MonsterRefCount *m = hash_set_u32_get(client->monsterQuests, ids[i]);
+        if (m == NULL) {
+            struct MonsterRefCount new = {
+                .id = ids[i],
+                .refs = 1
+            };
+            hash_set_u32_insert(client->monsterQuests, &new);
+        } else {
+            m->refs++;
         }
+        quest.mids[i] = ids[i];
+        quest.progress[i] = 0;
     }
 
-    if (info->startScript) {
-        client->npc = npc;
-        client->qid = qid;
-        char script[10];
-        snprintf(script, 10, "%d.lua", qid);
-        client->script = script_manager_alloc(client->managers.quest, script, 0);
-        enum ScriptResult res = script_manager_run(client->script, SCRIPT_CLIENT_TYPE, client);
-        switch (res) {
-        case SCRIPT_RESULT_VALUE_KICK:
-            script_manager_free(client->script);
-            client->script = NULL;
-            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
-        case SCRIPT_RESULT_VALUE_FAILURE:
-            script_manager_free(client->script);
-            client->script = NULL;
-            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_ERROR };
-        case SCRIPT_RESULT_VALUE_SUCCESS:
-            script_manager_free(client->script);
-            client->script = NULL;
-            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
-        case SCRIPT_RESULT_VALUE_NEXT:
-            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_NEXT };
-        }
-    }
+    quest.progressCount = count;
 
-    bool success;
-    if (!start_quest(client, qid, npc, &success))
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_ERROR };
+    if (hash_set_u16_insert(chr->quests, &quest) == -1)
+        return false;
 
-    if (!success) {
-        uint8_t packet[POPUP_MESSAGE_PACKET_MAX_LENGTH];
-        char *message = "Please check if you have enough space in your inventory.";
-        size_t len = popup_message_packet(strlen(message), message, packet);
-        session_write(client->session, len, packet);
-    }
-
-    return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
+    *success = true;
+    return true;
 }
 
-struct ClientResult client_regain_quest_item(struct Client *client, uint16_t qid, uint32_t item_id)
+bool client_is_quest_started(struct Client *client, uint16_t qid)
+{
+    return hash_set_u16_get(client->character.quests, qid) != NULL;
+}
+
+bool client_remove_quest(struct Client *client, uint16_t qid)
+{
+    struct Character *chr = &client->character;
+
+    struct Quest *quest = hash_set_u16_get(chr->quests, qid);
+    if (quest == NULL)
+        return false;
+
+    for (size_t i = 0; i < quest->progressCount; i++) {
+        struct MonsterRefCount *m = hash_set_u32_get(client->monsterQuests, quest->mids[i]);
+        m->refs--;
+        if (m->refs == 0)
+            hash_set_u32_remove(client->monsterQuests, quest->mids[i]);
+    }
+
+    hash_set_u16_remove(chr->quests, qid);
+
+    return true;
+}
+
+bool client_is_quest_complete(struct Client *client, uint16_t qid)
+{
+    return hash_set_u16_get(client->character.completedQuests, qid) != NULL;
+}
+
+bool client_has_empty_slot_in_each_inventory(struct Client *client)
+{
+    struct Character *chr = &client->character;
+    size_t j;
+    for (j = 0; j < chr->equipmentInventory.slotCount; j++)
+        if (chr->equipmentInventory.items[j].isEmpty)
+            break;
+
+    if (j == chr->equipmentInventory.slotCount)
+        return false;
+
+    for (size_t i = 0; i < 4; i++) {
+        for (j = 0; j < chr->inventory[i].slotCount; j++) {
+            if (chr->inventory[i].items[j].isEmpty)
+                break;
+        }
+
+        if (j == chr->inventory[i].slotCount)
+            return false;
+    }
+
+    return true;
+}
+
+/*struct ClientResult client_regain_quest_item(struct Client *client, uint16_t qid, uint32_t item_id)
 {
     struct Character *chr = &client->character;
     const struct QuestInfo *info = wz_get_quest_info(qid);
@@ -4012,7 +3580,7 @@ struct ClientResult client_regain_quest_item(struct Client *client, uint16_t qid
         };
 
     return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
-}
+}*/
 
 const char *client_get_quest_info(struct Client *client, uint16_t info)
 {
@@ -4024,7 +3592,7 @@ const char *client_get_quest_info(struct Client *client, uint16_t info)
     return qi->value;
 }
 
-int client_set_quest_info(struct Client *client, uint16_t info, const char *value)
+bool client_set_quest_info(struct Client *client, uint16_t info, const char *value)
 {
     struct Character *chr = &client->character;
     struct QuestInfoProgress *qi = hash_set_u16_get(chr->questInfos, info);
@@ -4035,371 +3603,150 @@ int client_set_quest_info(struct Client *client, uint16_t info, const char *valu
         };
         strncpy(new.value, value, new.length); // Note that if value is exactly 12 then the nul terminator isn't writter
         if (hash_set_u16_insert(chr->questInfos, &new) == -1)
-            return -1;
-        uint8_t packet[UPDATE_QUEST_PACKET_MAX_LENGTH];
-        size_t len = update_quest_packet(info, strlen(value), value, packet);
-        session_write(client->session, len, packet);
+            return false;
     } else {
-        if (strncmp(qi->value, value, qi->length)) {
-            uint8_t packet[UPDATE_QUEST_PACKET_MAX_LENGTH];
-            size_t len = update_quest_packet(info, strlen(value), value, packet);
-            session_write(client->session, len, packet);
-        }
-
         qi->length = strlen(value);
         strcpy(qi->value, value);
-    }
-
-    return 0;
-}
-
-
-bool client_start_quest_now(struct Client *client, bool *success)
-{
-    return start_quest(client, client->qid, client->npc, success);
-}
-
-struct ClientResult client_end_quest(struct Client *client, uint16_t qid, uint32_t npc, bool scripted)
-{
-    struct Character *chr = &client->character;
-
-    if (scripted && client->script != NULL)
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
-
-    const struct QuestInfo *info = wz_get_quest_info(qid);
-    if (info == NULL)
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
-
-    if (hash_set_u16_get(chr->completedQuests, qid) != NULL)
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
-
-    if (hash_set_u16_get(chr->quests, qid) == NULL)
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
-
-    if ((scripted && !info->endScript) || (!scripted && info->endScript))
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
-
-    if (!check_quest_requirements(chr, info->endRequirementCount, info->endRequirements, npc))
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
-
-    if (info->endScript) {
-        client->npc = npc;
-        client->qid = qid;
-        char script[10];
-        snprintf(script, 10, "%d.lua", qid);
-        client->script = script_manager_alloc(client->managers.quest, script, 1);
-        enum ScriptResult res = script_manager_run(client->script, SCRIPT_CLIENT_TYPE, client);
-        switch (res) {
-        case SCRIPT_RESULT_VALUE_KICK:
-            script_manager_free(client->script);
-            client->script = NULL;
-            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
-        case SCRIPT_RESULT_VALUE_FAILURE:
-            script_manager_free(client->script);
-            client->script = NULL;
-            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_ERROR };
-        case SCRIPT_RESULT_VALUE_SUCCESS:
-            script_manager_free(client->script);
-            client->script = NULL;
-            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
-        case SCRIPT_RESULT_VALUE_NEXT:
-            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_NEXT };
-        }
-    }
-
-    bool success;
-    if (!end_quest(client, qid, npc, &success))
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_ERROR };
-
-    if (!success) {
-        uint8_t packet[POPUP_MESSAGE_PACKET_MAX_LENGTH];
-        char *message = "Please check if you have enough space in your inventory.";
-        size_t len = popup_message_packet(strlen(message), message, packet);
-        session_write(client->session, len, packet);
-    }
-
-    return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
-}
-
-bool client_end_quest_now(struct Client *client, bool *success)
-{
-    return end_quest(client, client->qid, client->npc, success);
-}
-
-bool client_forfeit_quest(struct Client *client, uint16_t qid)
-{
-    struct Quest *quest = hash_set_u16_get(client->character.quests, qid);
-    if (quest == NULL)
-        return true;
-
-    const struct QuestInfo *info = wz_get_quest_info(qid);
-    for (size_t i = 0; i < info->endRequirementCount; i++) {
-        struct QuestRequirement *req = &info->endRequirements[i];
-        if (req->type == QUEST_REQUIREMENT_TYPE_MOB) {
-            for (size_t i = 0; i < req->mob.count; i++) {
-                if (quest->progress[i] < req->mob.mobs[i].count) {
-                    struct MonsterRefCount *m = hash_set_u32_get(client->character.monsterQuests, req->mob.mobs[i].id);
-                    m->refCount--;
-                    if (m->refCount == 0)
-                        hash_set_u32_remove(client->character.monsterQuests, m->id);
-                }
-            }
-        }
-    }
-
-    hash_set_u16_remove(client->character.quests, qid);
-
-    {
-        uint8_t packet[FORFEIT_QUEST_PACKET_LENGTH];
-        forfeit_quest_packet(qid, packet);
-        session_write(client->session, FORFEIT_QUEST_PACKET_LENGTH, packet);
     }
 
     return true;
 }
 
-struct ClientResult client_script_cont(struct Client *client, uint8_t prev, uint8_t action, uint32_t selection)
+bool client_complete_quest(struct Client *client, uint16_t qid, time_t time)
 {
-    if (client->script == NULL)
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
+    struct Character *chr = &client->character;
 
-    // Check if prev matches the actual previous state
-    if (client->scriptState != SCRIPT_STATE_WARP) {
-        switch (prev) {
-        case 0:
-            if (client->scriptState != SCRIPT_STATE_OK && client->scriptState != SCRIPT_STATE_NEXT && client->scriptState != SCRIPT_STATE_PREV_NEXT && client->scriptState != SCRIPT_STATE_PREV)
-                return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
-        break;
-        case 1:
-            if (client->scriptState != SCRIPT_STATE_YES_NO)
-                return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
-        break;
-        case 3:
-            if (client->scriptState != SCRIPT_STATE_GET_NUMBER)
-                return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
-        break;
-        case 4:
-            if (client->scriptState != SCRIPT_STATE_SIMPLE)
-                return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
-        break;
-        case 12:
-            if (client->scriptState != SCRIPT_STATE_ACCEPT_DECILNE)
-                return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
-        break;
-        default:
-            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
-        }
-    }
+    struct CompletedQuest quest = {
+        .id = qid,
+        .time = time
+    };
+    if (hash_set_u16_insert(chr->completedQuests, &quest) == -1)
+        return false;
 
-    // In an empty dialogue (GET_NUMBER or SIMPLE), END CHAT is (action == 0) instead of (action == -1)
-    bool is_empty_dialoge = client->scriptState == SCRIPT_STATE_GET_NUMBER || client->scriptState == SCRIPT_STATE_SIMPLE;
-    if ((is_empty_dialoge && action == 0) || (!is_empty_dialoge && action == (uint8_t)-1)) {
-        script_manager_free(client->script);
-        client->script = NULL;
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
-    }
-
-    // In an empty dialogue, the only other option for action is a '1'
-    if (is_empty_dialoge && action != 1) {
-        script_manager_free(client->script);
-        client->script = NULL;
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
-    }
-
-    // Check if 'action' is valid for the current state
-    if ((client->scriptState == SCRIPT_STATE_OK && action != 1) ||
-            (client->scriptState == SCRIPT_STATE_YES_NO && action != 0 && action != 1) ||
-            (client->scriptState == SCRIPT_STATE_NEXT && action != 1) ||
-            (client->scriptState == SCRIPT_STATE_PREV_NEXT && action != 0 && action != 1) ||
-            (client->scriptState == SCRIPT_STATE_PREV && action != 0 && action != 1) ||
-            (client->scriptState == SCRIPT_STATE_ACCEPT_DECILNE && action != 0 && action != 1)) {
-        script_manager_free(client->script);
-        client->script = NULL;
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
-    }
-
-    enum ScriptResult res;
-    switch (client->scriptState) {
-    case SCRIPT_STATE_OK:
-        res = script_manager_run(client->script, 1);
-    break;
-    case SCRIPT_STATE_YES_NO:
-        res = script_manager_run(client->script, action == 0 ? -1 : 1);
-    break;
-    case SCRIPT_STATE_GET_NUMBER:
-    case SCRIPT_STATE_SIMPLE:
-        if (action < client->min || action > client->max) {
-            script_manager_free(client->script);
-            client->script = NULL;
-            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
-        }
-        res = script_manager_run(client->script, selection);
-    break;
-    case SCRIPT_STATE_NEXT:
-        res = script_manager_run(client->script, 1);
-    break;
-    case SCRIPT_STATE_PREV_NEXT:
-        res = script_manager_run(client->script, action == 0 ? -1 : 1);
-    break;
-    case SCRIPT_STATE_PREV:
-        res = script_manager_run(client->script, action == 0 ? -1 : 1);
-    break;
-    case SCRIPT_STATE_ACCEPT_DECILNE:
-        res = script_manager_run(client->script, action == 0 ? -1 : 1);
-    break;
-    case SCRIPT_STATE_WARP:
-        res = script_manager_run(client->script, 0);
-    break;
-    }
-
-    switch (res) {
-    case SCRIPT_RESULT_VALUE_KICK:
-        script_manager_free(client->script);
-        client->script = NULL;
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
-    case SCRIPT_RESULT_VALUE_FAILURE:
-        script_manager_free(client->script);
-        client->script = NULL;
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_ERROR };
-    case SCRIPT_RESULT_VALUE_SUCCESS:
-        script_manager_free(client->script);
-        client->script = NULL;
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
-    case SCRIPT_RESULT_VALUE_NEXT:
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_NEXT };
-    }
+    hash_set_u16_remove(chr->quests, qid);
+    return true;
 }
 
-void client_close_script(struct Client *client)
+/*bool client_end_quest_now(struct Client *client, bool *success)
 {
-    script_manager_free(client->script);
-    client->script = NULL;
-}
-
-struct CheckProgressContext {
-    struct Session *session;
-    struct HashSetU32 *monsterQuests;
-    uint32_t id;
-};
+    return end_quest(client, client->qid, client->npc, success);
+}*/
 
 static void check_progress(void *data, void *ctx);
 
-void client_kill_monster(struct Client *client, uint32_t id)
+void client_kill_monster(struct Client *client, uint32_t id, void (*f)(uint16_t qid, size_t progress_count, int32_t *progress, void *ctx), void *ctx_)
 {
     struct Character *chr = &client->character;
     const struct MobInfo *info = wz_get_monster_stats(id);
-    client_gain_exp(client, info->exp, false);
-    client_commit_stats(client);
-    struct CheckProgressContext ctx = {
-        .session = client->session,
-        .monsterQuests = chr->monsterQuests,
-    };
 
     // I could load Mob.wz/QuestCountGroup and parse the files there
-    // but since there are a measly 4 records there it seems better to just
+    // but since there are a measly 4 records there, it seems better to just
     // make a special case for them here
     if (id == 1110100 || id == 1110130) {
-        ctx.id = 9101000;
-        if (hash_set_u32_get(client->character.monsterQuests, ctx.id) != NULL)
-            hash_set_u16_foreach(chr->quests, check_progress, &ctx);
+        id = 9101000;
     } else if (id == 2230101 || id == 2230131) {
-        ctx.id = 9101001;
-        if (hash_set_u32_get(client->character.monsterQuests, ctx.id) != NULL)
-            hash_set_u16_foreach(chr->quests, check_progress, &ctx);
+        id = 9101001;
     } else if (id == 1140100 || id == 1140130) {
-        ctx.id = 9101002;
-        if (hash_set_u32_get(client->character.monsterQuests, ctx.id) != NULL)
-            hash_set_u16_foreach(chr->quests, check_progress, &ctx);
+        id = 9101002;
     } else if (id == 8830003 || id == 8830010) {
-        ctx.id = 9101003;
-        if (hash_set_u32_get(client->character.monsterQuests, ctx.id) != NULL)
-            hash_set_u16_foreach(chr->quests, check_progress, &ctx);
+        id = 9101003;
     }
 
-    ctx.id = id;
-
-    if (hash_set_u32_get(client->character.monsterQuests, id) != NULL)
+    if (hash_set_u32_get(client->monsterQuests, id) != NULL) {
+        struct {
+            struct Client *client;
+            uint32_t id;
+            void (*f)(uint16_t qid, size_t progress_count, int32_t *progress, void *ctx);
+            void *ctx;
+        } ctx = { client, id, f, ctx_ };
         hash_set_u16_foreach(chr->quests, check_progress, &ctx);
+    }
 }
 
-struct ClientResult client_open_shop(struct Client *client, uint32_t id)
+static void check_progress(void *data, void *ctx_)
+{
+    struct {
+        struct Client *client;
+        uint32_t id;
+        void (*f)(uint16_t qid, size_t progress_count, int32_t *progress, void *ctx);
+        void *ctx;
+    } *ctx = ctx_;
+    struct Quest *quest = data;
+    const struct QuestInfo *info = wz_get_quest_info(quest->id);
+
+    for (size_t i = 0; i < info->endRequirementCount; i++) {
+        if (info->endRequirements[i].type == QUEST_REQUIREMENT_TYPE_MOB) {
+            const struct QuestRequirement *req = &info->endRequirements[i];
+            for (size_t i = 0; i < req->mob.count; i++) {
+                if (req->mob.mobs[i].id == ctx->id && quest->progress[i] < req->mob.mobs[i].count) {
+                    quest->progress[i]++;
+                    if (quest->progress[i] == req->mob.mobs[i].count) {
+                        struct MonsterRefCount *monster = hash_set_u32_get(ctx->client->monsterQuests, ctx->id);
+                        monster->refs--;
+                        if (monster->refs == 0)
+                            hash_set_u32_remove(ctx->client->monsterQuests, ctx->id);
+                    }
+
+                    ctx->f(quest->id, quest->progressCount, quest->progress, ctx->ctx);
+                    break;
+                }
+            }
+            break;
+        }
+    }
+}
+
+bool client_open_shop(struct Client *client, uint32_t id)
 {
     if (client->shop == -1) {
         client->shop = id;
-
-        const struct ShopInfo *info = shop_info_find(id);
-        if (info == NULL)
-            return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN, .reason = "" };
-
-        struct ShopItem items[info->count];
-        for (size_t i = 0; i < info->count; i++) {
-            items[i].id = info->items[i].id;
-            items[i].price = info->items[i].price;
-        }
-
-        uint8_t packet[OPEN_SHOP_PACKET_MAX_LENGTH];
-        size_t len = open_shop_packet(id, info->count, items, packet);
-        session_write(client->session, len, packet);
+        return true;
     }
 
-    return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
+    return false;
 }
 
-struct ClientResult client_buy(struct Client *client, uint16_t pos, uint32_t id, int16_t quantity, int32_t price)
+/*bool client_buy(struct Client *client, uint32_t id, int16_t quantity, int32_t price, size_t *count, struct InventoryModify **changes)
 {
-    if (client->shop == -1)
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN, .reason = "Client tried to buy from a shop that isn't open" };
-
-    const struct ShopInfo *shop = shop_info_find(client->shop);
-    if (pos >= shop->count)
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN, .reason = "Client tried to buy an illegal shop position" };
-
-    // Also implicitly checks that the item ID actuallt exists
-    if (shop->items[pos].id != id)
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN, .reason = "Client tried to buy an item with an incorrect ID" };
-
-    if (quantity <= 0)
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN, .reason = "Client tried to buy a non-positive quantity of an item" };
-
-    if (shop->items[pos].id / 1000000 == 1 && quantity > 1)
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN, .reason = "Client tried to buy multiple of an equipment" };
-
-    // TODO: Check if price is per item or total
-    if (shop->items[pos].price != price)
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN, .reason = "Client tried to buy an item with an incorrect price" };
-
     // Players can drop meso while in the shop, so this can be a legal packet
     if (client->character.mesos < price) {
-        uint8_t packet[SHOP_ACTION_RESPONSE_PACKET_LENGTH];
-        shop_action_response(2, packet);
-        session_write(client->session, SHOP_ACTION_RESPONSE_PACKET_LENGTH, packet);
-
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
+        *err = 2;
+        return false;
     }
 
     bool success;
-    if (!client_gain_items(client, 1, &id, &quantity, false, &success))
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_ERROR };
+    if (!client_gain_items(client, 1, &id, &quantity, count, changes)) {
+        *err = 3;
+        return false;
+    }
 
-    client_gain_meso(client, -price, false, false);
-    client_commit_stats(client);
+    client_adjust_mesos(client, true, -price);
 
-    if (!success)
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN, .reason = "Client tried to buy an item while not having a slot for it" };
+    return true;
+}*/
 
-    uint8_t packet[SHOP_ACTION_RESPONSE_PACKET_LENGTH];
-    shop_action_response(0, packet);
-    session_write(client->session, SHOP_ACTION_RESPONSE_PACKET_LENGTH, packet);
+/*bool client_sell_equip(struct Client *client, uint16_t pos, uint32_t id, bool *success, struct InventoryModify *change)
+{
+    struct Equipment equip;
+
+    if (!client_remove_equip(client, false, pos, change, &equip))
+        return false;
+
+    *success = false;
+
+    if (!equip.item.itemId != id)
+        return true;
+
+    client_adjust_mesos(client, true, info->price * quantity);
+
+    *success = true;
+    return true;
 
     return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
 }
 
-struct ClientResult client_sell(struct Client *client, uint16_t pos, uint32_t id, int16_t quantity)
+bool client_sell(struct Client *client, uint8_t inv, uint16_t pos, uint32_t id, int16_t quantity, struct InventoryModify *change)
 {
-    if (quantity <= 0)
-        return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
-
-    // TODO: Check if item is sellable
     const struct ItemInfo *info = wz_get_item_info(id);
     if (info == NULL)
         return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
@@ -4426,7 +3773,7 @@ struct ClientResult client_sell(struct Client *client, uint16_t pos, uint32_t id
             return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_BAN };
     }
 
-    client_gain_meso(client, info->price * quantity, false, false);
+    client_adjust_mesos(client, info->price * quantity, false, false);
     client_commit_stats(client);
 
     uint8_t packet[SHOP_ACTION_RESPONSE_PACKET_LENGTH];
@@ -4436,7 +3783,7 @@ struct ClientResult client_sell(struct Client *client, uint16_t pos, uint32_t id
     return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
 }
 
-struct ClientResult client_recharge(struct Client *client, uint16_t slot)
+bool client_recharge(struct Client *client, uint16_t pos)
 {
     struct Character *chr = &client->character;
 
@@ -4490,7 +3837,7 @@ struct ClientResult client_recharge(struct Client *client, uint16_t slot)
         session_write(client->session, len, packet);
     }
 
-    client_gain_meso(client, -price, false, false);
+    client_adjust_mesos(client, -price, false, false);
     client_commit_stats(client);
 
     uint8_t packet[SHOP_ACTION_RESPONSE_PACKET_LENGTH];
@@ -4499,7 +3846,7 @@ struct ClientResult client_recharge(struct Client *client, uint16_t slot)
 
     return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
 
-}
+}*/
 
 bool client_close_shop(struct Client *client)
 {
@@ -4510,109 +3857,106 @@ bool client_close_shop(struct Client *client)
     return true;
 }
 
-bool client_is_in_shop(struct Client *client)
+uint32_t client_shop(struct Client *client)
 {
-    return client->shop != -1;
+    return client->shop;
 }
 
-void client_send_ok(struct Client *client, size_t msg_len, const char *msg, uint8_t speaker)
+void client_set_dialogue_state(struct Client *client, enum ClientDialogueState state, ...)
 {
-    client->scriptState = SCRIPT_STATE_OK;
-    uint8_t packet[NPC_DIALOGUE_PACKET_MAX_LENGTH];
-    size_t len = npc_dialogue_packet(client->npc, NPC_DIALOGUE_TYPE_OK, msg_len, msg, speaker, packet);
-    session_write(client->session, len, packet);
+    if (state == CLIENT_DIALOGUE_STATE_GET_NUMBER) {
+        va_list list;
+        va_start(list, state);
+        client->min = va_arg(list, uint32_t);
+        client->max = va_arg(list, uint32_t);
+        va_end(list);
+    } else if (state == CLIENT_DIALOGUE_STATE_SIMPLE) {
+        va_list list;
+        va_start(list, state);
+        client->min = 1;
+        client->max = va_arg(list, uint32_t);
+        va_end(list);
+    }
 }
 
-void client_send_yes_no(struct Client *client, size_t msg_len, const char *msg, uint8_t speaker)
+bool client_is_dialogue_option_legal(struct Client *client, uint8_t prev)
 {
-    client->scriptState = SCRIPT_STATE_YES_NO;
-    uint8_t packet[NPC_DIALOGUE_PACKET_MAX_LENGTH];
-    size_t len = npc_dialogue_packet(client->npc, NPC_DIALOGUE_TYPE_YES_NO, msg_len, msg, speaker, packet);
-    session_write(client->session, len, packet);
+    //if (client->state != SCRIPT_STATE_WARP) {
+        switch (prev) {
+        case 0:
+            if (client->state != CLIENT_DIALOGUE_STATE_OK &&
+                    client->state != CLIENT_DIALOGUE_STATE_NEXT &&
+                    client->state != CLIENT_DIALOGUE_STATE_PREV_NEXT &&
+                    client->state != CLIENT_DIALOGUE_STATE_PREV)
+                return false;
+        break;
+        case 1:
+            if (client->state != CLIENT_DIALOGUE_STATE_YES_NO)
+                return false;
+        break;
+        case 3:
+            if (client->state != CLIENT_DIALOGUE_STATE_GET_NUMBER)
+                return false;
+        break;
+        case 4:
+            if (client->state != CLIENT_DIALOGUE_STATE_SIMPLE)
+                return false;
+        break;
+        case 12:
+            if (client->state != CLIENT_DIALOGUE_STATE_ACCEPT_DECILNE)
+                return false;
+        break;
+        default:
+            return false;
+        }
+    //}
+
+    return true;
 }
 
-void client_send_simple(struct Client *client, size_t msg_len, const char *msg, uint8_t speaker, uint32_t selection_count)
+bool client_dialogue_is_action_valid(struct Client *client, uint8_t action, uint32_t selection, uint32_t *script_action)
 {
-    client->scriptState = SCRIPT_STATE_SIMPLE;
-    client->min = 1;
-    client->max = selection_count;
-    uint8_t packet[NPC_DIALOGUE_PACKET_MAX_LENGTH];
-    size_t len = npc_dialogue_packet(client->npc, NPC_DIALOGUE_TYPE_SIMPLE, msg_len, msg, speaker, packet);
-    session_write(client->session, len, packet);
-}
-
-void client_send_next(struct Client *client, size_t msg_len, const char *msg, uint8_t speaker)
-{
-    client->scriptState = SCRIPT_STATE_NEXT;
-    uint8_t packet[NPC_DIALOGUE_PACKET_MAX_LENGTH];
-    size_t len = npc_dialogue_packet(client->npc, NPC_DIALOGUE_TYPE_NEXT, msg_len, msg, speaker, packet);
-    session_write(client->session, len, packet);
-}
-
-void client_send_prev_next(struct Client *client, size_t msg_len, const char *msg, uint8_t speaker)
-{
-    client->scriptState = SCRIPT_STATE_PREV_NEXT;
-    uint8_t packet[NPC_DIALOGUE_PACKET_MAX_LENGTH];
-    size_t len = npc_dialogue_packet(client->npc, NPC_DIALOGUE_TYPE_PREV_NEXT, msg_len, msg, speaker, packet);
-    session_write(client->session, len, packet);
-}
-
-void client_send_prev(struct Client *client, size_t msg_len, const char *msg, uint8_t speaker)
-{
-    client->scriptState = SCRIPT_STATE_PREV;
-    uint8_t packet[NPC_DIALOGUE_PACKET_MAX_LENGTH];
-    size_t len = npc_dialogue_packet(client->npc, NPC_DIALOGUE_TYPE_PREV, msg_len, msg, speaker, packet);
-    session_write(client->session, len, packet);
-}
-
-void client_send_accept_decline(struct Client *client, size_t msg_len, const char *msg, uint8_t speaker)
-{
-    client->scriptState = SCRIPT_STATE_ACCEPT_DECILNE;
-    uint8_t packet[NPC_DIALOGUE_PACKET_MAX_LENGTH];
-    size_t len = npc_dialogue_packet(client->npc, NPC_DIALOGUE_TYPE_ACCEPT_DECILNE, msg_len, msg, speaker, packet);
-    session_write(client->session, len, packet);
-}
-
-void client_send_get_number(struct Client *client, size_t msg_len, const char *msg, uint8_t speaker, int32_t def, int32_t min, int32_t max)
-{
-    client->scriptState = SCRIPT_STATE_GET_NUMBER;
-    client->min = min;
-    client->max = max;
-    uint8_t packet[NPC_DIALOGUE_PACKET_MAX_LENGTH];
-    size_t len = npc_get_number_packet(client->npc, msg_len, msg, speaker, def, min, max, packet);
-    session_write(client->session, len, packet);
-}
-
-void client_message(struct Client *client, const char *msg)
-{
-    uint8_t packet[SERVER_MESSAGE_PACKET_MAX_LENGTH];
-    size_t len = server_message_packet(strlen(msg), msg, packet);
-    session_write(client->session, len, packet);
-}
-
-bool client_warp(struct Client *client, uint32_t map, uint8_t portal)
-{
-    struct Character *chr = &client->character;
-    client->scriptState = SCRIPT_STATE_WARP;
-    {
-        uint8_t packet[REMOVE_PLAYER_FROM_MAP_PACKET_LENGTH];
-        remove_player_from_map_packet(chr->id, packet);
-        session_broadcast_to_room(client->session, REMOVE_PLAYER_FROM_MAP_PACKET_LENGTH, packet);
+    if ((client->state == CLIENT_DIALOGUE_STATE_OK && action != 1) ||
+            (client->state == CLIENT_DIALOGUE_STATE_YES_NO && action != 0 && action != 1) ||
+            (client->state == CLIENT_DIALOGUE_STATE_NEXT && action != 1) ||
+            (client->state == CLIENT_DIALOGUE_STATE_PREV_NEXT && action != 0 && action != 1) ||
+            (client->state == CLIENT_DIALOGUE_STATE_PREV && action != 0 && action != 1) ||
+            (client->state == CLIENT_DIALOGUE_STATE_ACCEPT_DECILNE && action != 0 && action != 1)) {
+        return false;
     }
 
-    map_leave(room_get_context(session_get_room(client->session)), client->map.player);
-    client->map.player = NULL;
-
-    {
-        uint8_t packet[CHANGE_MAP_PACKET_LENGTH];
-        change_map_packet(&client->character, map, portal, packet);
-        session_write(client->session, CHANGE_MAP_PACKET_LENGTH, packet);
+    if ((client->state == CLIENT_DIALOGUE_STATE_GET_NUMBER || client->state == CLIENT_DIALOGUE_STATE_SIMPLE) &&
+            (selection >= client->max || selection <= client->min)) {
+        return false;
     }
 
-    client->character.map = map;
-    client->character.spawnPoint = portal;
-
-    session_change_room(client->session, map);
+    switch (client->state) {
+    case CLIENT_DIALOGUE_STATE_WARP:
+        *script_action = 0;
+    break;
+    case CLIENT_DIALOGUE_STATE_OK:
+        *script_action = 1;
+    break;
+    case CLIENT_DIALOGUE_STATE_YES_NO:
+        *script_action = action == 0 ? -1 : 1;
+    break;
+    case CLIENT_DIALOGUE_STATE_GET_NUMBER:
+    case CLIENT_DIALOGUE_STATE_SIMPLE:
+        *script_action = selection;
+    break;
+    case CLIENT_DIALOGUE_STATE_NEXT:
+        *script_action = 1;
+    break;
+    case CLIENT_DIALOGUE_STATE_PREV_NEXT:
+        *script_action = action == 0 ? -1 : 1;
+    break;
+    case CLIENT_DIALOGUE_STATE_PREV:
+        *script_action = action == 0 ? -1 : 1;
+    break;
+    case CLIENT_DIALOGUE_STATE_ACCEPT_DECILNE:
+        *script_action = action == 0 ? -1 : 1;
+    break;
+    }
 
     return true;
 }
@@ -4662,30 +4006,6 @@ void client_reset_stats(struct Client *client)
         default:
         break;
     }
-
-    uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
-    union StatValue values[] = {
-        {
-            .i16 = chr->str
-        },
-        {
-            .i16 = chr->dex
-        },
-        {
-            .i16 = chr->int_
-        },
-        {
-            .i16 = chr->luk
-        },
-        {
-            .i16 = chr->ap
-        },
-        {
-            .i16 = chr->sp
-        },
-    };
-    size_t len = stat_change_packet(true, STAT_STR | STAT_DEX | STAT_INT | STAT_LUK | STAT_AP | STAT_SP, values, packet);
-    session_write(client->session, len, packet);
 }
 
 void client_change_job(struct Client *client, enum Job job)
@@ -4693,7 +4013,6 @@ void client_change_job(struct Client *client, enum Job job)
     struct Character *chr = &client->character;
 
     character_set_job(chr, job);
-    client->stats |= STAT_JOB;
     int16_t sp = 1;
     if (job % 10 == 2)
         sp += 2;
@@ -4745,9 +4064,6 @@ void client_change_job(struct Client *client, enum Job job)
         character_set_max_mp(chr, chr->maxMp + rand2);
     }
 
-    client->stats |= STAT_MAX_HP | STAT_MAX_MP;
-    client_commit_stats(client);
-
     // TODO: Broadcast to family, party, guild
 
     //{
@@ -4761,15 +4077,9 @@ void client_change_job(struct Client *client, enum Job job)
     //    size_t len = add_player_to_map_packet(chr, false, packet);
     //    session_broadcast_to_room(client->session.session, len, packet);
     //}
-
-    {
-        uint8_t packet[SHOW_FOREIGN_EFFECT_PACKET_LENGTH];
-        show_foreign_effect_packet(chr->id, 8, packet);
-        session_broadcast_to_room(client->session, SHOW_FOREIGN_EFFECT_PACKET_LENGTH, packet);
-    }
 }
 
-struct ClientResult client_launch_portal_script(struct Client *client, const char *portal)
+/*struct ClientResult client_launch_portal_script(struct Client *client, const char *portal)
 {
     if (client->script != NULL)
         return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
@@ -4797,14 +4107,7 @@ struct ClientResult client_launch_portal_script(struct Client *client, const cha
     }
 
     return (struct ClientResult) { .type = CLIENT_RESULT_TYPE_SUCCESS };
-}
-
-void client_enable_actions(struct Client *client)
-{
-    uint8_t packet[STAT_CHANGE_PACKET_MAX_LENGTH];
-    size_t len = stat_change_packet(true, 0, NULL, packet);
-    session_write(client->session, len, packet);
-}
+}*/
 
 void client_toggle_auto_pickup(struct Client *client)
 {
@@ -4816,34 +4119,28 @@ bool client_is_auto_pickup_enabled(struct Client *client)
     return client->autoPickup;
 }
 
-bool client_apply_skill(struct Client *client, uint32_t skill_id, uint8_t *level)
+bool client_has_skill(struct Client *client, uint32_t skill_id, int8_t *level)
 {
     struct Character *chr = &client->character;
     struct Skill *skill = hash_set_u32_get(chr->skills, skill_id);
     if (skill == NULL)
-        return false; // Packet-edit
-
-    const struct SkillInfo *info = wz_get_skill_info(skill_id);
-    if (info == NULL)
-        return false; // Packet-edit
-
-    if (info->levels[skill->level-1].bulletCount > 0) {
-        if (chr->activeProjectile == (uint8_t)-1)
-            return true;
-
-        bool success;
-        if (!client_use_projectile(client, info->levels[skill->level-1].bulletCount, &success))
-            return false;
-
-        if (!success)
-            return true;
-    }
-
-    client_adjust_mp_now(client, -info->levels[skill->level-1].mpCon);
+        return false;
 
     *level = skill->level;
-
     return true;
+}
+
+bool client_gain_skill(struct Client *client, uint32_t skill_id, int8_t level, int8_t master)
+{
+    struct Character *chr = &client->character;
+
+    struct Skill skill = {
+        .id = skill_id,
+        .level = level,
+        .masterLevel = master
+    };
+
+    return hash_set_u32_insert(chr->skills, &skill) == -1;
 }
 
 bool client_add_key(struct Client *client, uint32_t key, uint8_t type, uint32_t action)
@@ -4883,97 +4180,12 @@ bool client_remove_key(struct Client *client, uint32_t key, uint32_t action)
     return true;
 }
 
-bool client_sit(struct Client *client, uint32_t id)
-{
-    struct Character *chr = &client->character;
-
-    if (!ITEM_IS_CHAIR(id))
-        return false;
-
-    if (chr->chair != 0 || chr->seat != (uint16_t)-1)
-        return false;
-
-    if (!client_has_item(client, id, 1))
-        return true;
-
-    chr->chair = id;
-
-    uint8_t packet[SET_CHAIR_PACKET_LENGTH];
-    set_chair_packet(chr->id, id, packet);
-    room_broadcast(session_get_room(client->session), SET_CHAIR_PACKET_LENGTH, packet);
-
-    return true;
-}
-
-bool client_sit_on_map_seat(struct Client *client, uint16_t id)
-{
-    struct Character *chr = &client->character;
-    if (id >= wz_get_map_seat_count(chr->map))
-        return false;
-
-    if (chr->seat != (uint16_t)-1)
-        return true;
-
-    if (!map_try_occupy_seat(room_get_context(session_get_room(client->session)), id))
-        return true;
-
-    chr->seat = id;
-
-    uint8_t packet[SIT_ON_MAP_SEAT_PACKET_LENGTH];
-    sit_on_map_seat_packet(id, packet);
-    session_write(client->session, SIT_ON_MAP_SEAT_PACKET_LENGTH, packet);
-
-    // Other map players will be notified of the sitting by a client_move()
-
-    return true;
-}
-
-bool client_stand_up(struct Client *client)
-{
-    struct Character *chr = &client->character;
-
-    if (chr->chair != 0) {
-        chr->chair = 0;
-
-        {
-            uint8_t packet[SET_CHAIR_PACKET_LENGTH];
-            set_chair_packet(chr->id, 0, packet);
-            room_broadcast(session_get_room(client->session), SET_CHAIR_PACKET_LENGTH, packet);
-        }
-    } else if (chr->seat != (uint16_t)-1) {
-        map_tire_seat(room_get_context(session_get_room(client->session)), chr->seat);
-        chr->seat = -1;
-    }
-
-    {
-        uint8_t packet[STAND_UP_PACKET_LENGTH];
-        stand_up_packet(packet);
-        session_write(client->session, STAND_UP_PACKET_LENGTH, packet);
-    }
-
-    return true;
-}
-
-bool client_open_storage(struct Client *client)
+/*bool client_open_storage(struct Client *client)
 {
     uint8_t packet[OPEN_STORAGE_PACKET_MAX_LENGTH];
     size_t len = open_storage_packet(&client->character.storage, client->npc, packet);
     session_write(client->session, len, packet);
     return true;
-}
-
-void client_show_info(struct Client *client, const char *path)
-{
-    uint8_t packet[SHOW_INFO_PACKET_MAX_LENGTH];
-    size_t len = show_info_packet(strlen(path), path, packet);
-    session_write(client->session, len, packet);
-}
-
-void client_show_intro(struct Client *client, const char *path)
-{
-    uint8_t packet[SHOW_INTRO_PACKET_MAX_LENGTH];
-    size_t len = show_intro_packet(strlen(path), path, packet);
-    session_write(client->session, len, packet);
 }
 
 void client_create_party(struct Client *client)
@@ -5060,7 +4272,7 @@ void client_announce_party_change_online_status(struct Client *client, uint32_t 
 
 void client_announce_party_change_leader(struct Client *client, uint32_t id)
 {
-}
+}*/
 
 static void insert_client(uint8_t len, const char *name, uint32_t id)
 {
@@ -5210,447 +4422,5 @@ static bool check_quest_requirements(struct Character *chr, size_t req_count, co
     }
 
     return true;
-}
-
-static bool start_quest(struct Client *client, uint16_t qid, uint32_t npc, bool *success)
-{
-    bool success_;
-    if (success == NULL)
-        success = &success_;
-
-    struct Character *chr = &client->character;
-
-    const struct QuestInfo *info = wz_get_quest_info(qid);
-
-    struct Quest quest = {
-        .id = qid,
-        .progressCount = 0
-    };
-
-    for (size_t i = 0; i < info->endRequirementCount; i++) {
-        struct QuestRequirement *req = &info->endRequirements[i];
-        if (req->type == QUEST_REQUIREMENT_TYPE_MOB) {
-            for (size_t i = 0; i < req->mob.count; i++) {
-                struct MonsterRefCount *m = hash_set_u32_get(chr->monsterQuests, req->mob.mobs[i].id);
-                if (m == NULL) {
-                    struct MonsterRefCount new = {
-                        .id = req->mob.mobs[i].id,
-                        .refCount = 1
-                    };
-                    hash_set_u32_insert(chr->monsterQuests, &new);
-                } else {
-                    m->refCount++;
-                }
-                quest.progress[quest.progressCount] = 0;
-                quest.progressCount++;
-            }
-        }
-    }
-
-    if (hash_set_u16_insert(chr->quests, &quest) == -1)
-        return false;
-
-    *success = false;
-    for (size_t i = 0; i < info->startActCount; i++) {
-        switch (info->startActs[i].type) {
-        case QUEST_ACT_TYPE_EXP:
-            client_gain_exp(client, info->startActs[i].exp.amount, true);
-        break;
-        case QUEST_ACT_TYPE_MESO:
-            client_gain_meso(client, info->startActs[i].meso.amount, false, true);
-        break;
-        case QUEST_ACT_TYPE_ITEM: {
-            bool has_prop = false;
-            int8_t item_count = 0;
-            int32_t total = 0;
-            for (size_t j = 0; j < info->startActs[i].item.count; j++) {
-                if (info->startActs[i].item.items[j].prop == 0 || !has_prop) {
-                    if (info->startActs[i].item.items[j].prop != 0)
-                        has_prop = true;
-
-                    item_count++;
-                }
-
-                total += info->startActs[i].item.items[j].prop;
-            }
-
-            uint32_t ids[item_count];
-            int16_t amounts[item_count];
-
-            int32_t r;
-            if (has_prop) {
-                // If there is a random item, there should be at least one empty slot in each inventory
-                size_t j;
-                for (j = 0; j < chr->equipmentInventory.slotCount; j++)
-                    if (chr->equipmentInventory.items[j].isEmpty)
-                        break;
-
-                if (j == chr->equipmentInventory.slotCount) {
-                    hash_set_u16_remove(chr->quests, qid);
-                    return true;
-                }
-
-                for (size_t i = 0; i < 4; i++) {
-                    for (j = 0; j < chr->inventory[i].slotCount; j++) {
-                        if (chr->inventory[i].items[j].isEmpty)
-                            break;
-                    }
-
-                    if (j == chr->inventory[i].slotCount) {
-                        hash_set_u16_remove(chr->quests, qid);
-                        return true;
-                    }
-                }
-
-                r = rand() % total;
-            }
-
-            has_prop = false;
-            item_count = 0;
-            total = 0;
-            for (size_t j = 0; j < info->startActs[i].item.count; j++) {
-                total += info->startActs[i].item.items[j].prop;
-                if (info->startActs[i].item.items[j].prop == 0 || (!has_prop && r < total)) {
-                    if (info->startActs[i].item.items[j].prop != 0)
-                        has_prop = true;
-
-                    ids[item_count] = info->startActs[i].item.items[j].id;
-                    amounts[item_count] = info->startActs[i].item.items[j].count;
-                    item_count++;
-                }
-            }
-
-            for (int8_t i = 0; i < item_count; i++) {
-                if (client_has_item(client, ids[i], 1)) {
-                    item_count--;
-                    ids[i] = ids[item_count];
-                    amounts[i] = amounts[item_count];
-                    i--;
-                }
-            }
-
-            bool success;
-            if (!client_gain_items(client, item_count, ids, amounts, true, &success)) {
-                hash_set_u16_remove(chr->quests, qid);
-                return false;
-            }
-
-            if (!success) {
-                hash_set_u16_remove(chr->quests, qid);
-                return true;
-            }
-        }
-        break;
-
-        default:
-            fprintf(stderr, "Unimplemented\n");
-        }
-    }
-
-    // No need to enable actions if no stat has changed
-    if (client->stats != 0)
-        client_commit_stats(client);
-
-    char progress[15];
-    size_t prog_len = quest_get_progress_string(&quest, progress);
-    {
-        uint8_t packet[UPDATE_QUEST_PACKET_MAX_LENGTH];
-        size_t len = update_quest_packet(qid, prog_len, progress, packet);
-        session_write(client->session, len, packet);
-    }
-
-    {
-        uint8_t packet[START_QUEST_PACKET_LENGTH];
-        start_quest_packet(qid, npc, packet);
-        session_write(client->session, START_QUEST_PACKET_LENGTH, packet);
-    }
-
-    *success = true;
-    return true;
-}
-
-static bool end_quest(struct Client *client, uint16_t qid, uint32_t npc, bool *success)
-{
-    bool success_;
-    if (success == NULL)
-        success = &success_;
-
-    struct Character *chr = &client->character;
-
-    struct CompletedQuest quest = {
-        .id = qid,
-        .time = time(NULL),
-    };
-
-    if (hash_set_u16_insert(chr->completedQuests, &quest) == -1)
-        return false;
-
-    {
-        uint8_t packet[UPDATE_QUEST_COMPLETION_TIME_PACKET_LENGTH];
-        update_quest_completion_time_packet(qid, quest.time, packet);
-        session_write(client->session, UPDATE_QUEST_COMPLETION_TIME_PACKET_LENGTH, packet);
-    }
-
-    {
-        uint8_t packet[SHOW_EFFECT_PACKET_LENGTH];
-        show_effect_packet(0x09, packet);
-        session_write(client->session, SHOW_EFFECT_PACKET_LENGTH, packet);
-    }
-
-    {
-        uint8_t packet[SHOW_FOREIGN_EFFECT_PACKET_LENGTH];
-        show_foreign_effect_packet(chr->id, 0x09, packet);
-        session_broadcast_to_room(client->session, SHOW_FOREIGN_EFFECT_PACKET_LENGTH, packet);
-    }
-
-    *success = false;
-    const struct QuestInfo *info = wz_get_quest_info(qid);
-    uint16_t next_quest = 0;
-    for (size_t i = 0; i < info->endActCount; i++) {
-        struct QuestAct *act = &info->endActs[i];
-        switch (act->type) {
-        case QUEST_ACT_TYPE_EXP:
-            client_gain_exp(client, act->exp.amount, true);
-        break;
-
-        case QUEST_ACT_TYPE_MESO:
-            client_gain_meso(client, act->meso.amount, false, true);
-        break;
-
-        case QUEST_ACT_TYPE_ITEM: {
-            bool has_prop = false;
-            int8_t item_count = 0;
-            int32_t total = 0;
-            for (size_t i = 0; i < act->item.count; i++) {
-                if (act->item.items[i].prop == 0 || !has_prop) {
-                    if (act->item.items[i].prop != 0)
-                        has_prop = true;
-
-                    item_count++;
-                }
-
-                total += act->item.items[i].prop;
-            }
-
-            uint32_t ids[item_count];
-            int16_t amounts[item_count];
-
-            int32_t r;
-            if (has_prop) {
-                // If there is a random item, there should be at least one empty slot in each inventory
-                size_t j;
-                for (j = 0; j < chr->equipmentInventory.slotCount; j++)
-                    if (chr->equipmentInventory.items[j].isEmpty)
-                        break;
-
-                if (j == chr->equipmentInventory.slotCount) {
-                    hash_set_u16_remove(chr->completedQuests, qid);
-                    return true;
-                }
-
-                for (size_t i = 0; i < 4; i++) {
-                    size_t j;
-                    for (j = 0; j < chr->inventory[i].slotCount; j++) {
-                        if (chr->inventory[i].items[j].isEmpty)
-                            break;
-                    }
-
-                    if (j == chr->inventory[i].slotCount) {
-                        hash_set_u16_remove(chr->completedQuests, qid);
-                        return true;
-                    }
-                }
-                r = rand() % total;
-            }
-
-            has_prop = false;
-            item_count = 0;
-            total = 0;
-            for (size_t j = 0; j < act->item.count; j++) {
-                total += act->item.items[j].prop;
-                if (act->item.items[j].prop == 0 || (!has_prop && r < total)) {
-                    if (act->item.items[j].prop != 0)
-                        has_prop = true;
-
-                    ids[item_count] = act->item.items[j].id;
-                    amounts[item_count] = act->item.items[j].count;
-                    item_count++;
-                }
-            }
-
-            bool succ;
-            if (!client_gain_items(client, item_count, ids, amounts, true, &succ)) {
-                hash_set_u16_remove(chr->completedQuests, qid);
-                return false;
-            }
-
-            if (!succ) {
-                hash_set_u16_remove(chr->completedQuests, qid);
-                return true;
-            }
-        }
-        break;
-
-        case QUEST_ACT_TYPE_NEXT_QUEST: {
-            next_quest = info->endActs[i].nextQuest.qid;
-        }
-        break;
-
-        case QUEST_ACT_TYPE_SKILL: {
-            for (size_t i = 0; i < act->skill.count; i++) {
-                for (size_t j = 0; j < act->skill.skills[i].jobCount; j++) {
-                    if (chr->job == act->skill.skills[i].jobs[j]) {
-                        struct Skill skill = {
-                            .id = act->skill.skills[i].id,
-                            .level = act->skill.skills[i].level,
-                            .masterLevel = act->skill.skills[i].masterLevel,
-                        };
-
-                        hash_set_u32_insert(chr->skills, &skill);
-                        uint8_t packet[UPDATE_SKILL_PACKET_LENGTH];
-                        update_skill_packet(skill.id, skill.level, skill.masterLevel, packet);
-                        session_write(client->session, UPDATE_SKILL_PACKET_LENGTH, packet);
-                    }
-                }
-
-            }
-        }
-        break;
-
-        default:
-            fprintf(stderr, "Unimplemented\n");
-        }
-    }
-
-    client_commit_stats(client);
-
-    uint8_t packet[END_QUEST_PACKET_LENGTH];
-    end_quest_packet(qid, npc, next_quest, packet);
-    session_write(client->session, END_QUEST_PACKET_LENGTH, packet);
-
-    hash_set_u16_remove(chr->quests, qid);
-
-    // Sometimes a quest can have an infoNumber of itself, in this case we need to make sure to remove the info number
-    // or else in the next login the quest will be reported as active instead of finished
-    if (hash_set_u16_get(chr->questInfos, qid) != NULL)
-        hash_set_u16_remove(chr->questInfos, qid);
-
-    *success = true;
-    return true;
-}
-
-static void check_progress(void *data, void *ctx_)
-{
-    struct CheckProgressContext *ctx = ctx_;
-    struct Quest *quest = data;
-    const struct QuestInfo *info = wz_get_quest_info(quest->id);
-
-    for (size_t i = 0; i < info->endRequirementCount; i++) {
-        if (info->endRequirements[i].type == QUEST_REQUIREMENT_TYPE_MOB) {
-            const struct QuestRequirement *req = &info->endRequirements[i];
-            for (size_t i = 0; i < req->mob.count; i++) {
-                if (req->mob.mobs[i].id == ctx->id && quest->progress[i] < req->mob.mobs[i].count) {
-                    quest->progress[i]++;
-                    if (quest->progress[i] == req->mob.mobs[i].count) {
-                        struct MonsterRefCount *monster = hash_set_u32_get(ctx->monsterQuests, ctx->id);
-                        monster->refCount--;
-                        if (monster->refCount == 0)
-                            hash_set_u32_remove(ctx->monsterQuests, ctx->id);
-                    }
-
-                    char progress[15];
-                    size_t prog_len = quest_get_progress_string(quest, progress);
-                    uint8_t packet[UPDATE_QUEST_PACKET_MAX_LENGTH];
-                    size_t len = update_quest_packet(quest->id, prog_len, progress, packet);
-                    session_write(ctx->session, len, packet);
-                    break;
-                }
-            }
-            break;
-        }
-    }
-}
-
-static void add_quest(void *data, void *ctx_)
-{
-    struct Quest *quest = data;
-    struct AddQuestContext *ctx = ctx_;
-
-    ctx->quests[ctx->currentQuest] = quest->id;
-    ctx->progressCount += quest->progressCount;
-    ctx->currentQuest++;
-}
-
-static void add_progress(void *data, void *ctx_)
-{
-    struct Quest *quest = data;
-    struct AddProgressContext *ctx = ctx_;
-    const struct QuestInfo *info = wz_get_quest_info(quest->id);
-
-    const struct QuestRequirement *req;
-    for (size_t i = 0; i < info->endRequirementCount; i++) {
-        if (info->endRequirements[i].type == QUEST_REQUIREMENT_TYPE_MOB) {
-            req = &info->endRequirements[i];
-            break;
-        }
-    }
-
-    for (uint8_t i = 0; i < quest->progressCount; i++) {
-        ctx->progresses[ctx->currentProgress].questId = quest->id;
-        ctx->progresses[ctx->currentProgress].progressId = req->mob.mobs[i].id;
-        ctx->progresses[ctx->currentProgress].progress = quest->progress[i];
-        ctx->currentProgress++;
-    }
-}
-
-static void add_quest_info(void *data, void *ctx_)
-{
-    struct QuestInfoProgress *info = data;
-    struct AddQuestInfoContext *ctx = ctx_;
-
-    ctx->infos[ctx->currentInfo].infoId = info->id;
-    ctx->infos[ctx->currentInfo].progressLength = info->length;
-    strncpy(ctx->infos[ctx->currentInfo].progress, info->value, info->length);
-    ctx->currentInfo++;
-}
-
-static void add_completed_quest(void *data, void *ctx_)
-{
-    struct CompletedQuest *quest = data;
-    struct AddCompletedQuestContext *ctx = ctx_;
-
-    ctx->quests[ctx->currentQuest].id = quest->id;
-    struct tm tm;
-    gmtime_r(&quest->time, &tm);
-    ctx->quests[ctx->currentQuest].time.year = tm.tm_year + 1900;
-    ctx->quests[ctx->currentQuest].time.month = tm.tm_mon + 1;
-    ctx->quests[ctx->currentQuest].time.day = tm.tm_mday;
-    ctx->quests[ctx->currentQuest].time.hour = tm.tm_hour;
-    ctx->quests[ctx->currentQuest].time.minute = tm.tm_min;
-    ctx->quests[ctx->currentQuest].time.second = tm.tm_sec;
-    ctx->quests[ctx->currentQuest].time.second_part = 0;
-    ctx->quests[ctx->currentQuest].time.neg = 0;
-    ctx->currentQuest++;
-}
-
-static void add_skill(void *data, void *ctx_)
-{
-    struct Skill *skill = data;
-    struct AddSkillContext *ctx = ctx_;
-
-    ctx->skills[ctx->currentSkill].id = skill->id;
-    ctx->skills[ctx->currentSkill].level = skill->level;
-    ctx->skills[ctx->currentSkill].masterLevel = skill->masterLevel;
-    ctx->currentSkill++;
-}
-
-static void add_monster_book_entry(void *data, void *ctx_)
-{
-    struct MonsterBookEntry *entry = data;
-    struct AddMonsterBookContext *ctx = ctx_;
-
-    ctx->monsterBook[ctx->currentEntry].id = entry->id;
-    ctx->monsterBook[ctx->currentEntry].quantity = entry->count;
-    ctx->currentEntry++;
 }
 

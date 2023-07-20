@@ -1,6 +1,6 @@
 #include "lua.h"
 
-#include "../server.h"
+#include "../server2.h"
 
 #define SCRIPT_EVENT_TYPE "Syrup.event"
 

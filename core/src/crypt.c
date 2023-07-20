@@ -7,9 +7,10 @@
 
 #include "crypt.h"
 
+#define MAPLE_VERSION ((uint16_t)83)
+
 struct EncryptionContext {
     uint8_t iv[4];
-    uint16_t mapleVersion;
 };
 
 struct DecryptionContext {
@@ -22,15 +23,12 @@ static uint8_t roll_right(uint8_t in, uint8_t count);
 
 // Taken from tinyAES
 
-#define AES_keyExpSize 240
-
 struct AES_ctx
 {
-    uint8_t RoundKey[AES_keyExpSize];
+    uint8_t RoundKey[240];
 };
 
 #define Nb 4
-#define Nk 8
 #define Nr 14
 typedef uint8_t state_t[4][4];
 
@@ -197,12 +195,11 @@ static const uint8_t FUNNY_BYTES[] = {
     0x84, 0x7F, 0x61, 0x1E, 0xCF, 0xC5, 0xD1, 0x56, 0x3D, 0xCA, 0xF4, 0x05, 0xC6, 0xE5, 0x08, 0x49
 };
 
-struct EncryptionContext *encryption_context_new(uint8_t *iv, uint16_t maple_version)
+struct EncryptionContext *encryption_context_new(uint8_t iv[static 4])
 {
     struct EncryptionContext *context = malloc(sizeof(struct EncryptionContext));
     if (context != NULL) {
         memcpy(context->iv, iv, sizeof(context->iv));
-        context->mapleVersion = (maple_version >> 8 & 0xFF) | (maple_version << 8 & 0xFF00);
     }
 
     return context;
@@ -215,25 +212,16 @@ void encryption_context_destroy(struct EncryptionContext *context)
 
 void encryption_context_encrypt(struct EncryptionContext *context, uint16_t length, uint8_t *data)
 {
-    for (int j = 0; j < 6; j++) {
-        uint8_t remember = 0;
-        uint8_t data_length = length;
-        if (j % 2 == 0) {
-            for (uint16_t i = 0; i < length; i++) {
-                uint8_t cur = data[i];
-                cur = (roll_left(cur, 3) + data_length) ^ remember;
-                remember = cur;
-                data_length--;
-                data[i] = ~roll_right(cur, data_length + 1) + 0x48;
-            }
-        } else {
-            for (uint16_t i = 0; i < length; i++) {
-                uint8_t cur = data[length - i - 1];
-                cur = (roll_left(cur, 4) + data_length) ^ remember;
-                remember = cur;
-                data_length--;
-                data[length - i - 1] = roll_right(cur ^ 0x13, 3);
-            }
+    for (int j = 0; j < 3; j++) {
+        uint8_t state = 0;
+        for (uint16_t i = 0; i < length; i++) {
+            state = (roll_left(data[i], 3) + (length - i)) ^ state;
+            data[i] = ~roll_right(state, (length - i) % 8) + 0x48;
+        }
+        state = 0;
+        for (uint16_t i = length; i > 0; i--) {
+            state = (roll_left(data[i - 1], 4) + i) ^ state;
+            data[i - 1] = roll_right(state ^ 0x13, 3);
         }
     }
 
@@ -244,7 +232,7 @@ void encryption_context_header(struct EncryptionContext *context, uint16_t size,
 {
     uint16_t iiv = context->iv[3];
     iiv |= ((uint16_t)context->iv[2]) << 8;
-    iiv ^= context->mapleVersion;
+    iiv ^= ((uint16_t)(~MAPLE_VERSION) >> 8) | ((uint16_t)(~MAPLE_VERSION) << 8);
     uint16_t xor_iv = iiv ^ (size << 8 | size >> 8);
 
     out[0] = iiv >> 8;
@@ -258,7 +246,7 @@ const uint8_t *encryption_context_get_iv(struct EncryptionContext *context)
     return context->iv;
 }
 
-struct DecryptionContext *decryption_context_new(uint8_t *iv)
+struct DecryptionContext *decryption_context_new(uint8_t iv[static 4])
 {
     struct DecryptionContext *context = malloc(sizeof(struct DecryptionContext));
     if (context != NULL)
@@ -276,29 +264,18 @@ void decryption_context_decrypt(struct DecryptionContext *context, uint16_t leng
 {
     crypt(context->iv, length, data);
 
-    for (int j = 1; j <= 6; j++) {
-        uint8_t remember = 0;
-        uint8_t dataLength = length;
-        if (j % 2 == 0) {
-            for (uint16_t i = 0; i < length; i++) {
-                uint8_t cur = roll_left(~(data[i] - 0x48), dataLength);
-                uint8_t tmp = cur;
-                cur ^= remember;
-                remember = tmp;
-                data[i] = roll_right(cur - dataLength, 3);
-                dataLength--;
-            }
-        } else {
-            for (uint16_t i = 0; i < length; i++) {
-                uint8_t cur = data[length - i - 1];
-                cur = roll_left(cur, 3);
-                cur ^= 0x13;
-                uint8_t tmp = cur;
-                cur ^= remember;
-                remember = tmp;
-                data[length - i - 1] = roll_right(cur - dataLength, 4);
-                dataLength--;
-            }
+    for (int j = 0; j < 3; j++) {
+        uint8_t state = 0;
+        for (uint16_t i = length; i > 0; i--) {
+            uint8_t cur = roll_left(data[i - 1], 3) ^ 0x13;
+            data[i - 1] = roll_right((cur ^ state) - i, 4);
+            state = cur;
+        }
+        state = 0;
+        for (uint16_t i = 0; i < length; i++) {
+            uint8_t cur = roll_left(~(data[i] - 0x48), i % 8);
+            data[i] = roll_right((cur ^ state) - (length - i), 3);
+            state = cur;
         }
     }
 }
@@ -339,7 +316,7 @@ static void crypt(uint8_t *iv, size_t length, uint8_t *data)
         new_iv[0] += FUNNY_BYTES[new_iv[1]] - iv[i];
         new_iv[1] -= new_iv[2] ^ FUNNY_BYTES[iv[i]];
         new_iv[2] ^= FUNNY_BYTES[new_iv[3]] + iv[i];
-        new_iv[3] -= new_iv[0] - FUNNY_BYTES[iv[i]]; // new_iv[3] = new_iv[3] - new_iv[0] + FUNNY_BYTES[current_byte]
+        new_iv[3] -= new_iv[0] - FUNNY_BYTES[iv[i]];
         uint32_t merry = new_iv[0] |
             (uint32_t)new_iv[1] << 8 |
             (uint32_t)new_iv[2] << 16 |
@@ -355,12 +332,10 @@ static void crypt(uint8_t *iv, size_t length, uint8_t *data)
 }
 
 static uint8_t roll_left(uint8_t in, uint8_t count) {
-    uint16_t tmp = in << count % 8;
-    return tmp | tmp >> 8;
+    return (in << count) | (in >> (count - 8));
 }
 
 static uint8_t roll_right(uint8_t in, uint8_t count) {
-    uint16_t tmp = (in << 8) >> (count % 8);
-    return tmp | tmp >> 8;
+    return (in << (count - 8)) | (in >> count);
 }
 

@@ -1,3 +1,4 @@
+#define _DEFAULT_SOURCE // DT_*
 #include "wz.h"
 
 #include <assert.h>
@@ -3976,6 +3977,7 @@ static void on_skill_start(void *user_data, const XML_Char *name, const XML_Char
             }
 
             SKILL_INFOS[SKILL_INFO_COUNT].levels[SKILL_INFOS[SKILL_INFO_COUNT].levelCount].mpCon = 0;
+            SKILL_INFOS[SKILL_INFO_COUNT].levels[SKILL_INFOS[SKILL_INFO_COUNT].levelCount].hpCon = 0;
             SKILL_INFOS[SKILL_INFO_COUNT].levels[SKILL_INFOS[SKILL_INFO_COUNT].levelCount].interval = 0;
             SKILL_INFOS[SKILL_INFO_COUNT].levels[SKILL_INFOS[SKILL_INFO_COUNT].levelCount].damage = 0;
             SKILL_INFOS[SKILL_INFO_COUNT].levels[SKILL_INFOS[SKILL_INFO_COUNT].levelCount].bulletCount = 0;
@@ -4008,6 +4010,8 @@ static void on_skill_start(void *user_data, const XML_Char *name, const XML_Char
 
                 if (!strcmp(key, "mpCon"))
                     SKILL_INFOS[SKILL_INFO_COUNT].levels[SKILL_INFOS[SKILL_INFO_COUNT].levelCount].mpCon = strtol(value, NULL, 10);
+                else if (!strcmp(key, "hpCon"))
+                    SKILL_INFOS[SKILL_INFO_COUNT].levels[SKILL_INFOS[SKILL_INFO_COUNT].levelCount].hpCon = strtol(value, NULL, 10);
                 else if (!strcmp(key, "interval"))
                     SKILL_INFOS[SKILL_INFO_COUNT].levels[SKILL_INFOS[SKILL_INFO_COUNT].levelCount].interval = strtol(value, NULL, 10);
                 else if (!strcmp(key, "damage"))
@@ -4387,13 +4391,13 @@ static void insert_foothold(struct FootholdRTree *tree, struct Foothold *fh)
             struct Rectangle fh2_rect = foothold_mbr(&node->footholds[2]);
             struct Rectangle child_rects[3] = { fh0_rect, fh1_rect, fh2_rect };
             int32_t min_area = rectangle_area(&fh0_rect) + white_space_area_3(&fh1_rect, &fh2_rect, &fh_rect);
-            int32_t min_length = rectangle_area(&fh0_rect) == 0 ? rectangle_length(&fh0_rect) : 0;
+            int32_t min_length = 0;
             // The predicate checks if the area of the MBR of the 3 rectangles fh1, fh2, fh is 0
             if (rectangle_area((struct Rectangle[]) { rectangle_mbr((struct Rectangle[]) { rectangle_mbr(&fh1_rect, &fh2_rect) }, &fh_rect) }) == 0)
                 // If the area of the three rectangles is 0 then they must all lie on a horizontal/vertical line
-                min_length += white_space_length_3(&fh1_rect, &fh2_rect, &fh_rect);
+                min_length = white_space_length_3(&fh1_rect, &fh2_rect, &fh_rect);
 
-            bool min_is_one = true; // The current minimum is a 3-1 split
+            bool min_is_three_one = true; // The current minimum is a 3-1 split
             uint8_t which[2] = { 0 };
             for (uint8_t i = 1; i < 4; i++) {
                 // The rectangle that is left out
@@ -4404,9 +4408,9 @@ static void insert_foothold(struct FootholdRTree *tree, struct Foothold *fh)
                 struct Rectangle *r3 = i == 3 ? &fh2_rect : &fh_rect;
 
                 int32_t area = rectangle_area(r) + white_space_area_3(r1, r2, r3);
-                int32_t length = rectangle_area(r) == 0 ? rectangle_length(r) : 0;
+                int32_t length = 0;
                 if (rectangle_area((struct Rectangle[]) { rectangle_mbr((struct Rectangle[]) { rectangle_mbr(r1, r2) }, r3) }) == 0)
-                    min_length += white_space_length_3(r1, r2, r3);
+                    length = white_space_length_3(r1, r2, r3);
 
                 if (area < min_area) {
                     min_area = area;
@@ -4455,12 +4459,12 @@ static void insert_foothold(struct FootholdRTree *tree, struct Foothold *fh)
                     if (area1 + area2 < min_area) {
                         min_area = area1 + area2;
                         min_length = length1 + length2;
-                        min_is_one = false;
+                        min_is_three_one = false;
                         which[0] = i;
                         which[1] = j;
                     } else if (area1 + area2 == min_area && length1 + length2 < min_length) {
                         min_length = length1 + length2;
-                        min_is_one = false;
+                        min_is_three_one = false;
                         which[0] = i;
                         which[1] = j;
                     }
@@ -4472,7 +4476,7 @@ static void insert_foothold(struct FootholdRTree *tree, struct Foothold *fh)
             new->isLeaf = true;
 
             // Insert the picked footholds into the new node
-            if (min_is_one) {
+            if (min_is_three_one) {
                 new->count = 1;
                 new->footholds[0] = which[0] == 3 ? *fh : node->footholds[which[0]];
 
@@ -4533,29 +4537,32 @@ static void insert_foothold(struct FootholdRTree *tree, struct Foothold *fh)
                     break;
                 } else {
                     // Split the parent if it doesn't have room
-                    int32_t min_measure = white_space_area_3(&node->children[1]->bound, &node->children[2]->bound, &new->bound);
-                    bool min_is_length = rectangle_area(&node->children[1]->bound) == 0 && rectangle_area(&node->children[2]->bound) == 0 && min_measure == 0;
-                    if (min_is_length)
-                        min_measure = white_space_length_3(&node->children[1]->bound, &node->children[2]->bound, &new->bound);
+                    int32_t min_area = rectangle_area(&node->children[0]->bound) + white_space_area_3(&node->children[1]->bound, &node->children[2]->bound, &new->bound);
+                    int32_t min_length = 0;
+                    if (rectangle_area((struct Rectangle[]) { rectangle_mbr((struct Rectangle[]) { rectangle_mbr(&node->children[1]->bound, &node->children[2]->bound) }, &new->bound) }) == 0)
+                        min_length = white_space_length_3(&node->children[1]->bound, &node->children[2]->bound, &new->bound);
 
-                    bool min_is_one = true;
+                    bool min_is_three_one = true;
                     uint8_t which[2] = { 0 };
                     for (uint8_t i = 1; i < 4; i++) {
+                        struct Rectangle *r = i <= 2 ? &node->children[i]->bound : &new->bound;
+
                         struct Rectangle *r1 = &node->children[0]->bound;
                         struct Rectangle *r2 = i == 1 ? &node->children[2]->bound : &node->children[1]->bound;
                         struct Rectangle *r3 = i == 3 ? &node->children[2]->bound : &new->bound;
-                        int32_t measure = white_space_area_3(r1, r2, r3);
-                        bool is_length = rectangle_area(r1) == 0 && rectangle_area(r2) == 0 && measure == 0;
-                        if (is_length)
-                            measure = white_space_length_3(r1, r2, r3);
 
-                        if (((!min_is_length && !is_length) || (min_is_length && is_length)) && measure < min_measure) {
-                            min_measure = measure;
+                        int32_t area = rectangle_area(r) + white_space_area_3(r1, r2, r3);
+                        int32_t length = 0;
+                        if (rectangle_area((struct Rectangle[]) { rectangle_mbr((struct Rectangle[]) { rectangle_mbr(r1, r2) }, r3) }) == 0)
+                            length = white_space_length_3(r1, r2, r3);
+
+                        if (area < min_area) {
+                            min_area = area;
+                            min_length = length;
                             which[0] = i;
-                        } else if (is_length) {
-                            min_measure = measure;
+                        } else if (area == min_area && length < min_length) {
+                            min_length = length;
                             which[0] = i;
-                            min_is_length = true;
                         }
                     }
 
@@ -4579,24 +4586,28 @@ static void insert_foothold(struct FootholdRTree *tree, struct Foothold *fh)
                                 }
                             }
 
-                            int32_t measure1 = white_space_area_2(r1, r2);
-                            int32_t measure2 = white_space_area_2(r3, r4);
-                            bool is_length = rectangle_area(r1) == 0 && measure1 == 0 && rectangle_area(r3) == 0 && measure2 == 0;
-                            if (is_length) {
-                                measure1 = white_space_length_2(r1, r2);
-                                measure2 = white_space_length_2(r3, r4);
-                            }
-                            if (((!min_is_length && !is_length) || (min_is_length && is_length)) && measure1 + measure2 < min_measure) {
-                                min_measure = measure1 + measure2;
-                                min_is_one = false;
+                            int32_t area1 = white_space_area_2(r1, r2);
+                            int32_t area2 = white_space_area_2(r3, r4);
+
+                            int32_t length1 = 0;
+                            if (area1 == 0 && rectangle_area(r1) == 0)
+                                length1 = white_space_length_2(r1, r2);
+
+                            int32_t length2 = 0;
+                            if (area2 == 0 && rectangle_area(r3) == 0)
+                                length2 = white_space_length_2(r3, r4);
+
+                            if (area1 + area2 < min_area) {
+                                min_area = area1 + area2;
+                                min_length = length1 + length2;
+                                min_is_three_one = false;
                                 which[0] = i;
                                 which[1] = j;
-                            } else if (is_length) {
-                                min_measure = measure1 + measure2;
-                                min_is_one = false;
+                            } else if (area1 + area2 == min_area && length1 + length2 < min_length) {
+                                min_length = length1 + length2;
+                                min_is_three_one = false;
                                 which[0] = i;
                                 which[1] = j;
-                                min_is_length = true;
                             }
                         }
                     }
@@ -4604,7 +4615,7 @@ static void insert_foothold(struct FootholdRTree *tree, struct Foothold *fh)
                     struct RTreeNode *new_node = malloc(sizeof(struct RTreeNode));
                     new_node->isLeaf = false;
 
-                    if (min_is_one) {
+                    if (min_is_three_one) {
                         new_node->count = 1;
                         new_node->children[0] = which[0] == 3 ? new : node->children[which[0]];
                         if (which[0] == 3)

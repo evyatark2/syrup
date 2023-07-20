@@ -3,20 +3,16 @@
 
 #include <stdint.h>
 
-#include "client.h"
-//#include "life.h"
-#include "server.h" // This is temporary for map_join, I should find a better way to do this
-#include "../item.h"
-#include "../wz.h"
-
-struct MapPlayer;
-struct MapHandleContainer {
-    struct MapPlayer *player;
-};
-
-struct DropBatch;
+#include "drop.h"
+#include "life.h"
+//#include "server.h" // This is temporary for map_join, I should find a better way to do this
+#include "../character.h"
 
 struct Map;
+
+struct MapPlayer;
+struct MapMonster;
+struct DropBatch;
 
 /**
  * Creates a new map.
@@ -25,7 +21,7 @@ struct Map;
  *
  * \return The newly created map or NULL if an error occurred
  */
-struct Map *map_create(struct ChannelServer *server, struct Room *room, struct ScriptManager *reactor_manager);
+struct Map *map_create(uint32_t id);
 
 /**
  * Destroys a map
@@ -34,26 +30,20 @@ struct Map *map_create(struct ChannelServer *server, struct Room *room, struct S
  */
 void map_destroy(struct Map *map);
 
+bool map_respawn(struct Map *map, struct MapPlayer **controller, size_t *count, struct MapMonster ***monsters);
+
+struct MapPlayer *map_next_controller(struct Map *map, struct MapPlayer *player);
+
+const struct Player *map_player_get_player(struct MapPlayer *player);
+void map_player_for_each_controlled_monster(struct MapPlayer *player, void (*)(struct MapMonster *monster, void *), void *);
+bool map_player_is_seated(struct MapPlayer *player);
+struct Point map_player_coords(struct MapPlayer *player);
+void map_player_stand_up(struct MapPlayer *player);
+uint16_t map_player_get_map_seat(struct MapPlayer *player);
+void map_player_sit(struct MapPlayer *player, uint16_t id);
+void map_player_chair(struct MapPlayer *player, uint32_t id);
+
 uint32_t map_get_id(struct Map *map);
-
-/**
- * Insert a new player to a map
- *
- * \param map The map to insert into
- * \param client The player to be inserted
- * \param[out] player A handle that respresents the player in the map
- *
- * \return 0 if successful; -1 if an error occurred
- */
-int map_join(struct Map *map, struct Client *client, struct MapHandleContainer *handle);
-
-/**
- * Remove a player from a map
- *
- * \param map The map to remove from
- * \param player The handle that was returned in \p map_join of the player to remove
- */
-void map_leave(struct Map *map, struct MapPlayer *player);
 
 /**
  * Do an action for each drop in the map
@@ -64,48 +54,27 @@ void map_leave(struct Map *map, struct MapPlayer *player);
  */
 void map_for_each_drop(struct Map *map, void (*f)(struct Drop *, void *), void *ctx);
 
+void map_for_each_monster(struct Map *map, void (*f)(struct MapMonster *, void *), void *ctx);
+void map_for_each_npc(struct Map *map, void (*f)(struct Npc *, void *), void *ctx);
+void map_for_each_player(struct Map *map, void (*f)(struct MapPlayer *, void *), void *ctx);
+
 void map_spawn(struct Map *map, uint32_t id, struct Point p);
 
-/**
- * Get if the monster is alive
- *
- * \param map The map to check in
- * \param id The monster ID - used as an additional check if the oid still refers to the same object client-side
- * \param oid The monster's object ID
- *
- * \return true if the monster is still alive
- */
-bool map_monster_is_alive(struct Map *map, uint32_t id, uint32_t oid);
+struct MapMonster *map_get_monster(struct Map *map, uint32_t oid);
 
-/**
- * Damage a monster.
- * If its health drops below 0 it will be killed and it will drop its loot.
- *
- * \param map The map the monster is in
- * \param controller The map player that damaged the monster
- * \param char_id Additional context to pass as the second argument to \p f
- * \param oid The object ID of the damaged monster
- * \param hit_count The size of \p damage array
- * \param damage An array with damage values to apply to the monster
- *
- * \return If the monster was killed, its ID; otherwise -1.
- */
-uint32_t map_damage_monster_by(struct Map *map, struct MapPlayer *player, uint32_t char_id, uint32_t oid, size_t hit_count, int32_t *damage);
+void drop_batch_for_each_drop(struct DropBatch *batch, void (*f)(struct Drop *drop, void *ctx), void *ctx);
 
 /**
  * Kill all monsters on the map
  *
  * \param map The map
- * \param player The player that will get the experience and own the drops
  * \param[out] count The number of monster killed
  *
  * \return An array of *count size of the IDs of the killed monsters
  */
-uint32_t *map_kill_all_by(struct Map *map, struct MapPlayer *player, size_t *count);
+void map_kill_all(struct Map *map);
 
-struct ClientResult map_hit_reactor(struct Map *map, struct MapPlayer *player, uint32_t oid, uint8_t stance);
-
-struct ClientResult map_cont_script(struct Map *map, struct MapPlayer *player);
+const char *map_hit_reactor(struct Map *map, struct MapPlayer *player, uint32_t oid, uint32_t *id);
 
 /**
  * Gets an NPC in the map
@@ -116,6 +85,8 @@ struct ClientResult map_cont_script(struct Map *map, struct MapPlayer *player);
  * \return The NPC ID
  */
 uint32_t map_get_npc(struct Map *map, uint32_t oid);
+
+const struct Reactor *map_get_reactor(struct Map *map, uint32_t oid);
 
 /**
  * Move a monster.
@@ -139,11 +110,11 @@ uint32_t map_get_npc(struct Map *map, uint32_t oid);
  *
  * \return true if the movement was successful; false if an error occurred.
  */
-bool map_move_monster(struct Map *map, struct MapPlayer *controller, uint8_t activity, uint8_t skill_id, uint8_t skill_level, uint32_t oid, int16_t x, int16_t y, uint16_t fh, uint8_t stance);
+bool map_move_monster(struct Map *map, struct MapPlayer *controller, uint32_t oid, int16_t x, int16_t y, uint16_t fh, uint8_t stance);
 
 int map_drop_batch_from_reactor(struct Map *map, struct MapPlayer *player, uint32_t oid);
 
-void map_pick_up_all(struct Map *map, struct MapPlayer *player);
+void map_remove_all_drops(struct Map *map);
 
 /**
  * Add a drop to a map
@@ -152,7 +123,7 @@ void map_pick_up_all(struct Map *map, struct MapPlayer *player);
  * \param char_id The ID of the dropper
  * \param drop The drop
  */
-void map_add_player_drop(struct Map *map, struct MapPlayer *player, struct Drop *drop);
+struct DropBatch *map_add_player_drop(struct Map *map, struct MapPlayer *player, struct Drop *drop);
 
 /**
  * Get a drop
@@ -177,10 +148,59 @@ bool map_player_can_pick_up_drop(struct Map *map, struct MapPlayer *player, uint
  *
  * \return false if removal was unsuccessful, for example, oid doesn't refer to a drop or the given char_id isn't allowed to pick it up; true if it was successful
  */
-void map_remove_drop(struct Map *map, uint32_t char_id, uint32_t oid);
+void map_remove_drop(struct Map *map, uint32_t oid);
 
 bool map_try_occupy_seat(struct Map *map, uint16_t id);
 void map_tire_seat(struct Map *map, uint16_t id);
+
+/**
+ * Insert a new player to a map
+ *
+ * \param map The map to insert into
+ * \param client The player to be inserted
+ * \param[out] player A handle that respresents the player in the map
+ *
+ * \return NULL if an error occurred;
+ */
+struct MapPlayer *map_join(struct Map *map, uint32_t id, struct Player *player);
+
+/**
+ * Remove a player from a map
+ *
+ * \param map The map to remove from
+ * \param player The handle that was returned in \p map_join of the player to remove
+ */
+void map_leave(struct Map *map, struct MapPlayer *player);
+
+struct MapMonster *map_add_monster(struct Map *map, uint32_t id, int16_t x, int16_t y);
+void map_remove_monster(struct Map *map, struct MapMonster *monster);
+
+uint32_t map_player_id(struct MapPlayer *player);
+const struct Point *map_player_pos(struct MapPlayer *player);
+void map_player_update_stance(struct MapPlayer *player, uint8_t stance);
+void map_player_update_pos(struct MapPlayer *player, uint16_t x, uint16_t y, uint16_t fh);
+
+const struct Monster *map_monster_get_monster(struct MapMonster *monster);
+
+bool map_monster_damage_by(struct MapMonster *monster, struct MapPlayer *player, size_t hit_count, int32_t *damage);
+
+struct MapPlayer *map_monster_swap_controller(struct MapMonster *monster, struct MapPlayer *player);
+
+void map_monster_remove_controller(struct MapMonster *monster);
+/**
+ * Get if the monster is alive
+ *
+ * \param map The map to check in
+ * \param id The monster ID - used as an additional check if the oid still refers to the same object client-side
+ * \param oid The monster's object ID
+ *
+ * \return true if the monster is still alive
+ */
+bool map_monster_is_alive(struct MapMonster *monster);
+
+struct DropBatch;
+
+struct DropBatch *map_add_drop_batch(struct Map *map, struct MapPlayer *owner, bool exclusive, uint32_t dropperOid, struct Point origin, size_t count, struct Drop *drops);
 
 #endif
 

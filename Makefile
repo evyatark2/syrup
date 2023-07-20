@@ -1,8 +1,8 @@
 #CC=clang
-SANITIZE=#-fsanitize=undefined -fsanitize=leak -fsanitize=address
-CFLAGS=-g -Wall -pedantic -I/home/evyatar/.local/include `pkg-config --cflags mariadb libevent_pthreads libargon2 expat lua json-c` $(SANITIZE)
+#SANITIZE=-fsanitize=undefined -fsanitize=leak -fsanitize=address
+CFLAGS=-g -Wall -std=c2x -march=native -mtune=native -pedantic -I/home/evyatar/.local/include `pkg-config --cflags mariadb libevent_pthreads libargon2 expat lua json-c liburing` $(SANITIZE)
 LDFLAGS=-L/home/evyatar/.local/lib -Wl,-rpath /home/evyatar/.local/lib $(SANITIZE)
-LDLIBS=`pkg-config --libs mariadb libevent_pthreads libargon2 expat lua json-c` -lcmph
+LDLIBS=`pkg-config --libs mariadb libevent_pthreads libargon2 expat lua json-c liburing` -lcmph
 
 OBJDIR=obj
 
@@ -10,7 +10,7 @@ DEPDIR := .deps
 DEPFLAGS=-MT $@ -MMD -MP -MF 
 COMMON_SRCS=writer.c reader.c database.c crypt.c packet.c account.c wz.c character.c constants.c hash-map.c
 
-CHANNEL_SRCS=$(COMMON_SRCS) channel/server.c channel/main.c channel/client.c channel/map.c channel/drops.c channel/config.c channel/scripting/client.c channel/scripting/job.c channel/scripting/event.c channel/scripting/events.c channel/scripting/reactor-manager.c channel/scripting/script-manager.c channel/shop.c channel/events.c party.c channel/thread-coordinator.c
+CHANNEL_SRCS=$(COMMON_SRCS) channel/main.c channel/server2.c channel/session.c channel/thread-pool.c channel/events.c channel/event-manager.c channel/user.c channel/room.c channel/client.c channel/map.c channel/drops.c channel/config.c channel/scripting/user.c channel/scripting/job.c channel/scripting/reactor-manager.c channel/scripting/script-manager.c channel/shop.c party.c channel/thread-coordinator.c
 CHANNEL_OBJS=$(CHANNEL_SRCS:%.c=$(OBJDIR)/%.o)
 
 LOGIN_SRCS=$(COMMON_SRCS) login/server.c login/main.c login/handlers.c login/config.c

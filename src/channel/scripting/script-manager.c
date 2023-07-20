@@ -18,9 +18,9 @@
 #include <lauxlib.h>
 #include <lualib.h>
 
-#include "client.h"
-#include "event.h"
-#include "events.h"
+#include "user.h"
+//#include "event.h"
+//#include "events.h"
 #include "job.h"
 #include "reactor-manager.h"
 
@@ -45,7 +45,7 @@ struct ScriptInstance {
     bool started;
 };
 
-struct ScriptManager *script_manager_create(struct ChannelServer *server, const char *dir_name, const char *def, size_t entry_point_count, struct ScriptEntryPoint *entry_points)
+struct ScriptManager *script_manager_create(const char *dir_name, const char *def, size_t entry_point_count, struct ScriptEntryPoint *entry_points)
 {
     struct ScriptManager *sm = malloc(sizeof(struct ScriptManager));
     if (sm == NULL)
@@ -111,13 +111,12 @@ struct ScriptManager *script_manager_create(struct ChannelServer *server, const 
         script->L = luaL_newstate();
         strcpy(script->name, ent->d_name);
         luaL_openlibs(script->L);
-        luaopen_client(script->L);
+        luaopen_user(script->L);
         luaopen_reactor_manager(script->L);
         luaopen_job(script->L);
         lua_setglobal(script->L, "Job");
-        luaopen_event(script->L, server);
-        luaopen_events(script->L);
-        luaopen_events(script->L);
+        //luaopen_event(script->L, server);
+        //luaopen_events(script->L);
         lua_setglobal(script->L, "Events");
         if (luaL_loadbuffer(script->L, buf, size, ent->d_name) != LUA_OK || lua_pcall(script->L, 0, 0, 0))
             fprintf(stderr, "Failed to load %s: %s\n", ent->d_name, lua_tostring(script->L, -1));

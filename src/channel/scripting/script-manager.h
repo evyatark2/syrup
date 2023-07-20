@@ -5,8 +5,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "../server.h"
-
 enum ScriptValueType {
     SCRIPT_VALUE_TYPE_VOID,
     SCRIPT_VALUE_TYPE_BOOLEAN,
@@ -35,7 +33,7 @@ enum ScriptResult {
     SCRIPT_RESULT_VALUE_NEXT,
 };
 
-struct ScriptManager *script_manager_create(struct ChannelServer *server, const char *dir_name, const char *def, size_t entry_point_count, struct ScriptEntryPoint *entry_points);
+struct ScriptManager *script_manager_create(const char *dir_name, const char *def, size_t entry_point_count, struct ScriptEntryPoint *entry_points);
 void script_manager_destroy(struct ScriptManager *manager);
 struct ScriptInstance *script_manager_alloc(struct ScriptManager *manager, const char *name, size_t entry);
 enum ScriptResult script_manager_run(struct ScriptInstance *handle, ...);

@@ -7,6 +7,8 @@
 #include <sys/time.h>
 
 #include "character.h"
+#include "channel/player.h"
+#include "channel/stat.h"
 
 enum PicStatus {
     PIC_STATUS_REGISTER,
@@ -85,22 +87,22 @@ size_t name_check_response_packet(uint8_t name_len, char *name, bool available, 
 size_t create_character_response_packet(struct CharacterStats *chr, uint8_t *packet);
 
 #define SET_FIELD_PACKET_MAX_LENGTH 65535
-size_t set_field_packet(struct Character *chr, uint8_t *packet);
+size_t set_field_packet(const struct Character *chr, uint8_t *packet);
 
 #define SET_GENDER_PACKET_LENGTH 3
 void set_gender_packet(bool gender, uint8_t *packet);
 
 #define CHANGE_MAP_PACKET_LENGTH 27
-void change_map_packet(struct Character *chr, uint32_t to, uint8_t portal, uint8_t *packet);
+void change_map_packet(uint32_t to, uint8_t portal, int16_t hp, uint8_t *packet);
 
 #define ADD_PLAYER_TO_MAP_PACKET_MAX_LENGTH 554
-size_t add_player_to_map_packet(const struct Character *chr, uint8_t *packet);
+size_t add_player_to_map_packet(const struct Player *player, uint8_t *packet);
 
 #define MOVE_PLAYER_PACKET_MAX_LENGTH 3863
 size_t move_player_packet(uint32_t id, size_t len, uint8_t *data, uint8_t *packet);
 
 #define DAMAGE_PLAYER_PACKET_MAX_LENGTH 26
-size_t damange_player_packet(uint8_t skill, uint32_t monster_id, uint32_t char_id, int32_t damage, int32_t fake, uint8_t direction, uint8_t *packet);
+size_t damange_player_packet(uint32_t char_id, uint8_t skill, int32_t damage, uint32_t monster_id, uint8_t direction, int32_t fake, uint8_t *packet);
 
 #define REMOVE_PLAYER_FROM_MAP_PACKET_LENGTH 6
 void remove_player_from_map_packet(uint32_t id, uint8_t *packet);
@@ -160,31 +162,14 @@ struct ShopItem {
 #define OPEN_SHOP_PACKET_MAX_LENGTH 6128 // Assuming a 255-max shop item count
 size_t open_shop_packet(uint32_t id, uint16_t item_count, struct ShopItem *items, uint8_t *packet);
 
-#define SHOP_ACTION_RESPONSE_PACKET_LENGTH 3
-void shop_action_response(uint8_t code, uint8_t *packet);
-
-enum Stat {
-    STAT_SKIN = 0x1,
-    STAT_FACE = 0x2,
-    STAT_HAIR = 0x4,
-    STAT_LEVEL = 0x10,
-    STAT_JOB = 0x20,
-    STAT_STR = 0x40,
-    STAT_DEX = 0x80,
-    STAT_INT = 0x100,
-    STAT_LUK = 0x200,
-    STAT_HP = 0x400,
-    STAT_MAX_HP = 0x800,
-    STAT_MP = 0x1000,
-    STAT_MAX_MP = 0x2000,
-    STAT_AP = 0x4000,
-    STAT_SP = 0x8000,
-    STAT_EXP = 0x10000,
-    STAT_FAME = 0x20000,
-    STAT_MESO = 0x40000,
-    STAT_PET = 0x180008,
-    STAT_GACHA_EXP = 0x200000
+enum ShopActionResponseType : uint8_t {
+    SHOP_ACTION_RESPONSE_TYPE_MESOS,
+    SHOP_ACTION_RESPONSE_TYPE_INVENTORY,
+    SHOP_ACTION_RESPONSE_TYPE_ERROR
 };
+
+#define SHOP_ACTION_RESPONSE_PACKET_LENGTH 3
+void shop_action_response(enum ShopActionResponseType code, uint8_t *packet);
 
 union StatValue {
     uint8_t u8;
@@ -271,33 +256,6 @@ void face_expression_packet(uint32_t id, uint32_t emote, uint8_t *packet);
 
 #define ADD_CARD_PACKET_LENGTH 11
 void add_card_packet(bool full, uint32_t id, int8_t count, uint8_t *packet);
-
-enum InventoryModifyType {
-    INVENTORY_MODIFY_TYPE_ADD,
-    INVENTORY_MODIFY_TYPE_MODIFY,
-    INVENTORY_MODIFY_TYPE_MOVE,
-    INVENTORY_MODIFY_TYPE_REMOVE
-};
-
-struct InventoryModify {
-    enum InventoryModifyType mode;
-    uint8_t inventory;
-    int16_t slot;
-    union {
-        struct {
-            union {
-                struct InventoryItem item;
-                struct Equipment equip;
-            };
-        };
-        struct {
-            int16_t quantity;
-        };
-        struct {
-            int16_t dst;
-        };
-    };
-};
 
 #define MODIFY_ITEMS_PACKET_MAX_LENGTH 10204 // Probably more since this only concerns non-equipment items
 size_t modify_items_packet(uint8_t mod_count, struct InventoryModify *mods, uint8_t *packet);

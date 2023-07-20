@@ -2,6 +2,7 @@
 
 #include <assert.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -152,7 +153,7 @@ int database_connection_lock(struct DatabaseConnection *conn)
         if (lock_queue_enqueue(&conn->queue, -1) == -1)
             return -1;
 
-        return -2;
+        return INT_MIN;
     }
 
     int fd = eventfd(0, 0);
@@ -221,38 +222,40 @@ const struct RequestParams *database_request_get_params(struct DatabaseRequest *
 
 void database_request_destroy(struct DatabaseRequest *req)
 {
-    mysql_stmt_close(req->stmt);
-    if (req->params.type == DATABASE_REQUEST_TYPE_GET_MONSTER_DROPS) {
-        for (size_t i = 0; i < req->res.getMonsterDrops.count; i++) {
-            struct MonsterDrops *monster = &req->res.getMonsterDrops.monsters[i];
-            free(monster->itemDrops.drops);
-            free(monster->questItemDrops.drops);
-            free(monster->multiItemDrops.drops);
+    if (req != NULL) {
+        mysql_stmt_close(req->stmt);
+        if (req->params.type == DATABASE_REQUEST_TYPE_GET_MONSTER_DROPS) {
+            for (size_t i = 0; i < req->res.getMonsterDrops.count; i++) {
+                struct MonsterDrops *monster = &req->res.getMonsterDrops.monsters[i];
+                free(monster->itemDrops.drops);
+                free(monster->questItemDrops.drops);
+                free(monster->multiItemDrops.drops);
+            }
+            free(req->res.getMonsterDrops.monsters);
+        } else if (req->params.type == DATABASE_REQUEST_TYPE_GET_REACTOR_DROPS) {
+            for (size_t i = 0; i < req->res.getReactorDrops.count; i++) {
+                struct ReactorDrops *reactor = &req->res.getReactorDrops.reactors[i];
+                free(reactor->itemDrops.drops);
+                free(reactor->questItemDrops.drops);
+            }
+            free(req->res.getReactorDrops.reactors);
+        } else if (req->params.type == DATABASE_REQUEST_TYPE_GET_SHOPS) {
+            for (size_t i = 0; i < req->res.getShops.count; i++) {
+                struct Shop *shop = &req->res.getShops.shops[i];
+                free(shop->items);
+            }
+            free(req->res.getShops.shops);
+        } else if (req->params.type == DATABASE_REQUEST_TYPE_GET_CHARACTER) {
+            free(req->res.getCharacter.keyMap);
+            free(req->res.getCharacter.monsterBook);
+            free(req->res.getCharacter.skills);
+            free(req->res.getCharacter.completedQuests);
+            free(req->res.getCharacter.questInfos);
+            free(req->res.getCharacter.progresses);
+            free(req->res.getCharacter.quests);
+        } else if (req->params.type == DATABASE_REQUEST_TYPE_UPDATE_CHARACTER) {
+            free(req->temp.updateCharacter.data);
         }
-        free(req->res.getMonsterDrops.monsters);
-    } else if (req->params.type == DATABASE_REQUEST_TYPE_GET_REACTOR_DROPS) {
-        for (size_t i = 0; i < req->res.getReactorDrops.count; i++) {
-            struct ReactorDrops *reactor = &req->res.getReactorDrops.reactors[i];
-            free(reactor->itemDrops.drops);
-            free(reactor->questItemDrops.drops);
-        }
-        free(req->res.getReactorDrops.reactors);
-    } else if (req->params.type == DATABASE_REQUEST_TYPE_GET_SHOPS) {
-        for (size_t i = 0; i < req->res.getShops.count; i++) {
-            struct Shop *shop = &req->res.getShops.shops[i];
-            free(shop->items);
-        }
-        free(req->res.getShops.shops);
-    } else if (req->params.type == DATABASE_REQUEST_TYPE_GET_CHARACTER) {
-        free(req->res.getCharacter.keyMap);
-        free(req->res.getCharacter.monsterBook);
-        free(req->res.getCharacter.skills);
-        free(req->res.getCharacter.completedQuests);
-        free(req->res.getCharacter.questInfos);
-        free(req->res.getCharacter.progresses);
-        free(req->res.getCharacter.quests);
-    } else if (req->params.type == DATABASE_REQUEST_TYPE_UPDATE_CHARACTER) {
-        free(req->temp.updateCharacter.data);
     }
 
     free(req);
@@ -563,7 +566,7 @@ int database_request_execute(struct DatabaseRequest *req, int status)
     return do_request[req->params.type](req, status);
 }
 
-const union DatabaseResult *database_request_result(struct DatabaseRequest *req)
+const union DatabaseResult *database_request_result(const struct DatabaseRequest *req)
 {
     return &req->res;
 }
@@ -1275,7 +1278,7 @@ static int do_get_character(struct DatabaseRequest *req, int status)
           "str, dex, int_, luk, hp, mp, atk, matk, def, mdef, acc, avoid, speed, jump, slot "
         "FROM Items JOIN Equipment ON Items.id = item "
         "JOIN CharacterEquipment ON Equipment.id = CharacterEquipment.equip "
-        "JOIN InventoryEquipment ON CharacterEquipment.equip = InventoryEquipment.equip "
+        "JOIN InventoryEquipment ON CharacterEquipment.id = InventoryEquipment.equip "
         "WHERE character_id = ?";
     DO_ASYNC_INT(mysql_stmt_prepare, req, status, query, strlen(query));
 

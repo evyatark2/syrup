@@ -1,36 +1,59 @@
-#include "server.h"
+#ifndef EVENTS_H
+#define EVENTS_H
 
-#define EVENT_BOAT 0
+#include <stddef.h>
+#include <stdint.h>
+
+#include "event-manager.h"
+
+typedef void Wait(int, void (*)(void *), void *, void *);
+
+#define EVENT_GLOBAL_RESPAWN 0
+
+#define EVENT_BOAT 1
 #define EVENT_BOAT_PROPERTY_SAILING 0
 
-#define EVENT_TRAIN 1
+#define EVENT_TRAIN 2
 #define EVENT_TRAIN_PROPERTY_SAILING 0
 
-#define EVENT_SUBWAY 2
+#define EVENT_SUBWAY 3
 #define EVENT_SUBWAY_PROPERTY_SAILING 0
 
-#define EVENT_GENIE 3
+#define EVENT_GENIE 4
 #define EVENT_GENIE_PROPERTY_SAILING 0
 
-#define EVENT_AIRPLANE 4
+#define EVENT_AIRPLANE 5
 #define EVENT_AIRPLANE_PROPERTY_SAILING 0
 
-#define EVENT_ELEVATOR 5
+#define EVENT_ELEVATOR 6
 #define EVENT_ELEVATOR_PROPERTY_SAILING 0
 
-#define EVENT_AREA_BOSS 6
+#define EVENT_AREA_BOSS 7
 #define EVENT_AREA_BOSS_PROPERTY_RESET 0
 
-#define EVENT_GLOBAL_RESPAWN 7
+#define EVENT_COUNT 8
 
-void event_boat_init(struct ChannelServer *server);
-void event_train_init(struct ChannelServer *server);
-void event_subway_init(struct ChannelServer *server);
-void event_genie_init(struct ChannelServer *server);
-void event_airplane_init(struct ChannelServer *server);
-void event_elevator_init(struct ChannelServer *server);
+#define TRANSPORT_EVENTS() \
+    X(boat) \
+    X(train) \
+    X(subway) \
+    X(genie) \
+    X(airplane) \
 
-void event_area_boss_init(struct ChannelServer *server);
+#ifdef X
+#  undef X
+#endif
+
+#define X(transport) int event_##transport##_init(struct EventManager *, Wait *, void *);
+TRANSPORT_EVENTS()
+#undef X
+
+int event_elevator_init(struct EventManager *mgr, Wait *wait, void *user_data);
+
+int event_area_boss_init(struct EventManager *mgr, Wait *, void *);
 bool event_area_boss_register(uint32_t map);
 
-void event_global_respawn_init(struct ChannelServer *server);
+int event_global_respawn_init(struct EventManager *mgr, Wait *, void *);
+
+#endif
+

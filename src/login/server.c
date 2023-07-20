@@ -690,6 +690,9 @@ static enum bufferevent_filter_result input_filter(struct evbuffer *src, struct 
 
     evbuffer_remove(src, data, packet_len);
     decryption_context_decrypt(session->recieveContext, packet_len, data);
+    for (size_t i = 0; i < packet_len; i++) {
+        printf("%d, ", data[i]);
+    }
     evbuffer_add(dst, data, packet_len);
 
     return BEV_OK;
@@ -818,7 +821,7 @@ static int init_session(struct Worker *server, struct Session *session, int fd)
 {
     session->worker = server;
     uint8_t iv[4] = { 0 };
-    session->sendContext = encryption_context_new(iv, ~MAPLE_VERSION);
+    session->sendContext = encryption_context_new(iv);
     if (session->sendContext == NULL)
         goto free_slot;
     session->recieveContext = decryption_context_new(iv);

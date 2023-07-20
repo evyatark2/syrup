@@ -85,12 +85,8 @@ struct QuestInfoProgress {
 struct Quest {
     uint16_t id;
     uint8_t progressCount;
+    uint32_t mids[5];
     int32_t progress[5];
-};
-
-struct MonsterRefCount {
-    uint32_t id;
-    int8_t refCount;
 };
 
 struct CompletedQuest {
@@ -139,16 +135,11 @@ struct Character {
     uint8_t nameLength;
     char name[CHARACTER_MAX_NAME_LENGTH];
     uint32_t map;
-    int16_t x, y;
-    uint16_t fh;
-    uint8_t stance;
     //unsigned int accountId;
     bool gender; // false - male, true - female
     uint8_t skin;
     uint32_t face;
     uint32_t hair;
-    uint32_t chair;
-    uint16_t seat;
 
     uint8_t level; // TODO: Maybe use a int16_t for faster calculations?
     enum Job job;
@@ -194,13 +185,7 @@ struct Character {
 
     struct Inventory inventory[4]; // All other inventories - 0: Use, 1: Set-up 2: Etc. 3: Cash
 
-    uint8_t activeProjectile;
-
     struct HashSetU16 *quests;
-    // For each monster ID in this set, there is a reference count of the number of quests that have this monster as a requirement.
-    // This is used in client_kill_monster() to quickly check if the monster has a quest before starting to iterate over the elements of \p quests
-    struct HashSetU32 *monsterQuests;
-    struct HashSetU32 *itemQuests;
     struct HashSetU16 *questInfos;
     struct HashSetU16 *completedQuests;
 

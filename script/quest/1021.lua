@@ -61,7 +61,7 @@ function end_(c)
                 c:endQuestNow()
                 break
             else
-                c:dropMessage(1, "Your inventory is full")
+                c:message(1, "Your inventory is full")
             end
         end
     end

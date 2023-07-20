@@ -298,6 +298,7 @@ struct PetItem {
     unsigned int petId;
 };
 
+#define ITEM_IS_EQUIP(id) ((id) / 1000000 == 1)
 #define ITEM_IS_THROWING_STAR(id) ((id) / 10000 == 207)
 #define ITEM_IS_BULLET(id) ((id) / 10000 == 233)
 #define ITEM_IS_RECHARGEABLE(id) (ITEM_IS_THROWING_STAR(id) || ITEM_IS_BULLET(id))

@@ -131,7 +131,7 @@ static int on_client_connect(struct SessionContainer *container, struct sockaddr
     { \
         struct Client *client = (void *)session; \
         int fd = database_connection_lock(client->conn); \
-        if (fd == -2) { \
+        if (fd <= -2) { \
             R res = handle(client->handler, 0); \
             if (res.status > 0) { \
                 session_set_event(session->session, res.status, database_connection_get_fd(client->conn), on_resume_client_packet); \
@@ -593,7 +593,7 @@ static void on_client_disconnect(struct SessionContainer *session)
     if (client->node != NULL) {
         client->handler = logout_handler_create(client);
         int fd = database_connection_lock(client->conn);
-        if (fd == -2) {
+        if (fd <= -2) {
             int status = logout_handler_handle(client->handler, 0);
             if (status > 0) {
                 session_set_event(session->session, status, database_connection_get_fd(client->conn), on_resume_client_disconnect);

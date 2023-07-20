@@ -1,0 +1,5 @@
+* struct Client, struct Map - Pure structs that track the client's/map's state, they do not
+    emit a notification when changes to the state are made
+    
+* struct Session, struct Room - Those structs are responsible to update the state in struct Client/struct Map
+    and notify the relevant parties of the changes that were made

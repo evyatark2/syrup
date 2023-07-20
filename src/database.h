@@ -543,7 +543,7 @@ int database_request_execute(struct DatabaseRequest *req, int status);
  *
  * \returns The database result. It is a reference inside \p req so as long as \p req is alive so is the result object
  */
-const union DatabaseResult *database_request_result(struct DatabaseRequest *req);
+const union DatabaseResult *database_request_result(const struct DatabaseRequest *req);
 
 void database_request_destroy(struct DatabaseRequest *req);
 

@@ -352,6 +352,7 @@ struct ReactorInfo {
 
 struct SkillLevelInfo {
     int16_t mpCon;
+    int16_t hpCon;
     int16_t interval;
     int16_t damage;
     int16_t bulletCount;
@@ -366,7 +367,7 @@ struct SkillInfo {
     size_t levelCount;
     struct SkillLevelInfo *levels;
     size_t reqId; // id of 0 means
-    size_t reqLevel;
+    int8_t reqLevel;
 };
 
 int wz_init(void);

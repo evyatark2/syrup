@@ -1,3 +1,4 @@
+#define _DEFAULT_SOURCE // tm::tm_gmtoff
 #include "packet.h"
 
 #include <assert.h>
@@ -175,7 +176,7 @@ static void add_quest_infos(void *data, void *ctx_);
 static void add_completed_quests(void *data, void *ctx_);
 static void add_monster_book_entries(void *data, void *ctx);
 
-size_t set_field_packet(struct Character *chr, uint8_t *packet) {
+size_t set_field_packet(const struct Character *chr, uint8_t *packet) {
     struct Writer writer;
     writer_init(&writer, SET_FIELD_PACKET_MAX_LENGTH, packet);
     writer_u16(&writer, 0x007D);
@@ -398,7 +399,7 @@ void set_gender_packet(bool gender, uint8_t *packet)
     writer_bool(&writer, gender);
 }
 
-void change_map_packet(struct Character *chr, uint32_t to, uint8_t portal, uint8_t *packet)
+void change_map_packet(uint32_t to, uint8_t portal, int16_t hp, uint8_t *packet)
 {
     struct Writer writer;
     writer_init(&writer, CHANGE_MAP_PACKET_LENGTH, packet);
@@ -409,7 +410,7 @@ void change_map_packet(struct Character *chr, uint32_t to, uint8_t portal, uint8
     writer_u8(&writer, 0);
     writer_u32(&writer, to);
     writer_u8(&writer, portal);
-    writer_u16(&writer, chr->hp);
+    writer_i16(&writer, hp);
     writer_bool(&writer, false);
     struct timeval time;
     gettimeofday(&time, NULL);
@@ -418,15 +419,15 @@ void change_map_packet(struct Character *chr, uint32_t to, uint8_t portal, uint8
     writer_u64(&writer, (time.tv_sec * 1000L + time.tv_usec / 1000L) * 10000L + 116444736010800000L + now.tm_gmtoff * 1000L * 10000L); // Current time
 }
 
-size_t add_player_to_map_packet(const struct Character *chr, uint8_t *packet)
+size_t add_player_to_map_packet(const struct Player *player, uint8_t *packet)
 {
     struct Writer writer;
     writer_init(&writer, ADD_PLAYER_TO_MAP_PACKET_MAX_LENGTH, packet);
 
     writer_u16(&writer, 0x00A0);
-    writer_u32(&writer, chr->id);
-    writer_u8(&writer, chr->level);
-    writer_sized_string(&writer, chr->nameLength, chr->name);
+    writer_u32(&writer, player->id);
+    writer_u8(&writer, player->level);
+    writer_sized_string(&writer, player->nameLength, player->name);
     writer_zero(&writer, 8); // Guild
 
     // Foreign buffs
@@ -470,17 +471,17 @@ size_t add_player_to_map_packet(const struct Character *chr, uint8_t *packet)
     writer_u32(&writer, 0);
     writer_u32(&writer, 0);
 
-    writer_u16(&writer, chr->job);
+    writer_u16(&writer, player->job);
 
-    struct CharacterAppearance appearance = character_to_character_appearance(chr);
+    struct CharacterAppearance appearance = player->appearance;
     writer_char_appearance(&writer, &appearance, false);
     writer_u32(&writer, 0); // Number of heart-shaped chocolates
     writer_u32(&writer, 0); // Item effect
-    writer_u32(&writer, chr->chair); // Chair
-    writer_i16(&writer, chr->x);
-    writer_i16(&writer, chr->y);
-    writer_u8(&writer, chr->stance);
-    writer_i16(&writer, chr->fh); // Fh
+    writer_u32(&writer, player->chair); // Chair
+    writer_i16(&writer, player->x);
+    writer_i16(&writer, player->y);
+    writer_u8(&writer, player->stance);
+    writer_u16(&writer, player->fh); // Fh
     writer_u8(&writer, 0);
     writer_u8(&writer, 0); // End of pets
 
@@ -517,7 +518,7 @@ size_t move_player_packet(uint32_t id, size_t len, uint8_t *data, uint8_t *packe
     return 10 + len;
 }
 
-size_t damange_player_packet(uint8_t skill, uint32_t monster_id, uint32_t char_id, int32_t damage, int32_t fake, uint8_t direction, uint8_t *packet)
+size_t damange_player_packet(uint32_t char_id, uint8_t skill, int32_t damage, uint32_t monster_id, uint8_t direction, int32_t fake, uint8_t *packet)
 {
     struct Writer writer;
     writer_init(&writer, DAMAGE_PLAYER_PACKET_MAX_LENGTH, packet);
@@ -865,7 +866,7 @@ size_t open_shop_packet(uint32_t id, uint16_t item_count, struct ShopItem *items
     return writer.pos;
 }
 
-void shop_action_response(uint8_t code, uint8_t *packet)
+void shop_action_response(enum ShopActionResponseType code, uint8_t *packet)
 {
     struct Writer writer;
     writer_init(&writer, SHOP_ACTION_RESPONSE_PACKET_LENGTH, packet);
@@ -1110,7 +1111,7 @@ void spawn_meso_drop_packet(uint32_t oid, int32_t meso, uint32_t owner_id, uint8
     writer_u8(&writer, type);
     writer_i16(&writer, x);
     writer_i16(&writer, y);
-    writer_u32(&writer, 0); // Dropper OID, Why is this needed?
+    writer_u32(&writer, 0); // Dropper OID
     writer_bool(&writer, !player_drop);
 }
 

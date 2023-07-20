@@ -1,0 +1,20 @@
+Session
+A session is a sink for events. It is a TCP-connected client that is informed of map and character events.
+
+Actor
+An actor is a source of events.
+
+User
+A user is the state of a single character. It is compromised of a Client (Non-NULLable) and a Member (NULLable)
+
+Client
+The non-shared state of the client. It is compromised of Character and data structures for fast operations.
+An example of a data structure that a Client holds is a map from monster IDs to active quests
+that is used to quickly find quests to progress when the monster is killed
+
+Character
+The state of the MapleStory character that is saved and loaded from the database. Includes quests, inventory, skills.
+
+Member
+The shared state of the client. Includes stance, position
+

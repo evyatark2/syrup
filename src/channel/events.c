@@ -1,68 +1,156 @@
 #include "events.h"
 
+#include <stdlib.h>
 #include <threads.h>
 
 #include "../hash-map.h"
 
-#define DECLARE_TRANSPORT_EVENT_STATIC_FUNCTIONS(event) \
-    static void event##_arrive(struct Event *, void *); \
-    static void event##_close_gates(struct Event *, void *); \
-    static void event##_depart(struct Event *, void *);
+struct EventContext {
+    Wait *wait;
+    void *userData;
+    struct Event *ev;
+    void (*f)(struct EventContext *);
+};
 
-DECLARE_TRANSPORT_EVENT_STATIC_FUNCTIONS(boat)
-DECLARE_TRANSPORT_EVENT_STATIC_FUNCTIONS(train)
-DECLARE_TRANSPORT_EVENT_STATIC_FUNCTIONS(subway)
-DECLARE_TRANSPORT_EVENT_STATIC_FUNCTIONS(genie)
-DECLARE_TRANSPORT_EVENT_STATIC_FUNCTIONS(airplane)
-DECLARE_TRANSPORT_EVENT_STATIC_FUNCTIONS(elevator)
+#ifdef X
+#  undef X
+#endif
 
-static void set_and_sched(struct Event *e, uint32_t prop, int32_t value, uint32_t sec, void (*f)(struct Event *, void *));
+#define X(transport) \
+    static void transport##_arrive(struct EventContext *); \
+    static void transport##_close_gates(struct EventContext *); \
+    static void transport##_depart(struct EventContext *);
+TRANSPORT_EVENTS()
+#undef X
+
+static void set_and_sched(struct EventContext *e, uint32_t prop, int32_t value, uint32_t sec, void (*f)(struct EventContext *));
 
 #define DEFINE_TRANSPORT_EVENT_FUNCTIONS(event, eid, prop, asec, csec, dsec) \
-    void event_##event##_init(struct ChannelServer *server) \
+    int event_##event##_init(struct EventManager *mgr, Wait *wait, void *user_data) \
     { \
-        event##_arrive(channel_server_get_event(server, eid), NULL); \
+        struct EventContext *ctx = malloc(sizeof(struct EventContext)); \
+        if (ctx == NULL) \
+            return -1; \
+        ctx->wait = wait; \
+        ctx->userData = user_data; \
+        ctx->ev = event_manager_get_event(mgr, eid); \
+        event##_arrive(ctx); \
+        return 0; \
     } \
  \
-    static void event##_arrive(struct Event *e, void *ctx_) \
+    static void event##_arrive(struct EventContext *e) \
     { \
         set_and_sched(e, prop, 0, csec, event##_close_gates); \
     } \
  \
-    static void event##_close_gates(struct Event *e, void *ctx_) \
+    static void event##_close_gates(struct EventContext *e) \
     { \
         set_and_sched(e, prop, 1, dsec, event##_depart); \
     } \
  \
-    static void event##_depart(struct Event *e, void *ctx_) \
+    static void event##_depart(struct EventContext *e) \
     { \
         set_and_sched(e, prop, 2, asec, event##_arrive); \
     }
 
-DEFINE_TRANSPORT_EVENT_FUNCTIONS(boat, EVENT_BOAT, EVENT_BOAT_PROPERTY_SAILING, 10, 4, 1)
-DEFINE_TRANSPORT_EVENT_FUNCTIONS(train, EVENT_TRAIN, EVENT_TRAIN_PROPERTY_SAILING, 10, 4, 1)
-DEFINE_TRANSPORT_EVENT_FUNCTIONS(subway, EVENT_SUBWAY, EVENT_SUBWAY_PROPERTY_SAILING, 10, 4, 1)
-DEFINE_TRANSPORT_EVENT_FUNCTIONS(genie, EVENT_GENIE, EVENT_GENIE_PROPERTY_SAILING, 10, 4, 1)
-DEFINE_TRANSPORT_EVENT_FUNCTIONS(airplane, EVENT_AIRPLANE, EVENT_AIRPLANE_PROPERTY_SAILING, 10, 4, 1)
-DEFINE_TRANSPORT_EVENT_FUNCTIONS(elevator, EVENT_ELEVATOR, EVENT_ELEVATOR_PROPERTY_SAILING, 10, 4, 1)
+DEFINE_TRANSPORT_EVENT_FUNCTIONS(boat, EVENT_BOAT, EVENT_BOAT_PROPERTY_SAILING, 10*60, 4*60, 1*60)
+DEFINE_TRANSPORT_EVENT_FUNCTIONS(train, EVENT_TRAIN, EVENT_TRAIN_PROPERTY_SAILING, 5*60, 4*60, 1*60)
+DEFINE_TRANSPORT_EVENT_FUNCTIONS(subway, EVENT_SUBWAY, EVENT_SUBWAY_PROPERTY_SAILING, 4*60, 50, 10)
+DEFINE_TRANSPORT_EVENT_FUNCTIONS(genie, EVENT_GENIE, EVENT_GENIE_PROPERTY_SAILING, 5*60, 4*60, 1*60)
+DEFINE_TRANSPORT_EVENT_FUNCTIONS(airplane, EVENT_AIRPLANE, EVENT_AIRPLANE_PROPERTY_SAILING, 1*60, 4*60, 1*60)
 
-static void set_and_sched(struct Event *e, uint32_t prop, int32_t value, uint32_t sec, void (*f)(struct Event *, void *))
+static void on_event_ready(void *);
+static void set_and_sched(struct EventContext *e, uint32_t prop, int32_t value, uint32_t sec, void (*f)(struct EventContext *))
 {
-    event_set_property(e, prop, value);
-    struct timespec tm = { .tv_sec = sec, .tv_nsec = 0 };
-    event_schedule(e, f, NULL, &tm);
+    event_set_property(e->ev, prop, value);
+    e->f = f;
+
+    e->wait(sec, on_event_ready, e, e->userData);
 }
 
-static void area_boss_reset(struct Event *e, void *ctx_);
+static void on_event_ready(void *ctx)
+{
+    struct EventContext *e = ctx;
+    e->f(e);
+}
+
+static void elevator_top(struct EventContext *e);
+static void elevator_descend(struct EventContext *e);
+static void elevator_bottom(struct EventContext *e);
+static void elevator_ascend(struct EventContext *e);
+
+int event_elevator_init(struct EventManager *mgr, Wait *wait, void *user_data)
+{
+    struct EventContext *e = malloc(sizeof(struct EventContext));
+    if (e == NULL)
+        return -1;
+    e->wait = wait;
+    e->ev = event_manager_get_event(mgr, EVENT_ELEVATOR);
+    e->userData = user_data;
+    elevator_top(e);
+    return 0;
+}
+
+static void elevator_top(struct EventContext *e)
+{
+    set_and_sched(e, EVENT_ELEVATOR_PROPERTY_SAILING, 0, 60, elevator_descend);
+}
+
+static void elevator_descend(struct EventContext *e)
+{
+    set_and_sched(e, EVENT_ELEVATOR_PROPERTY_SAILING, 1, 60, elevator_bottom);
+}
+
+static void elevator_bottom(struct EventContext *e)
+{
+    set_and_sched(e, EVENT_ELEVATOR_PROPERTY_SAILING, 2, 60, elevator_ascend);
+}
+
+static void elevator_ascend(struct EventContext *e)
+{
+    set_and_sched(e, EVENT_ELEVATOR_PROPERTY_SAILING, 3, 60, elevator_top);
+}
+
+static void area_boss_reset(void *ctx);
 
 static mtx_t MAPS_MTX;
 static struct HashSetU32 *MAPS;
 
-void event_area_boss_init(struct ChannelServer *server)
+int event_area_boss_init(struct EventManager *mgr, Wait *wait, void *user_data)
 {
     MAPS = hash_set_u32_create(sizeof(uint32_t), 0);
-    mtx_init(&MAPS_MTX, mtx_plain);
-    area_boss_reset(channel_server_get_event(server, EVENT_AREA_BOSS), NULL);
+    if (MAPS == NULL) {
+        return -1;
+    }
+
+    if (mtx_init(&MAPS_MTX, mtx_plain) != thrd_success) {
+        hash_set_u32_destroy(MAPS);
+        return -1;
+    }
+
+    struct EventContext *e = malloc(sizeof(struct EventContext));
+    if (e == NULL) {
+        mtx_destroy(&MAPS_MTX);
+        hash_set_u32_destroy(MAPS);
+        return -1;
+    }
+
+    e->wait = wait;
+    e->userData = user_data;
+    e->ev = event_manager_get_event(mgr, EVENT_AREA_BOSS);
+
+    area_boss_reset(e);
+    return 0;
+}
+
+static void area_boss_reset(void *ctx)
+{
+    struct EventContext *e = ctx;
+    mtx_lock(&MAPS_MTX);
+    hash_set_u32_clear(MAPS);
+    mtx_unlock(&MAPS_MTX);
+    event_set_property(e->ev, EVENT_AREA_BOSS_PROPERTY_RESET, 0);
+    e->wait(15, area_boss_reset, e, e->userData);
 }
 
 bool event_area_boss_register(uint32_t map)
@@ -76,27 +164,26 @@ bool event_area_boss_register(uint32_t map)
     return spawned;
 }
 
-static void event_global_respawn_reset(struct Event *e, void *ctx);
+static void event_global_respawn_reset(void *ctx);
 
-void event_global_respawn_init(struct ChannelServer *server)
+int event_global_respawn_init(struct EventManager *mgr, Wait *wait, void *user_data)
 {
-    event_global_respawn_reset(channel_server_get_event(server, EVENT_GLOBAL_RESPAWN), NULL);
+    struct EventContext *e = malloc(sizeof(struct EventContext));
+    if (e == NULL)
+        return -1;
+
+    e->wait = wait;
+    e->userData = user_data;
+    e->ev = event_manager_get_event(mgr, EVENT_GLOBAL_RESPAWN);
+
+    event_global_respawn_reset(e);
+    return 0;
 }
 
-static void area_boss_reset(struct Event *e, void *ctx_)
+static void event_global_respawn_reset(void *ctx_)
 {
-    mtx_lock(&MAPS_MTX);
-    hash_set_u32_clear(MAPS);
-    mtx_unlock(&MAPS_MTX);
-    event_set_property(e, EVENT_AREA_BOSS_PROPERTY_RESET, 0);
-    struct timespec tm = { .tv_sec = 15, .tv_nsec = 0 };
-    event_schedule(e, area_boss_reset, NULL, &tm);
-}
-
-static void event_global_respawn_reset(struct Event *e, void *ctx)
-{
-    event_set_property(e, 0, 0);
-    struct timespec tm = { .tv_sec = 10, .tv_nsec = 0 };
-    event_schedule(e, event_global_respawn_reset, NULL, &tm);
+    struct EventContext *e = ctx_;
+    event_set_property(e->ev, 0, 0);
+    e->wait(10, event_global_respawn_reset, e, e->userData);
 }
 

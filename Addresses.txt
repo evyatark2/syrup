@@ -1,0 +1,230 @@
+----------------------------------------------------------------------------------------------------------
+REMOVE CAP FOR HAIR/CAP
+
+v83 Addresses:
+Code:
+
+Change:
+005C94FC	cmp     eax, 3
+005C94FF	je      005C958D 
+
+To:
+005C94FC	cmp     eax, 4
+005C94FF	jle     005C958D 
+----------------------------------------------------------------------------------------------------------
+
+//Increase face limit
+DWORD dwFace = 0x005C94F3;
+DWORD dwFaceRet = 0x005C9505;
+DWORD dwFaceAddy = 0x005C95BF;
+DWORD dwAddyIDK = 0x005C958D;
+Cave(FaceCave) {
+    cmp eax, 0x02
+    je addyFace
+    cmp eax, 0x05
+    je addyFace
+    cmp eax, 0x07
+    je addyFace
+    cmp eax, 0x08
+    jle addyIDK
+    jmp dword ptr[dwFaceRet]
+
+    addyFace:
+    jmp dword ptr[dwFaceAddy]
+
+    addyIDK:
+    jmp dword ptr[dwAddyIDK]
+}
+_EndCave
+//Increase face limit (npc)
+DWORD dwFaceNPC = 0x009ACA99;
+DWORD dwFaceNPCret = 0x009ACAA4;
+DWORD dwFaceAddy2 = 0x009ACAA0;
+Cave(FaceNPC) {
+    idiv ecx
+    cmp eax, 0x02
+    je addyFace2
+    cmp eax, 0x05
+    je addyFace2
+    cmp eax, 0x07
+    je addyFace2
+    cmp eax, 0x08
+    je addyFace2
+    jmp dword ptr[dwFaceNPCret]
+
+    addyFace2:
+    jmp dword ptr[dwFaceAddy2]
+}
+_EndCave
+-------------------------------------------------------------------------------------------
+REMOVE WHACK
+
+009698BC 0F 85 77 01 00 00           jnz     loc_969A39
+change the jnz to a jmp 
+----------------------------------------------------------------------------------------------------------
+Fix hurricane, rapidfire
+
+0096AA4E :je 0096AC43 ->  0096AA4E je 0096AEB5
+0096AA59: je 0096AC43 ->  0096AA59 je 0096AEB5
+0096AA64: je 0096AC43 ->  0096AA64 je 0096AEB5
+0096AA6F: je 0096AC43 ->  0096AA6F je 0096AEB5
+
+----------------------------------------------------------------------------------------------------------
+GENDERLESS ITEMS
+
+Replace: 
+00460AED JE SHORT 00460AF3
+
+With:
+00460AED mov eax,2
+----------------------------------------------------------------------------------------------------------
+
+ADD MORE WORLDMAPS
+You can download x64dbg (https://x64dbg.com/) and instead of patching the cmp from 8E(142)->98(152) patch it from 8E(142)->B4(180)
+
+Run x32dbg.exe as admin -> F3 and open your localhost -> Ctrl+G to jump to the address(009EA030) -> Spacebar to edit assembly or Ctrl+E to edit hex -> Change the value -> Ctrl+P to patch -> Select All -> Patch File
+ 
+----------------------------------------------------------------------------------------------------------
+CHAT RELATED
+
+//Remove "Repeating the same line over and over\r\ncan negatively affect other users." check allow spam text
+    WriteMemory(0x00490607, 2, 0xEB, 0x27);
+//Remove "Too much chatting can disrupt\r\nother players' ability to play the game." check allow spam text
+    WriteMemory(0x00490651, 2, 0xEB, 0x1D);
+// No Chat Spam
+Memory::PatchByte((void*)0x004905EB, 0xEB);
+
+--------------------------------------------------------------------------
+NoBreath modification - change byte at address 0x00452316 from 0x7D to 0x7C
+Memory::PatchByte((void*)0x00452316, 0x7C);
+----------------------------------------------------------------
+// No DMG Cap modification - NOP out assembly instruction at address 0x00AFE8A0
+Memory::PatchNop(0x00AFE8A0, 1); // NOP out a single byte instruction
+
+// Change the climb speed value at address 0x009CC6F9 to 0x00001440
+Memory::WriteInt(0x009CC6F9, 0x00001440);
+
+WriteInt(0x009CC6F9 + 2, 0X00C1CF80);
+WriteDouble(0X00C1CF80, 4.00);
+----------------------------------------------------------------------
+//Final Attack instantly
+Memory::WriteByte(0x0095795E, 0x83);
+Memory::WriteByte(0x0095795E + 1, 0xC0);
+Memory::WriteByte(0x0095795E + 2, 0x00);
+------------------------------------------------------------------------------------
+//Droppable NX
+Memory::PatchNop(0x004F350C, 6); // Apply 6 NOPs at address 0x004F351E
+
+Memory::PatchNop(0x004F351E, 6); //Apply 6 NOPs at address 0x004F350C
+
+--------------------------------------------------------------------------------
+// No Level Up Party Notification
+Memory::PatchNop(0x005241B3, 2); // Apply 2 NOPs at address 0x005241B3
+Memory::PatchNop(0x005241E2, 2); // Apply 2 NOPs at address 0x005241E2
+---------------------------------------------------------------------------------
+// Unlimited flash jump
+Memory::PatchNop(0x0095071D, 1);
+Memory::PatchNop(0x0096BEBC, 1);
+Memory::PatchNop(0x0096BEC7, 1);
+Memory::PatchNop(0x0096BED2, 1);
+Memory::PatchNop(0x0096BF26, 1);
+Memory::PatchNop(0x0096BF59, 1);
+Memory::PatchNop(0x0096BF68, 1);
+Memory::PatchNop(0x0096BF77, 1);
+Memory::PatchNop(0x0096BF91, 1);
+Memory::PatchNop(0x0096BF1B, 1);
+Memory::PatchNop(0x0096BFAE, 1);
+-----------------------------------------------------------------------------------
+MAKER SKILL INSTANT:
+
+Item Maker Crafting No Delay  "mov [esi+00000D08],eax" To any other value EX: "mov [esi+00000108],eax"
+    WriteMemory(0x826F92, 6, 0x89, 0x86, 0x08, /*0x0D*/0x01, 0x00, 0x00);
+---------------------------------------------------------------------------------
+
+Disable Edge check for BStep:
+go to address 0x950D95 JE 00950DA5
+                          to 
+              0x950D95 JE 0x950DC1
+
+Use Bstep on Air:
+Go to address: 0x950B4D JE 0x950C46
+                to
+                0x950B4D JE 0x950C53
+-----------------------------------------------------------------------------------
+
+// Allow PIC To Be Typed
+Memory::PatchNop(0x004CA8BA, 2);
+------------------------------------------------------------------------------------
+
+
+//LACKING LEVEL X CHECK REMOVAL.
+// Change "JE" instruction at 0x008AD01A to "JMP 0x008AD227"
+------------------------------------------------------------------------------------
+
+
+//MAPLE TIPS REMOVAL
+00A034DB jz TO jmp
+-----------------------------------------------------------------------------
+
+//Quick face swap
+0x950D95 and 
+change it to: je 0x950DC1
+0x950B4D 
+change : je 0x950C46 to je 0x950C53"
+
+
+
+-----------------------------------------------------------------------------
+
+COLORS ON CHARACTER JOB
+This one might be neat if you are running a server:
+00901400 - 6A 26
+The second byte stores the color/style of the Job
+
+-----------------------------------------------------------------------------
+
+To increase max pet ignore slots! Up to 255, havent tested beyond 20 yet
+008FCF1D - 83 78 FC 0A ---> 83 78 FC FF
+
+
+---------------------------------------------------------------------------------------------------
+SAVED ADDYS
+008EEEAF <--- TOOLTIP FOR ITEMS
+---------------------------------------------------------------------------------------------------
+For java script.
+t = Item Name
+z = Item Name with picture on hover
+i = Item Image with text on hover
+v = Item Image with text on hover
+
+#fMap/MapHelper.img/mark/Zakum#
+Colon before the # at the end displays full info
+---------------------------------------------------------------------------------------------------
+
+0x7666CF <--------- Add skills you want to be able to lt/rb
+
+---------------------------------------------------------------------------------------------------
+To enable LT/RB with ranged skills, set their property as desired in the Wz and do these patches at these addresses
+00953E2A - EB 30        - jle 00953E5C   change to  ---> jmp 00953E5C
+007666D6 - 7F 27        - jg 007666FF  change to   ---> jmp 0076671E  DONT WORK 
+Shouldn't break anything
+
+
+// VICIOUS HAMMERS INCREASE.
+in client, change 004F45E3 from cmp eax, 2 to whatever.. eg cmp eax, 4 
+then in stringpool
+{ 5053, "4 upgrade increases\r\n have been used already." },
+{ 5056, "Hammers applied: %d / 4" },
+{ 5057, "Hammers applied: 4 / 4" },
+
+For the item tooltip, change the value in 008E9435
+i believe that's all..? if there's anything missing lmk i can help
+
+///NO FADE 
+ULONG noMapFadeEffectAddr = 0x00776E65;
+Original value:
+WriteMemory(noMapFadeEffectAddr, 5, 0xB8, 0x44, 0x61, 0xAB, 0x00);
+change to nop
+WriteMemory(noMapFadeEffectAddr, 5, 0xC3, 0x90, 0x90, 0x90, 0x90); // nop
+
+

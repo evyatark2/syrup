@@ -5,7 +5,7 @@
 
 #include "../hash-map.h"
 
-struct MapThreadCoordinator {
+struct RoomThreadCoordinator {
     mtx_t lock;
     struct HashSetU32 *mapDict;
 };
@@ -13,11 +13,12 @@ struct MapThreadCoordinator {
 struct Pair {
     uint32_t map;
     size_t thread;
+    size_t refs;
 };
 
-struct MapThreadCoordinator *map_thread_coordinator_create(void)
+struct RoomThreadCoordinator *room_thread_coordinator_create(void)
 {
-    struct MapThreadCoordinator *mgr = malloc(sizeof(struct MapThreadCoordinator));
+    struct RoomThreadCoordinator *mgr = malloc(sizeof(struct RoomThreadCoordinator));
     if (mgr == NULL)
         return NULL;
 
@@ -36,7 +37,7 @@ struct MapThreadCoordinator *map_thread_coordinator_create(void)
     return mgr;
 }
 
-void map_thread_coordinator_destroy(struct MapThreadCoordinator *mgr)
+void room_thread_coordinator_destroy(struct RoomThreadCoordinator *mgr)
 {
     if (mgr != NULL) {
         mtx_destroy(&mgr->lock);
@@ -44,16 +45,17 @@ void map_thread_coordinator_destroy(struct MapThreadCoordinator *mgr)
     }
 }
 
-ssize_t map_thread_coordinator_ref(struct MapThreadCoordinator *mgr, uint32_t map)
+ssize_t room_thread_coordinator_ref(struct RoomThreadCoordinator *mgr, uint32_t map)
 {
     struct Pair *pair;
+    ssize_t thread;
     mtx_lock(&mgr->lock);
     pair = hash_set_u32_get(mgr->mapDict, map);
     if (pair == NULL) {
-        size_t thread = 0;
         struct Pair data = {
             .map = map,
-            .thread = thread,
+            .thread = 0,
+            .refs = 1
         };
         if (hash_set_u32_insert(mgr->mapDict, &data) == -1) {
             mtx_unlock(&mgr->lock);
@@ -63,11 +65,12 @@ ssize_t map_thread_coordinator_ref(struct MapThreadCoordinator *mgr, uint32_t ma
         pair = hash_set_u32_get(mgr->mapDict, map);
     }
 
+    thread = pair->thread;
     mtx_unlock(&mgr->lock);
-    return pair->thread;
+    return thread;
 }
 
-ssize_t map_thread_coordinator_get(struct MapThreadCoordinator *mgr, uint32_t map)
+ssize_t map_thread_coordinator_get(struct RoomThreadCoordinator *mgr, uint32_t map)
 {
     struct Pair *pair;
     ssize_t thread = -1;
@@ -80,10 +83,18 @@ ssize_t map_thread_coordinator_get(struct MapThreadCoordinator *mgr, uint32_t ma
     return thread;
 }
 
-void map_thread_coordinator_unref(struct MapThreadCoordinator *mgr, uint32_t map)
+ssize_t room_thread_coordinator_get_init(struct RoomThreadCoordinator *mgr)
+{
+    return 0;
+}
+
+void room_thread_coordinator_unref(struct RoomThreadCoordinator *mgr, uint32_t map)
 {
     mtx_lock(&mgr->lock);
-    hash_set_u32_remove(mgr->mapDict, map);
+    struct Pair *pair = hash_set_u32_get(mgr->mapDict, map);
+    pair->refs--;
+    if (pair->refs == 0)
+        hash_set_u32_remove(mgr->mapDict, map);
     mtx_unlock(&mgr->lock);
 }
 

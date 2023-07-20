@@ -8,8 +8,8 @@
 #include "../database.h"
 #include "drop.h"
 #include "life.h"
-#include "scripting/script-manager.h"
-#include "server.h"
+#include "session.h"
+#include "stat.h"
 
 struct Client;
 
@@ -19,16 +19,16 @@ enum PacketType {
     PACKET_TYPE_LOGOUT,
 };
 
-enum ScriptState {
-    SCRIPT_STATE_OK,
-    SCRIPT_STATE_YES_NO,
-    SCRIPT_STATE_GET_NUMBER,
-    SCRIPT_STATE_SIMPLE,
-    SCRIPT_STATE_NEXT,
-    SCRIPT_STATE_PREV_NEXT,
-    SCRIPT_STATE_PREV,
-    SCRIPT_STATE_ACCEPT_DECILNE,
-    SCRIPT_STATE_WARP,
+enum ClientDialogueState {
+    CLIENT_DIALOGUE_STATE_OK,
+    CLIENT_DIALOGUE_STATE_YES_NO,
+    CLIENT_DIALOGUE_STATE_GET_NUMBER,
+    CLIENT_DIALOGUE_STATE_SIMPLE,
+    CLIENT_DIALOGUE_STATE_NEXT,
+    CLIENT_DIALOGUE_STATE_PREV_NEXT,
+    CLIENT_DIALOGUE_STATE_PREV,
+    CLIENT_DIALOGUE_STATE_ACCEPT_DECILNE,
+    CLIENT_DIALOGUE_STATE_WARP,
 };
 
 enum ClientResultType {
@@ -57,47 +57,68 @@ struct ClientSave;
 int clients_init(void);
 void clients_terminate(void);
 
-struct Client *client_create(struct Session *session, struct DatabaseConnection *conn, struct ScriptManager *quest_manager, struct ScriptManager *portal_mananger, struct ScriptManager *npc_manager, struct ScriptManager *map_manager);
+struct Client *client_create(struct Character *chr);
 void client_destroy(struct Client *client);
+struct Character *client_get_character(struct Client *client);
 struct Session *client_get_session(struct Client *client);
 void client_login_start(struct Client *client, uint32_t id);
 int client_save_start(struct Client *client);
 void client_logout_start(struct Client *client);
-struct ClientContResult client_resume(struct Client *client, int status);
-void client_update_conn(struct Client *client, struct DatabaseConnection *conn);
-void client_handle_command(struct Client *client, struct ClientCommand *cmd);
-void client_notify_command_received(struct Client *client, struct ClientCommand *cmd, bool sent);
-const struct Character *client_get_character(struct Client *client);
-uint32_t client_get_active_npc(struct Client *client);
-uint16_t client_get_active_quest(struct Client *client);
-struct MapHandleContainer *client_get_map(struct Client *client);
-void client_announce_self_to_map(struct Client *client);
-void client_announce_add_player(struct Client *client, const struct Character *chr);
-void client_announce_add_npc(struct Client *client, const struct Npc *npc);
-void client_announce_monster(struct Client *client, const struct Monster *monster);
-bool client_announce_drop(struct Client *client, uint32_t owner_id, uint32_t dropper_oid, uint8_t type, bool player_drop, const struct Drop *drop);
-bool client_announce_spawn_drop(struct Client *client, uint32_t owner_id, uint32_t dropper_oid, uint8_t type, bool player_drop, const struct Drop *drop);
-void client_update_player_pos(struct Client *client, int16_t x, int16_t y, uint16_t fh, uint8_t stance);
+void client_set_map(struct Client *client, uint32_t map);
+uint32_t client_map(struct Client *client);
+uint8_t client_skin(struct Client *client);
+uint32_t client_face(struct Client *client);
+uint32_t client_hair(struct Client *client);
+uint8_t client_level(struct Client *client);
+uint16_t client_job(struct Client *client);
+// External sources (i.e. monster damage) can kill the player while internal sources (skill requirement) can't
+// Returns if the adjustment was successful (always true from external sources)
 void client_set_hp(struct Client *client, int16_t hp);
-void client_set_hp_now(struct Client *client, int16_t hp);
-void client_adjust_hp(struct Client *client, int32_t hp);
-void client_adjust_hp_now(struct Client *client, int32_t hp);
+bool client_adjust_hp(struct Client *client, bool external, int16_t hp);
+void client_adjust_hp_precent(struct Client *client, uint8_t hpR);
+int16_t client_hp(struct Client *client);
+void client_set_max_hp(struct Client *client, int16_t hp);
+int16_t client_max_hp(struct Client *client);
 void client_set_mp(struct Client *client, int16_t mp);
-void client_adjust_mp(struct Client *client, int16_t mp);
-void client_adjust_mp_now(struct Client *client, int32_t mp);
+bool client_adjust_mp(struct Client *client, int16_t mp);
+void client_adjust_mp_precent(struct Client *client, uint8_t mpR);
+int16_t client_mp(struct Client *client);
+void client_set_max_mp(struct Client *client, int16_t hp);
+int16_t client_max_mp(struct Client *client);
+bool client_adjust_hp_mp(struct Client *client, int16_t hp, int16_t mp);
 void client_adjust_sp(struct Client *client, int16_t sp);
-void client_adjust_str(struct Client *client, int16_t str);
-void client_adjust_dex(struct Client *client, int16_t dex);
-void client_adjust_int(struct Client *client, int16_t int_);
-void client_adjust_luk(struct Client *client, int16_t luk);
-bool client_assign_sp(struct Client *client, uint32_t id);
+int16_t client_sp(struct Client *client);
+bool client_adjust_str(struct Client *client, int16_t str);
+int16_t client_str(struct Client *client);
+bool client_adjust_dex(struct Client *client, int16_t dex);
+int16_t client_dex(struct Client *client);
+bool client_adjust_int(struct Client *client, int16_t int_);
+int16_t client_int(struct Client *client);
+bool client_adjust_luk(struct Client *client, int16_t luk);
+int16_t client_luk(struct Client *client);
+bool client_adjust_ap(struct Client *client, int16_t ap);
+int16_t client_ap(struct Client *client);
+bool client_assign_sp(struct Client *client, uint32_t id, int8_t *level, int8_t *master);
 void client_change_job(struct Client *client, enum Job job);
-void client_gain_exp(struct Client *client, int32_t exp, bool reward);
-void client_gain_meso(struct Client *client, int32_t mesos, bool pickup, bool reward);
+uint8_t client_gain_exp(struct Client *client, int32_t exp, uint32_t *stats);
+int32_t client_exp(struct Client *client);
+/**
+ * Adjusts the client's meso count.
+ *
+ * \p client The client
+ * \p underflow Whether exact meso count is required
+ * \p mesos The amount
+ *
+ * \returns If underflow is false, true if the meso deduction was successful; otherwise, true
+ */
+bool client_adjust_mesos(struct Client *client, bool underflow, int32_t mesos);
+int32_t client_meso(struct Client *client);
 void client_adjust_fame(struct Client *client, int16_t fame);
-void client_commit_stats(struct Client *client);
+int16_t client_fame(struct Client *client);
+uint32_t client_commit_stats(struct Client *client);
 bool client_has_item(struct Client *client, uint32_t id, int16_t qty);
-bool client_gain_items(struct Client *client, size_t len, const uint32_t *ids, const int16_t *counts, bool reward, bool *success);
+uint8_t client_inventory_slot_count(struct Client *client, uint8_t inv);
+uint8_t client_equip_slot_count(struct Client *client);
 
 enum InventoryGainResult {
     INVENTORY_GAIN_RESULT_SUCCESS,
@@ -105,54 +126,56 @@ enum InventoryGainResult {
     INVENTORY_GAIN_RESULT_UNAVAILABLE
 };
 
-bool client_gain_inventory_item(struct Client *client, const struct InventoryItem *item, enum InventoryGainResult *success);
-bool client_gain_equipment(struct Client *client, const struct Equipment *item, bool equip, enum InventoryGainResult *success);
-bool client_remove_item(struct Client *client, uint8_t inventory, uint8_t src, int16_t amount, bool *success, struct InventoryItem *item);
-bool client_use_projectile(struct Client *client, int16_t amount, bool *success);
-bool client_remove_equip(struct Client *client, bool equipped, uint8_t src, bool *success, struct Equipment *equip);
-bool client_move_item(struct Client *client, uint8_t inventory, uint8_t src, uint8_t dst);
-bool client_equip(struct Client *client, uint8_t src, enum EquipSlot dst);
-bool client_unequip(struct Client *client, enum EquipSlot src, uint8_t dst);
-bool client_use_item(struct Client *client, uint8_t slot, uint32_t id);
-bool client_use_item_immediate(struct Client *client, uint32_t id);
+bool client_gain_items(struct Client *client, size_t len, const uint32_t *ids, const int16_t *counts, size_t *count, struct InventoryModify **changes);
+bool client_gain_inventory_item(struct Client *client, const struct InventoryItem *item, size_t *count, struct InventoryModify **changes);
+void client_decrease_quest_item(struct Client *client, uint32_t id, int16_t quantity);
+bool client_gain_equipment(struct Client *client, const struct Equipment *item, struct InventoryModify *change);
+bool client_remove_item(struct Client *client, uint8_t inventory, uint8_t src, int16_t amount, struct InventoryModify *change, struct InventoryItem *item);
+uint32_t client_get_item(struct Client *client, uint8_t inventory, uint8_t slot);
+int16_t client_remaining_quest_item_quantity(struct Client *client, uint32_t id);
+
+bool client_use_projectile(struct Client *client, int16_t amount, uint32_t *id, struct InventoryModify *change);
+bool client_remove_equip(struct Client *client, bool equipped, uint8_t src, struct InventoryModify *change, struct Equipment *equip);
+uint8_t client_move_item(struct Client *client, uint8_t inventory, uint8_t src, uint8_t dst, struct InventoryModify *changes);
+bool client_equip(struct Client *client, uint8_t src, enum EquipSlot dst, struct InventoryModify *change);
+bool client_unequip(struct Client *client, enum EquipSlot src, uint8_t dst, struct InventoryModify *change);
+uint32_t client_get_equip(struct Client *client, bool equipped, uint8_t slot);
+bool client_has_use_item(struct Client *client, uint8_t slot, uint32_t id);
+bool client_record_monster_book_entry(struct Client *client, uint32_t id, uint8_t *count);
+bool client_check_start_quest_requirements(struct Client *client, const struct QuestInfo *info, uint32_t npc);
+bool client_check_end_quest_requirements(struct Client *client, const struct QuestInfo *info, uint32_t npc);
+void client_set_npc(struct Client *client, uint32_t id);
+uint32_t client_get_npc(struct Client *client);
+void client_set_quest(struct Client *client, uint32_t id);
+uint32_t client_get_quest(struct Client *client);
+bool client_add_quest(struct Client *client, uint16_t qid, size_t count, uint32_t *ids, bool *success);
 bool client_is_quest_started(struct Client *client, uint16_t qid);
+bool client_remove_quest(struct Client *client, uint16_t qid);
+bool client_complete_quest(struct Client *client, uint16_t qid, time_t time);
 bool client_is_quest_complete(struct Client *client, uint16_t qid);
-struct ClientResult client_npc_talk(struct Client *client, uint32_t npc);
-struct ClientResult client_launch_map_script(struct Client *client, const char *script_name);
-struct ClientResult client_start_quest(struct Client *client, uint16_t qid, uint32_t npc, bool scripted);
+bool client_has_empty_slot_in_each_inventory(struct Client *client);
 struct ClientResult client_regain_quest_item(struct Client *client, uint16_t qid, uint32_t id);
 const char *client_get_quest_info(struct Client *client, uint16_t info);
-int client_set_quest_info(struct Client *client, uint16_t info, const char *value);
+bool client_set_quest_info(struct Client *client, uint16_t info, const char *value);
 bool client_start_quest_now(struct Client *client, bool *success);
-struct ClientResult client_end_quest(struct Client *client, uint16_t qid, uint32_t npc, bool scripted);
-bool client_end_quest_now(struct Client *client, bool *success);
-bool client_forfeit_quest(struct Client *client, uint16_t qid);
-struct ClientResult client_script_cont(struct Client *client, uint8_t prev, uint8_t action, uint32_t selection);
 void client_close_script(struct Client *client);
-void client_kill_monster(struct Client *client, uint32_t id);
+void client_kill_monster(struct Client *client, uint32_t id, void (*f)(uint16_t qid, size_t progress_count, int32_t *progress, void *ctx), void *ctx_);
 void client_destroy_reactor(struct Client *client);
-struct ClientResult client_open_shop(struct Client *client, uint32_t id);
-struct ClientResult client_buy(struct Client *client, uint16_t pos, uint32_t id, int16_t quantity, int32_t price);
-struct ClientResult client_sell(struct Client *client, uint16_t pos, uint32_t id, int16_t quantity);
-struct ClientResult client_recharge(struct Client *client, uint16_t pos);
+bool client_open_shop(struct Client *client, uint32_t id);
+bool client_recharge(struct Client *client, uint16_t pos);
 bool client_close_shop(struct Client *client);
-bool client_is_in_shop(struct Client *client);
-void client_send_ok(struct Client *client, size_t msg_len, const char *msg, uint8_t speaker);
-void client_send_yes_no(struct Client *client, size_t msg_len, const char *msg, uint8_t speaker);
-void client_send_simple(struct Client *client, size_t msg_len, const char *msg, uint8_t speaker, uint32_t selection_count);
-void client_send_next(struct Client *client, size_t msg_len, const char *msg, uint8_t speaker);
-void client_send_prev_next(struct Client *client, size_t msg_len, const char *msg, uint8_t speaker);
-void client_send_prev(struct Client *client, size_t msg_len, const char *msg, uint8_t speaker);
-void client_send_accept_decline(struct Client *client, size_t msg_len, const char *msg, uint8_t speaker);
-void client_send_get_number(struct Client *client, size_t msg_len, const char *msg, uint8_t speaker, int32_t def, int32_t min, int32_t max);
+uint32_t client_shop(struct Client *client);
+void client_set_dialogue_state(struct Client *client, enum ClientDialogueState state, ...);
+bool client_is_dialogue_option_legal(struct Client *client, uint8_t prev);
+bool client_dialogue_is_action_valid(struct Client *client, uint8_t action, uint32_t selection, uint32_t *script_action);
 void client_message(struct Client *client, const char *msg);
 bool client_warp(struct Client *client, uint32_t map, uint8_t portal);
 void client_reset_stats(struct Client *client);
-struct ClientResult client_launch_portal_script(struct Client *client, const char *portal);
 void client_enable_actions(struct Client *client);
 void client_toggle_auto_pickup(struct Client *client);
 bool client_is_auto_pickup_enabled(struct Client *client);
-bool client_apply_skill(struct Client *client, uint32_t skill_id, uint8_t *level);
+bool client_has_skill(struct Client *client, uint32_t skill_id, int8_t *level);
+bool client_gain_skill(struct Client *client, uint32_t skill_id, int8_t level, int8_t master);
 bool client_add_key(struct Client *client, uint32_t key, uint8_t type, uint32_t action);
 bool client_add_skill_key(struct Client *client, uint32_t key, uint32_t skill_id);
 bool client_remove_key(struct Client *client, uint32_t key, uint32_t action);
